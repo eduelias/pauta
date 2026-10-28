@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -37,7 +38,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from .db import Store
+from .db import Store, gravatar
 
 COOKIE = "pauta_session"
 SESSION_DAYS = 180
@@ -60,8 +61,11 @@ OPEN_VIEWER = {
     "logged_in": True,
     "account": None,
     "name": "Você",
+    "email": "",
+    "avatar": "",
     "is_admin": True,
 }
+EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 class Auth:
@@ -138,6 +142,8 @@ class Auth:
             "logged_in": bool(acc),
             "account": acc["id"] if acc else None,
             "name": acc["name"] if acc else None,
+            "email": acc["email"] if acc else "",
+            "avatar": gravatar(acc["email"]) if acc else "",
             "is_admin": bool(acc and acc["is_admin"]),
         }
 
@@ -338,3 +344,11 @@ class Auth:
             raise AuthError("digite seu nome")
         with self.store.db() as db:
             db.execute("UPDATE account SET name=? WHERE id=?", (name, account_id))
+
+    def set_email(self, account_id: int, email: str) -> None:
+        """Optional; only used to show the person's Gravatar picture."""
+        email = str(email or "").strip()
+        if email and (len(email) > 254 or not EMAIL.fullmatch(email)):
+            raise AuthError("esse e-mail não parece válido")
+        with self.store.db() as db:
+            db.execute("UPDATE account SET email=? WHERE id=?", (email, account_id))

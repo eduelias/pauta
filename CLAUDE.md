@@ -20,7 +20,10 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 - `src/pauta/server.py`: `/api/...` JSON; everything but login/join needs a session (client
   data is private). Writes from a foreign `Origin` are refused; cookie is SameSite=Strict.
 - `src/pauta/static/`: one vanilla-JS app (`app.js`, hash routes `#/...`), `style.css` (light
-  and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only: no CDNs, no external fonts.
+  and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only (no CDNs, no external fonts);
+  the one exception is `img-src https://gravatar.com` for people's avatars. Accounts may
+  set an email, which is only used for that: teammates get the SHA-256 hash, never the
+  address. `d=blank` means no Gravatar shows the initials underneath.
 
 ## Commands
 

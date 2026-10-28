@@ -5,7 +5,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const app = $("#app");
 let ME = null;        // /api/me
-let BOOT = null;      // {me, options, members}
+let BOOT = null;      // {me, options, members, avatars}
 let REQS = null;      // last /api/requests, for the nav counter
 
 // ---------- small helpers ---------------------------------------------------------------
@@ -82,7 +82,11 @@ function initials(name) {
   const parts = String(name || "?").replace(/[^\p{L}\p{N} ]/gu, " ").trim().split(/\s+/);
   return ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
-const avatar = (name, cls = "") => `<span class="avatar ${cls}" style="--h:${hue(name)}">${esc(initials(name))}</span>`;
+// people may have a Gravatar: d=blank returns a transparent image when there is none,
+// so the initials underneath show through without any error handling
+const avatar = (name, cls = "", grav = "") => `<span class="avatar ${cls}" style="--h:${hue(name)}">${esc(initials(name))}${
+  /^[0-9a-f]{64}$/.test(grav || "") ? `<img src="https://gravatar.com/avatar/${grav}?s=112&d=blank" alt="" loading="lazy">` : ""}</span>`;
+const personAvatar = (id, name, cls = "round") => avatar(name, cls, BOOT?.avatars?.[id]);
 const firstName = (n) => String(n || "").split(" ")[0];
 
 // dates: requests carry plain YYYY-MM-DD; timestamps are UTC "YYYY-MM-DD HH:MM:SS"
@@ -188,9 +192,9 @@ function renderShell() {
     ["#/", "dash", "Painel"], ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
     ["#/quadro", "board", "Quadro"], ["#/clientes", "clients", "Clientes"],
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
-  $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round")}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
+  $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
   const top = $("#topnew");
-  top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round")}</a>`;
+  top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   markNav();
 }
@@ -487,7 +491,7 @@ async function viewRequest(_q, id) {
       <div>
         <div class="row-gap"><a class="cl" href="#/cliente/${c.id}">${avatar(c.name, "md")}<span style="font-size:16px">${esc(c.name)}</span></a>${r.kind ? `<span class="tag accent">${esc(r.kind)}</span>` : ""}</div>
         <div class="quiet"><textarea class="input req-title" data-f="what" rows="1">${esc(r.what)}</textarea></div>
-        <div class="req-meta">${avatar(r.created_by_name || "?", "round")}<span>Pedido por <b>${esc(r.created_by_name || "—")}</b> · ${esc(ago(r.created))}</span><span id="duebadge">${dueBadge(r)}</span></div>
+        <div class="req-meta">${personAvatar(r.created_by, r.created_by_name || "?")}<span>Pedido por <b>${esc(r.created_by_name || "—")}</b> · ${esc(ago(r.created))}</span><span id="duebadge">${dueBadge(r)}</span></div>
         <div class="panel">
           <div class="section-title">Status</div>
           ${seg("status", Object.keys(o.status), r.status, o.status, "statuses")}
@@ -815,14 +819,17 @@ async function viewTeam() {
     <div class="grid2">
       <section class="panel">
         <div class="panel-head"><h2>Você</h2></div>
-        <div class="member">${avatar(ME.name, "md round")}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
+        <div class="member">${avatar(ME.name, "md round", ME.avatar)}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
           <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
-        ${ME.auth ? `<div class="field mt"><label>Seu nome</label><div style="display:flex;gap:8px"><input class="input" id="myname" value="${esc(ME.name)}"><button class="btn" id="rename">Salvar</button></div></div>
+        ${ME.auth ? `<div class="field mt"><label>Seu nome</label><input class="input" id="myname" value="${esc(ME.name)}"></div>
+        <div class="field mt"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
+          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. Ninguém do time vê o endereço.</span></div>
+        <div class="mt"><button class="btn" id="rename">${icon("check")}Salvar</button></div>
         <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair</button></div>` : ""}
       </section>
       <section class="panel">
         <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
-        ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round")}
+        ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round", m.avatar)}
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
@@ -846,9 +853,10 @@ async function viewTeam() {
   $("#addkey")?.addEventListener("click", addPasskey);
   $("#rename")?.addEventListener("click", async () => {
     try {
-      ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value })) };
+      ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value, email: $("#myemail").value })) };
+      BOOT = await api("GET", "/api/boot");
       renderShell();
-      toast("Nome salvo");
+      toast("Salvo");
       viewTeam();
     } catch (e) { toast(e.message, true); }
   });

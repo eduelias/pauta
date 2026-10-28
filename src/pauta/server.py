@@ -23,7 +23,8 @@ STATIC = Path(__file__).parent / "static"
 MAX_BODY = 256 * 1024
 ROBOTS = b"User-agent: *\nDisallow: /\n"
 CSP = (
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+    "default-src 'self'; img-src 'self' data: https://gravatar.com; "
+    "style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
     "form-action 'self'"
 )
@@ -195,18 +196,27 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
             return viewer
 
         @route("PATCH", "/api/me")
-        def rename_me(self, viewer, body):
+        def edit_me(self, viewer, body):
             if viewer["account"] is None:
                 raise Reply(400, {"error": "sem contas no modo local"})
-            auth.rename(viewer["account"], body.get("name"))
+            if "name" in body:
+                auth.rename(viewer["account"], body["name"])
+            if "email" in body:
+                auth.set_email(viewer["account"], body["email"])
             return auth.viewer(self.headers.get("Cookie"))
 
         @route("GET", "/api/boot")
         def boot(self, viewer, _body):
-            members = [
-                {"id": m["id"], "name": m["name"]} for m in store.members() if not m["disabled"]
-            ]
-            return {"me": viewer, "options": store.options(), "members": members}
+            everyone = store.members()
+            members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["disabled"]]
+            # Gravatar ids by account, for avatars on requests and the timeline
+            avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
+            return {
+                "me": viewer,
+                "options": store.options(),
+                "members": members,
+                "avatars": avatars,
+            }
 
         @route("GET", "/api/export")
         def export(self, viewer, _body):

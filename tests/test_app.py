@@ -1,5 +1,8 @@
 """End to end over HTTP: invites, passkeys, clients, requests and their timeline."""
 
+import hashlib
+import json
+import sqlite3
 import urllib.request
 
 import pytest
@@ -141,6 +144,37 @@ def test_admin_tools(team):
     assert call(f"{base}/api/requests", cookie=piero)[0] == 401  # disabled: session dead
     opts = call(f"{base}/api/options/kind", {"values": ["A", "a", " B ", ""]}, nato, "PUT")[1]
     assert opts["kind"] == ["A", "B"]
+
+
+def test_gravatar(team):
+    base, nato, piero, _ = team
+    assert call(f"{base}/api/me", {"email": "nope"}, nato, "PATCH")[0] == 400
+    me = call(f"{base}/api/me", {"email": " Nato@Example.com "}, nato, "PATCH")[1]
+    want = hashlib.sha256(b"nato@example.com").hexdigest()
+    assert me["avatar"] == want and me["email"] == "Nato@Example.com"
+    assert me["name"] == "Renato Lima"  # untouched when only the email changes
+    members = call(f"{base}/api/members", cookie=piero)[1]
+    renato = next(m for m in members if m["name"] == "Renato Lima")
+    assert renato["avatar"] == want and "email" not in renato  # teammates get the hash only
+    boot = call(f"{base}/api/boot", cookie=piero)[1]
+    assert boot["avatars"] == {str(renato["id"]): want}
+    assert "email" not in json.dumps(boot["members"])
+    me = call(f"{base}/api/me", {"email": ""}, nato, "PATCH")[1]
+    assert me["avatar"] == ""
+
+
+def test_schema_v1_upgrade(tmp_path):
+    db = sqlite3.connect(tmp_path / "pauta.db")
+    db.executescript(
+        "CREATE TABLE account (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "handle TEXT NOT NULL UNIQUE, is_admin INTEGER NOT NULL DEFAULT 0, "
+        "disabled INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL DEFAULT (datetime('now')));"
+        "INSERT INTO account(name, handle) VALUES ('Old', 'old');"
+    )
+    db.commit()
+    db.close()
+    store = Store(tmp_path / "pauta.db")
+    assert store.members()[0]["avatar"] == ""
 
 
 def test_open_mode(tmp_path):

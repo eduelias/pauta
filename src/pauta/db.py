@@ -12,18 +12,20 @@ timeline on the request page.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import re
 import sqlite3
 from datetime import date
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
-    is_admin INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0,
+    email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,
+    disabled INTEGER NOT NULL DEFAULT 0,
     created TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS passkey (
@@ -287,6 +289,12 @@ def clean(spec: dict, data: dict, db: sqlite3.Connection, partial: bool) -> dict
     return out
 
 
+def gravatar(email: str | None) -> str:
+    """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
+    email = (email or "").strip().lower()
+    return hashlib.sha256(email.encode()).hexdigest() if email else ""
+
+
 # ---- the store ---------------------------------------------------------------------------
 
 
@@ -296,8 +304,12 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript(SCHEMA)
+            # v2: optional email per account, only used for the Gravatar picture
+            cols = {r[1] for r in db.execute("PRAGMA table_info(account)")}
+            if "email" not in cols:
+                db.execute("ALTER TABLE account ADD COLUMN email TEXT NOT NULL DEFAULT ''")
             db.execute(
-                "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema', ?)",
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
             )
             if not db.execute("SELECT 1 FROM option LIMIT 1").fetchone():
@@ -359,12 +371,17 @@ class Store:
     def members(self) -> list[dict]:
         with self.db() as db:
             rows = db.execute(
-                "SELECT a.id, a.name, a.is_admin, a.disabled, a.created, "
+                "SELECT a.id, a.name, a.email, a.is_admin, a.disabled, a.created, "
                 "(SELECT COUNT(*) FROM passkey p WHERE p.account=a.id) AS passkeys, "
                 "(SELECT MAX(last_used) FROM passkey p WHERE p.account=a.id) AS last_seen "
                 "FROM account a ORDER BY a.disabled, a.id"
             ).fetchall()
-        return [dict(r) for r in rows]
+        # the address itself stays private; teammates only get the Gravatar hash
+        out = []
+        for r in map(dict, rows):
+            r["avatar"] = gravatar(r.pop("email"))
+            out.append(r)
+        return out
 
     # ---- clients ----------------------------------------------------------------------------
 
