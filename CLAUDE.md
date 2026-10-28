@@ -50,3 +50,5 @@ can only run `/usr/local/sbin/pauta-deploy` as root. Rollback: Actions → Deplo
 version, or `sudo pauta-deploy --rollback` on du7. Details: `deploy/README.md`. Never run
 `pauta demo` against du7's DB. Keep schema changes additive so an older release can run on
 a newer database.
+
+Decisions (what was decided and why, including things not built yet) are in `docs/decisions/`.

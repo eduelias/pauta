@@ -1,0 +1,49 @@
+# 1. An acceptance environment on du7
+
+- **Status:** accepted, not built yet (decided 2026-10-28; build it when needed)
+- **Depends on:** the domain choice. If Pauta moves off `genic.dev`, build acceptance on the
+  new domain directly.
+
+## Context
+
+Pauta has one environment: production at https://pauta.genic.dev, deployed from tagged
+releases by the self-hosted runner on du7 (`deploy/README.md`). Changes are tested by CI,
+including browser tests, but nobody can try a change on a real server before it reaches the
+team. With more requests coming from the team and possibly other teams later, we want a place
+where the people who asked for a change can check it before it's released.
+
+## Decision
+
+Run an acceptance environment on du7, next to production, deployed from `main`:
+
+| Topic | Decision |
+|---|---|
+| Address | `acc.pauta.genic.dev` (or `acc.<new domain>`): a CNAME to `du7.sytes.net` and its own Caddy block |
+| Process | A second sandboxed unit, `pauta-acc`, on `127.0.0.1:8089`, with its own state dir and `/opt/pauta-acc`. It runs as a dedicated `pauta-acc` user so code that isn't released yet can't read production data. Production moves to its own `pauta` user at the same time (it runs as `esaleh` today) |
+| Deploys | `pauta-deploy` takes the environment as an argument, with the sudo rule updated to match. A merge to `main` → CI → deploy to acceptance. A tag `vX.Y.Z` deploys to production only if that commit is deployed and healthy on acceptance (checked through GitHub Deployments). A manual approval click would need GitHub Pro for a private repo; until then the gate is "green on acceptance" plus a person running `make release` |
+| Data | Demo data (`pauta demo`), never a plain copy of production: production holds the team's clients' contacts (LGPD). If realistic volume is needed, add a refresh that copies production and anonymises names, phones, links and comments first |
+| Accounts | Passkeys are tied to their domain, so acceptance has its own accounts and invites. Nobody tests on production by accident |
+| Visual difference | `PAUTA_ENV=acc` shows an "ACEITAÇÃO" ribbon, a different title and theme colour, and its own `noindex` |
+| Monitoring | Watched like production, but alerts at a lower priority |
+
+The working agreement it enables: merge → the person who asked checks it on acceptance → release.
+
+## Consequences
+
+- About a day of work: a templated unit, an environment-aware `pauta-deploy`, a `deploy.yml`
+  job for `main`, the release gate, the ribbon, Caddy and DNS (the Squarespace record needs the
+  owner's passkey).
+- du7 runs two copies of Pauta: a little more memory (about 30 MB), and two of everything to
+  keep healthy.
+- Production's deploys get one more prerequisite, so a broken acceptance deploy blocks
+  releases until it's fixed or the gate is bypassed deliberately.
+
+## Alternatives considered
+
+- **A separate host for acceptance:** better isolation, but more cost and upkeep for a team
+  this size. Revisit if Pauta moves to a VPS for multi-team hosting; acceptance would then
+  live there too.
+- **Preview environments per pull request:** nice, but too much machinery for a single Pi.
+- **Release candidates (`vX.Y.Z-rc.N`) deployed to acceptance:** keeps acceptance stable
+  between merges, but adds a step to every change. Continuous deploys from `main` are
+  simpler; revisit if acceptance becomes too unstable for the team to test on.
