@@ -14,7 +14,7 @@ import sqlite3
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from . import __version__
 from .auth import Auth, AuthError
@@ -298,8 +298,10 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
 
         @route("DELETE", f"/api/clients/{ID}", "admin")
         def delete_client(self, viewer, _body, cid):
-            store.delete_client(int(cid))
-            return {"ok": True}
+            query = parse_qs(urlparse(self.path).query)
+            with_requests = query.get("with_requests") == ["1"]
+            n = store.delete_client(int(cid), with_requests=with_requests)
+            return {"ok": True, "requests_deleted": n}
 
         # ---- team and settings ------------------------------------------------------------
 

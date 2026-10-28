@@ -178,3 +178,48 @@ def test_backup_is_a_working_copy(store, client, tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM request").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_ads_page_is_free_text(store, client):
+    c = store.save_client({"ads_page": "  facebook.com/ads/library/?id=123  "}, client["id"])
+    assert c["ads_page"] == "facebook.com/ads/library/?id=123"  # not forced into a URL
+    c = store.save_client({"ads_page": "pedir ao cliente"}, client["id"])
+    assert c["ads_page"] == "pedir ao cliente"
+    assert len(store.save_client({"ads_page": "x" * 900}, client["id"])["ads_page"]) == 500
+
+
+def test_deleting_a_client_with_its_requests(store, client):
+    r = store.comment(new_request(store, client)["id"], "x", None)
+    new_request(store, client)
+    keep = store.save_client({"name": "Outro"})
+    kept = new_request(store, keep)
+    assert store.delete_client(client["id"], with_requests=True) == 2
+    with pytest.raises(NotFound):
+        store.request(r["id"])
+    assert [x["id"] for x in store.requests()] == [kept["id"]]
+    with store.db() as conn:  # timelines went too
+        assert (
+            conn.execute("SELECT COUNT(*) FROM event WHERE request=?", (r["id"],)).fetchone()[0]
+            == 0
+        )
+    assert store.delete_client(keep["id"], with_requests=True) == 1
+    with pytest.raises(NotFound):
+        store.delete_client(999, with_requests=True)
+
+
+def test_schema_v2_gets_the_ads_page_column(tmp_path):
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript(
+        "CREATE TABLE client (id INTEGER PRIMARY KEY, name TEXT NOT NULL, segment TEXT NOT NULL "
+        "DEFAULT '', contact TEXT NOT NULL DEFAULT '', whatsapp TEXT NOT NULL DEFAULT '', "
+        "instagram TEXT NOT NULL DEFAULT '', ad_account TEXT NOT NULL DEFAULT '', access TEXT NOT "
+        "NULL DEFAULT 'Pendente', drive_url TEXT NOT NULL DEFAULT '', since TEXT, state TEXT NOT "
+        "NULL DEFAULT 'Ativo', notes TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT "
+        "(datetime('now')), updated TEXT NOT NULL DEFAULT (datetime('now')));"
+        "INSERT INTO client(name) VALUES ('Antigo');"
+    )
+    conn.commit()
+    conn.close()
+    store = Store(tmp_path / "old.db")
+    assert store.clients()[0]["ads_page"] == ""
+    assert store.save_client({"ads_page": "x"}, 1)["ads_page"] == "x"

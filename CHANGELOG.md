@@ -7,6 +7,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Clients have a **Link da página de anúncios** (free text). It shows under *Atalhos* on the
+  client, and on every request in the *Briefing* and in *Dados do cliente*, each with a
+  *Copiar* button. A link opens in a new tab; anything else is shown as written.
+- The *Clientes* page filters by state (Todos, Ativo, Pausado, Encerrado), with counts. The
+  filter is kept in the address, so it survives a reload.
+- Admins can delete any client. One with requests is deleted together with them and their
+  history, after typing the client's name to confirm; to keep the history, mark the client
+  *Encerrado* instead.
+
 ## [1.0.0] - 2026-10-28
 
 The first versioned release. It covers everything since Pauta replaced the

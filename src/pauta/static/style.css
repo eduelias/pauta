@@ -157,6 +157,8 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .btn.big { height: 50px; padding: 0 22px; font-size: 16px; border-radius: 14px; }
 .btn.icon-only { width: 38px; padding: 0; }
 .btn:disabled { opacity: .55; cursor: default; }
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger-solid:hover:not(:disabled) { filter: brightness(1.06); }
 .linkbtn { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600;
   cursor: pointer; }
 
@@ -195,6 +197,7 @@ select.input { appearance: none; padding-right: 34px; cursor: pointer;
   cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: all .15s;
 }
 .seg button:hover, .chip:hover { border-color: var(--faint); }
+.seg button .n { opacity: .6; font-weight: 600; margin-left: 2px; }
 .seg button.on, .chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .seg.statuses button.on[data-v="todo"] { background: var(--s-todo-bg); border-color: var(--s-todo); color: var(--s-todo); }
 .seg.statuses button.on[data-v="doing"] { background: var(--s-doing-bg); border-color: var(--s-doing); color: var(--s-doing); }
@@ -371,6 +374,9 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .clientbox .row:last-child { border-bottom: 0; }
 .clientbox .row svg { color: var(--muted); }
 .clientbox .row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ads-page { gap: 8px; }
+.ads-page .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ads-page a.grow { color: var(--accent); font-weight: 600; }
 .clientbox a.row:hover .grow { color: var(--accent); }
 .copy { border: 0; background: var(--line-2); border-radius: 6px; padding: 2px 8px; font-size: 12px;
   font-weight: 650; color: var(--muted); cursor: pointer; }
