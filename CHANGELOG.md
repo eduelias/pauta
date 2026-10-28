@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
 ### Added
 
 - Clients have a **Link da página de anúncios** (free text). It shows under *Atalhos* on the
@@ -58,5 +60,6 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/eduelias/pauta/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0
