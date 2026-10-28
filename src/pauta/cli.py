@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+from . import __version__
 from .auth import Auth
 from .db import Store
 
@@ -226,6 +227,7 @@ def cmd_demo(args) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="pauta")
+    p.add_argument("--version", action="version", version=f"pauta {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("serve", help="run the web app")
     s.add_argument("--host", default="127.0.0.1")

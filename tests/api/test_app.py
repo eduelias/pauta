@@ -1,42 +1,13 @@
-"""End to end over HTTP: invites, passkeys, clients, requests and their timeline."""
+"""The API over real HTTP: invites, passkeys, clients, requests and their timeline."""
 
 import hashlib
 import json
 import sqlite3
 import urllib.request
 
-import pytest
-
 from pauta.auth import Auth
 from pauta.db import Store
-from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, login, start
-
-
-@pytest.fixture()
-def site(tmp_path):
-    store = Store(tmp_path / "pauta.db")
-    auth = Auth(store, enabled=True, rp_id=RP_ID, origins=[ORIGIN])
-    httpd, base = start(store, auth)
-    yield base, auth, store
-    httpd.shutdown()
-
-
-@pytest.fixture()
-def team(site):
-    """Renato (admin, from the CLI invite) and Piero (member, invited by Renato)."""
-    base, auth, store = site
-    token, _ = auth.create_invite(admin=True)
-    nato_key = SoftPasskey()
-    status, me, nato = join(base, token, "Renato Lima", nato_key)
-    assert status == 200 and me["is_admin"] and me["name"] == "Renato Lima"
-    status, inv, _ = call(f"{base}/api/invite", {}, nato)
-    assert status == 200 and inv["path"].startswith("/#/entrar/")
-    ptoken = inv["path"].rsplit("/", 1)[1]
-    info = call(f"{base}/api/invite/{ptoken}")[1]
-    assert info == {**info, "admin": False, "uses_left": 1, "invited_by": "Renato Lima"}
-    status, me, piero = join(base, ptoken, "Piero", SoftPasskey())
-    assert status == 200 and not me["is_admin"]
-    return base, nato, piero, nato_key
+from softpasskey import ORIGIN, SoftPasskey, call, join, login, start
 
 
 def test_anonymous_sees_nothing(site):
@@ -186,6 +157,7 @@ def test_open_mode(tmp_path):
         assert call(f"{base}/api/invite", {})[0] == 400
     finally:
         httpd.shutdown()
+        httpd.server_close()
 
 
 def test_link_preview_is_public(site):

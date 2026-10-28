@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "pauta"
 version = "0.1.0"
 description = "Pauta: the request queue between whoever sells the campaign and whoever runs it."
+readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Eduardo Elias Saleh" }]
 dependencies = [
@@ -13,11 +14,18 @@ dependencies = [
     "webauthn>=2.2,<4",
 ]
 
+[project.urls]
+Homepage = "https://pauta.genic.dev"
+Source = "https://github.com/eduelias/pauta"
+Changelog = "https://github.com/eduelias/pauta/blob/main/CHANGELOG.md"
+
 [project.scripts]
 pauta = "pauta.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.5"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5"]
+# browser tests (tests/e2e): `uv run --extra e2e playwright install chromium` once
+e2e = ["pytest>=8", "playwright>=1.45"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pauta"]
@@ -31,3 +39,17 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
+testpaths = ["tests"]
+# the browser tests need Chromium; CI runs them in their own job with `-m e2e`
+addopts = "-m 'not e2e' --strict-markers"
+markers = ["e2e: drives a real browser against a running server (needs playwright)"]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["pauta"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 90

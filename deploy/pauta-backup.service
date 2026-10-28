@@ -6,7 +6,18 @@ After=pauta.service
 [Service]
 Type=oneshot
 User=esaleh
-WorkingDirectory=/home/esaleh/reps/pauta
+Group=esaleh
 Environment=PAUTA_STATE_DIR=/home/esaleh/.local/share/pauta
+WorkingDirectory=/home/esaleh/.local/share/pauta
 # 30 days in ~/backups/pauta, plus a second copy on the NAS drive mounted on du7
-ExecStart=/home/esaleh/reps/pauta/.venv/bin/pauta backup --dir /home/esaleh/backups/pauta --keep-days 30 --copy-to /media/nas/backups/pauta
+ExecStart=/opt/pauta/current/bin/pauta backup --dir /home/esaleh/backups/pauta --keep-days 30 --copy-to /media/nas/backups/pauta
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# the "-" keeps the backup running when the NAS isn't mounted (the local copy still counts)
+ReadWritePaths=/home/esaleh/.local/share/pauta /home/esaleh/backups/pauta -/media/nas/backups/pauta
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=

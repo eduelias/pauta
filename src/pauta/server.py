@@ -10,11 +10,13 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import sqlite3
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import __version__
 from .auth import Auth, AuthError
 from .db import Invalid, NotFound, Store
 from .ratelimit import RateLimiter
@@ -95,7 +97,11 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
                 extra["Set-Cookie"] = cookie
             self.send_response(status)
             self._headers("application/json; charset=utf-8", len(body), extra)
-            self.wfile.write(body)
+            self._write(body)
+
+        def _write(self, body: bytes):
+            if self.command != "HEAD":
+                self.wfile.write(body)
 
         def _body(self) -> dict:
             n = int(self.headers.get("Content-Length") or 0)
@@ -123,7 +129,7 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
             if path == "/robots.txt":
                 self.send_response(200)
                 self._headers("text/plain", len(ROBOTS))
-                self.wfile.write(ROBOTS)
+                self._write(ROBOTS)
                 return
             rel = path.lstrip("/")
             target = (STATIC / rel).resolve() if rel else None
@@ -136,14 +142,18 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
             cache = "no-cache" if target.name == "index.html" else "public, max-age=300"
             self.send_response(200)
             self._headers(ctype, len(body), {"Cache-Control": cache})
-            self.wfile.write(body)
+            self._write(body)
 
         def _dispatch(self, method: str):
             path = urlparse(self.path).path
+            if path == "/healthz":
+                return self._health(method)
             if not path.startswith("/api/"):
-                if method != "GET":
+                if method not in ("GET", "HEAD"):
                     return self._json(405, {"error": "método não permitido"})
                 return self._static(path)
+            if method == "HEAD":
+                return self._json(405, {"error": "método não permitido"})
             try:
                 if method != "GET":
                     self._check_origin()
@@ -174,8 +184,22 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
             except NotFound as e:
                 self._json(404, {"error": str(e)})
 
+        def _health(self, method: str):
+            """For the deploy and uptime checks: no auth, no data, just "the DB answers"."""
+            if method not in ("GET", "HEAD"):
+                return self._json(405, {"error": "método não permitido"})
+            try:
+                with store.db() as db:
+                    db.execute("SELECT 1 FROM meta LIMIT 1").fetchone()
+            except sqlite3.Error:
+                return self._json(503, {"status": "error", "version": __version__})
+            self._json(200, {"status": "ok", "version": __version__})
+
         def do_GET(self):  # noqa: N802
             self._dispatch("GET")
+
+        def do_HEAD(self):  # noqa: N802
+            self._dispatch("HEAD")
 
         def do_POST(self):  # noqa: N802
             self._dispatch("POST")
@@ -216,6 +240,7 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
                 "options": store.options(),
                 "members": members,
                 "avatars": avatars,
+                "version": __version__,
             }
 
         @route("GET", "/api/export")
@@ -331,14 +356,7 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
         @route("POST", "/api/passkey/register/verify", "open")
         def register_verify(self, viewer, body):
             acc = auth.register_verify(body.get("flow"), body.get("credential") or {})
-            me = {
-                "auth": True,
-                "logged_in": True,
-                "account": acc["id"],
-                "name": acc["name"],
-                "is_admin": bool(acc["is_admin"]),
-            }
-            return me, auth.make_cookie(acc["id"], self._secure())
+            return auth.viewer_for(acc), auth.make_cookie(acc["id"], self._secure())
 
         @route("POST", "/api/passkey/login/options", "open")
         def login_options(self, viewer, _body):
@@ -349,14 +367,7 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
         @route("POST", "/api/passkey/login/verify", "open")
         def login_verify(self, viewer, body):
             acc = auth.login_verify(body.get("flow"), body.get("credential") or {})
-            me = {
-                "auth": True,
-                "logged_in": True,
-                "account": acc["id"],
-                "name": acc["name"],
-                "is_admin": bool(acc["is_admin"]),
-            }
-            return me, auth.make_cookie(acc["id"], self._secure())
+            return auth.viewer_for(acc), auth.make_cookie(acc["id"], self._secure())
 
         @route("POST", "/api/logout", "open")
         def logout(self, viewer, _body):

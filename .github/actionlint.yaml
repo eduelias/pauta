@@ -1,0 +1,3 @@
+# labels of the self-hosted runner on du7 (deploy.yml)
+self-hosted-runner:
+  labels: [du7, pauta]

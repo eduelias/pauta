@@ -12,7 +12,13 @@ let REQS = null;      // last /api/requests, for the nav counter
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Every navigation gets a number. A screen's GET that answers after the user has already
+// moved on is dropped (Stale) instead of drawing the old screen over the new one.
+let NAV_SEQ = 0, LOADING = 0;
+class Stale extends Error {}
+
 async function api(method, path, body) {
+  const nav = LOADING && method === "GET" ? NAV_SEQ : null;
   const opts = { method, headers: {} };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
@@ -24,6 +30,7 @@ async function api(method, path, body) {
     ME.logged_in = false;
     showGate();
   }
+  if (nav !== null && nav !== NAV_SEQ) throw new Stale(path);
   if (!res.ok) throw new Error(doc.error || res.statusText);
   return doc;
 }
@@ -256,14 +263,17 @@ async function route() {
   for (const [re, view] of ROUTES) {
     const m = path.match(re);
     if (m) {
+      const seq = ++NAV_SEQ;
       app.innerHTML = spinner();
+      LOADING++;
       try {
         await view(query, ...m.slice(1));
         app.firstElementChild?.classList.add("fadein");
       } catch (e) {
+        if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
         app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
-      }
-      window.scrollTo(0, 0);
+      } finally { LOADING--; }
+      if (seq === NAV_SEQ) window.scrollTo(0, 0);
       return;
     }
   }
@@ -848,6 +858,7 @@ async function viewTeam() {
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
         <textarea class="input" data-list="${k}" rows="9">${esc(o[k].join("\n"))}</textarea></div>`).join("")}</div>
       <div class="mt"><button class="btn" id="savelists">${icon("check")}Salvar listas</button></div></section>` : ""}
+    <p class="muted small mt" id="version">Pauta ${esc(BOOT.version || "")}</p>
   </div>`;
   $("#logout")?.addEventListener("click", logout);
   $("#addkey")?.addEventListener("click", addPasskey);

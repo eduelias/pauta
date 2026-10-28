@@ -28,11 +28,25 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 ## Commands
 
 ```
-uv venv && uv pip install -e '.[dev]'
-.venv/bin/pytest -q && .venv/bin/ruff check src tests      # line length 100
-PAUTA_STATE_DIR=/tmp/pauta .venv/bin/pauta demo            # made-up clients and requests
-PAUTA_STATE_DIR=/tmp/pauta .venv/bin/pauta serve           # http://localhost:8088, open mode
+make setup     # uv sync with dev + e2e extras, Chromium for Playwright
+make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what CI runs
+make test      # just unit and API tests (~3 s)
+make e2e       # just the browser tests (~10 s)
+make run       # http://localhost:8088, open mode, data in ./state
 ```
 
-Deploy and hosting: `deploy/README.md` (du7, Caddy, systemd, nightly backups). Never run
-`pauta demo` against du7's DB.
+Tests: `tests/unit` (no HTTP), `tests/api` (a real server on a free port, `SoftPasskey` in
+`tests/softpasskey.py` signs real WebAuthn responses), `tests/e2e` (Playwright + Chromium's
+virtual authenticator over CDP; marked `e2e`, skipped by default). Shared fixtures are in
+`tests/conftest.py`. Warnings are errors. Browser tests fail on any console error, CSP
+violation or unexpected 4xx/5xx: declare expected ones with `device.expected`.
+
+## Releases and deploys
+
+Never deploy by copying files to du7. Describe changes under `## [Unreleased]` in
+`CHANGELOG.md`, then `make release V=X.Y.Z` (on a clean, pushed main): the tag runs CI,
+publishes the GitHub release and deploys it through the self-hosted runner on du7, which
+can only run `/usr/local/sbin/pauta-deploy` as root. Rollback: Actions → Deploy → an older
+version, or `sudo pauta-deploy --rollback` on du7. Details: `deploy/README.md`. Never run
+`pauta demo` against du7's DB. Keep schema changes additive so an older release can run on
+a newer database.
