@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-28
+
 The first versioned release. It covers everything since Pauta replaced the
 "Controle de Clientes e Campanhas" spreadsheet.
 
@@ -45,4 +47,5 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/commits/main
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0
