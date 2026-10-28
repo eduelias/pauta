@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-28
+
 ### Fixed
 
 - Opening an invite link while signed in ("Você já entrou" → "Abrir a Pauta") left the app
@@ -97,7 +99,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/eduelias/pauta/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/eduelias/pauta/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/eduelias/pauta/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0
