@@ -141,3 +141,27 @@ def test_a_slow_screen_does_not_overwrite_the_next_one(live, device):
     page.wait_for_timeout(200)  # let the old screen's code run to the end
     expect(page.get_by_role("heading", name="Equipe")).to_be_visible()
     expect(page.locator("#rows")).to_have_count(0)
+
+
+@pytest.mark.parametrize("token", ["used", "fresh"])
+def test_signed_in_opening_an_invite_link_keeps_the_app_working(live, device, token):
+    """Regression (1.1.0 incident): an admin who tapped an invite link while signed in got
+    "Você já entrou", and after "Abrir a Pauta" every screen said "null is not an object
+    (evaluating 'BOOT.options')" until a reload."""
+    base, auth, store = live
+    mine, _ = auth.create_invite(admin=True)
+    store.save_client({"name": "Açougue Bom de Corte"})
+    laptop = device()
+    page = laptop.page
+    join(page, base, mine, "Piero Sales")
+    link = mine if token == "used" else auth.create_invite()[0]
+    page.goto(f"{base}/#/entrar/{link}")
+    page.reload()  # what tapping the link in WhatsApp does: a fresh load on the invite
+    expect(page.get_by_role("heading", name="Você já entrou")).to_be_visible()
+    page.get_by_role("link", name="Abrir a Pauta").click()
+    expect(page.get_by_role("heading", name=re.compile("^Boa"))).to_be_visible()
+    expect(page.locator("#mechip")).to_contain_text("Piero Sales")
+    for path, heading in [("quadro", "Quadro"), ("clientes", "Clientes"), ("novo", "Novo pedido")]:
+        page.goto(f"{base}/#/{path}")
+        expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
+    expect(page.locator("#app")).not_to_contain_text("null is not an object")
