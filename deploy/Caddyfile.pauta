@@ -1,0 +1,12 @@
+# Appended to /etc/caddy/Caddyfile on du7 (which also serves dom.du7.dev; its global block
+# binds 192.168.2.68 only and disables the :80 redirect server).
+pauta.genic.dev {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8088
+}

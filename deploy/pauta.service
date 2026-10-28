@@ -1,0 +1,23 @@
+# Pauta on du7. Install: see deploy/README.md.
+[Unit]
+Description=Pauta (pauta serve) on 127.0.0.1:8088
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=esaleh
+WorkingDirectory=/home/esaleh/reps/pauta
+Environment=PYTHONUNBUFFERED=1
+# the DB of record (accounts, passkeys, clients, requests); outside the checkout so a push never touches it
+Environment=PAUTA_STATE_DIR=/home/esaleh/.local/share/pauta
+# passkeys only work on the domain they were made on
+Environment=PAUTA_AUTH=passkeys
+Environment=PAUTA_RP_ID=pauta.genic.dev
+Environment=PAUTA_ORIGIN=https://pauta.genic.dev
+# loopback only: Caddy (pauta.genic.dev) is the one way in
+ExecStart=/home/esaleh/reps/pauta/.venv/bin/pauta serve --host 127.0.0.1 --port 8088
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

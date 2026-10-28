@@ -1,0 +1,10 @@
+[Unit]
+Description=Pauta: nightly pauta.db backup at 03:40
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,154 @@
+"""End to end over HTTP: invites, passkeys, clients, requests and their timeline."""
+
+import urllib.request
+
+import pytest
+
+from pauta.auth import Auth
+from pauta.db import Store
+from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, login, start
+
+
+@pytest.fixture()
+def site(tmp_path):
+    store = Store(tmp_path / "pauta.db")
+    auth = Auth(store, enabled=True, rp_id=RP_ID, origins=[ORIGIN])
+    httpd, base = start(store, auth)
+    yield base, auth, store
+    httpd.shutdown()
+
+
+@pytest.fixture()
+def team(site):
+    """Renato (admin, from the CLI invite) and Piero (member, invited by Renato)."""
+    base, auth, store = site
+    token, _ = auth.create_invite(admin=True)
+    nato_key = SoftPasskey()
+    status, me, nato = join(base, token, "Renato Lima", nato_key)
+    assert status == 200 and me["is_admin"] and me["name"] == "Renato Lima"
+    status, inv, _ = call(f"{base}/api/invite", {}, nato)
+    assert status == 200 and inv["path"].startswith("/#/entrar/")
+    ptoken = inv["path"].rsplit("/", 1)[1]
+    info = call(f"{base}/api/invite/{ptoken}")[1]
+    assert info == {**info, "admin": False, "uses_left": 1, "invited_by": "Renato Lima"}
+    status, me, piero = join(base, ptoken, "Piero", SoftPasskey())
+    assert status == 200 and not me["is_admin"]
+    return base, nato, piero, nato_key
+
+
+def test_anonymous_sees_nothing(site):
+    base, _, _ = site
+    assert call(f"{base}/api/me")[1]["logged_in"] is False
+    for path in ("/api/requests", "/api/clients", "/api/boot", "/api/members", "/api/export"):
+        assert call(f"{base}{path}")[0] == 401
+    assert call(f"{base}/api/clients", {"name": "X"})[0] == 401
+    with urllib.request.urlopen(f"{base}/") as r:  # the shell is public: it shows the login
+        assert r.status == 200 and b"app.js" in r.read()
+        assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+
+
+def test_invites_are_single_use_and_admin_only(team, site):
+    base, nato, piero, _ = team
+    _, auth, _ = site
+    assert call(f"{base}/api/invite", {}, piero)[0] == 403
+    token, _ = auth.create_invite()
+    assert join(base, token, "Ana", SoftPasskey())[0] == 200
+    assert join(base, token, "Mallory", SoftPasskey())[0] == 400
+    assert call(f"{base}/api/invite/{token}")[0] == 404
+
+
+def test_login_with_passkey(team):
+    base, _, _, nato_key = team
+    status, me, cookie = login(base, nato_key)
+    assert status == 200 and me["name"] == "Renato Lima" and cookie.startswith("pauta_session=")
+    assert call(f"{base}/api/me", cookie=cookie)[1]["logged_in"]
+    assert login(base, SoftPasskey())[0] == 400  # unknown passkey
+
+
+def test_request_flow(team):
+    base, nato, piero, _ = team
+    status, c, _ = call(
+        f"{base}/api/clients",
+        {"name": "Clínica Bem Estar", "segment": "Estética", "instagram": "@bemestar"},
+        nato,
+    )
+    assert status == 200 and c["state"] == "Ativo" and c["access"] == "Pendente"
+    assert call(f"{base}/api/clients", {"name": "clínica bem estar"}, nato)[0] == 400  # dup
+    body = {
+        "client": c["id"],
+        "kind": "Criar campanha",
+        "what": "Limpeza de pele -20%",
+        "budget": "1.500,00",
+        "due": "2026-11-05",
+        "priority": "Alta",
+        "creatives_url": "drive.google.com/x",
+    }
+    status, r, _ = call(f"{base}/api/requests", body, nato)
+    assert status == 200 and r["status"] == "todo" and r["budget"] == 1500.0
+    assert r["creatives_url"] == "https://drive.google.com/x"
+    assert r["created_by_name"] == "Renato Lima" and r["client_name"] == "Clínica Bem Estar"
+    # Piero picks it up, then waits on Renato
+    status, r, _ = call(f"{base}/api/requests/{r['id']}", {"status": "doing"}, piero, "PATCH")
+    assert status == 200
+    r = call(
+        f"{base}/api/requests/{r['id']}", {"status": "waiting", "missing": "acesso"}, piero, "PATCH"
+    )[1]
+    r = call(f"{base}/api/requests/{r['id']}/comments", {"text": "Liberei!"}, nato)[1]
+    r = call(f"{base}/api/requests/{r['id']}", {"status": "done"}, piero, "PATCH")[1]
+    assert r["done_on"]  # set on completion
+    kinds = [(e["kind"], e["account_name"]) for e in r["events"]]
+    assert kinds == [
+        ("created", "Renato Lima"),
+        ("status", "Piero"),
+        ("status", "Piero"),
+        ("edited", "Piero"),
+        ("comment", "Renato Lima"),
+        ("status", "Piero"),
+    ]
+    assert r["events"][-1]["text"] == "waiting>done"
+    # bad values are refused, not stored
+    for bad in (
+        {"status": "lost"},
+        {"due": "05/11/2026"},
+        {"creatives_url": "javascript:x"},
+        {"budget": "muito"},
+        {"client": 999},
+        {"what": ""},
+    ):
+        assert call(f"{base}/api/requests/{r['id']}", bad, piero, "PATCH")[0] == 400, bad
+    # members can't delete; the admin can, and a client with requests can't be deleted
+    assert call(f"{base}/api/requests/{r['id']}", cookie=piero, method="DELETE")[0] == 403
+    assert call(f"{base}/api/clients/{c['id']}", cookie=nato, method="DELETE")[0] == 400
+    assert call(f"{base}/api/requests/{r['id']}", cookie=nato, method="DELETE")[0] == 200
+    assert call(f"{base}/api/clients/{c['id']}", cookie=nato, method="DELETE")[0] == 200
+
+
+def test_cross_origin_writes_refused(team):
+    base, nato, _, _ = team
+    evil = {"Origin": "https://evil.example"}
+    assert call(f"{base}/api/clients", {"name": "X"}, nato, headers=evil)[0] == 403
+    assert call(f"{base}/api/clients", {"name": "X"}, nato, headers={"Origin": ORIGIN})[0] == 200
+
+
+def test_admin_tools(team):
+    base, nato, piero, _ = team
+    members = call(f"{base}/api/members", cookie=piero)[1]
+    pid = next(m["id"] for m in members if m["name"] == "Piero")
+    rid = next(m["id"] for m in members if m["name"] == "Renato Lima")
+    assert call(f"{base}/api/members/{rid}", {"disabled": True}, piero, "PATCH")[0] == 403
+    assert call(f"{base}/api/members/{rid}", {"disabled": True}, nato, "PATCH")[0] == 400  # self
+    assert call(f"{base}/api/members/{pid}", {"disabled": True}, nato, "PATCH")[0] == 200
+    assert call(f"{base}/api/requests", cookie=piero)[0] == 401  # disabled: session dead
+    opts = call(f"{base}/api/options/kind", {"values": ["A", "a", " B ", ""]}, nato, "PUT")[1]
+    assert opts["kind"] == ["A", "B"]
+
+
+def test_open_mode(tmp_path):
+    store = Store(tmp_path / "pauta.db")
+    httpd, base = start(store, Auth(store, enabled=False))
+    try:
+        assert call(f"{base}/api/me")[1]["is_admin"]
+        assert call(f"{base}/api/clients", {"name": "Local"})[0] == 200
+        assert call(f"{base}/api/invite", {})[0] == 400
+    finally:
+        httpd.shutdown()
