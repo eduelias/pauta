@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__
+from . import __version__, obs
 from .auth import Auth
 from .db import Store
 
@@ -29,6 +29,8 @@ def cmd_serve(args) -> None:
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth))
     mode = f"passkeys on {auth.rp_id}" if auth.enabled else "open (no accounts)"
     print(f"pauta on http://{args.host}:{args.port} ({mode}), db {store.path}", flush=True)
+    obs.setup_logging()
+    obs.event("start", version=__version__, auth="passkeys" if auth.enabled else "open")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

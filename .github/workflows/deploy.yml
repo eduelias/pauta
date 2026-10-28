@@ -99,3 +99,30 @@ jobs:
           [ "$live" = "$VERSION" ] || { echo "pauta.genic.dev says ${live:-nothing}, expected $VERSION"; exit 1; }
           curl -fsS https://pauta.genic.dev/ | grep -q 'og:image'
           echo "pauta.genic.dev answers $VERSION from the internet" >> "$GITHUB_STEP_SUMMARY"
+
+  alert:
+    name: WhatsApp if the deploy failed
+    needs: [fetch, du7, public]
+    # a deploy started by a release is reported by release.yml's own alert job
+    if: failure() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/alert.py
+          sparse-checkout-cone-mode: false
+      - name: Send the alert template
+        env:
+          WA_TOKEN: ${{ secrets.WA_TOKEN }}
+          WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
+          WA_TO: ${{ secrets.WA_TO }}
+          WA_TEMPLATE: ${{ vars.WA_TEMPLATE }}
+          VERSION: ${{ inputs.version }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STAGES: >-
+            fetch ${{ needs.fetch.result }}, du7 ${{ needs.du7.result }},
+            internet check ${{ needs.public.result }}
+        run: |
+          python3 scripts/alert.py "pauta deploy $VERSION" \
+            "failed ($STAGES). A failed deploy rolls back to the previous release. $RUN"

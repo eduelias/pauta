@@ -17,6 +17,8 @@ WorkingDirectory=/home/esaleh/.local/share/pauta
 Environment=PAUTA_AUTH=passkeys
 Environment=PAUTA_RP_ID=pauta.genic.dev
 Environment=PAUTA_ORIGIN=https://pauta.genic.dev
+# the newest nightly backup's age shows in /metrics (read only: ProtectHome=read-only)
+Environment=PAUTA_BACKUP_DIR=/home/esaleh/backups/pauta
 # loopback only: Caddy (pauta.genic.dev) is the one way in
 ExecStart=/opt/pauta/current/bin/pauta serve --host 127.0.0.1 --port 8088
 Restart=on-failure
