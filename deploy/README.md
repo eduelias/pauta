@@ -9,7 +9,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 
 | What | Where |
 |---|---|
-| DNS | Squarespace, `genic.dev` → DNS → custom record `pauta` A `145.53.203.87` (the static home IP, same as `dom.du7.dev`) |
+| DNS | Squarespace, `genic.dev` → DNS → custom record `pauta` CNAME `du7.sytes.net`, TTL 1 hr (the No-IP name the router keeps on the home IP, same as `dom.du7.dev`). Editing it asks for the account passkey |
 | Router | the existing TCP 443 → 192.168.2.68:443 forward (shared with dom.du7.dev; nothing new) |
 | Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
 | Code | `~/reps/pauta` on du7 (an rsync copy, not a git checkout), venv in `.venv` |
