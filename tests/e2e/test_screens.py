@@ -5,7 +5,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from pauta import cli
+from pauta import __version__, cli
 
 pytestmark = pytest.mark.e2e
 
@@ -56,6 +56,8 @@ def test_every_screen(signed_in, layout):
         expect(page.locator("#app .spinner")).to_have_count(0)
     nav = page.locator("#tabbar" if layout == "phone" else "#nav")
     expect(nav).to_be_visible()
+    brand = page.locator(".topbar .brand" if layout == "phone" else ".side .brand")
+    expect(brand.locator(".ver")).to_have_text(f"v{__version__}")
 
 
 def test_gravatar_shows_over_the_initials(signed_in):
