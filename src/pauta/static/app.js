@@ -203,6 +203,11 @@ function renderShell() {
   const top = $("#topnew");
   top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
+  // the live release, small, next to the name (sidebar and phone top bar)
+  $$(".brand").forEach((b) => {
+    b.querySelector(".ver")?.remove();
+    if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">v${esc(BOOT.version)}</span>`);
+  });
   markNav();
 }
 

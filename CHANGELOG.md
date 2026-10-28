@@ -7,6 +7,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- The version that's live shows in small type next to the Pauta name, in the sidebar and in
+  the phone's top bar (it's also at the bottom of the Equipe page).
+
 ## [1.2.0] - 2026-10-28
 
 ### Added
