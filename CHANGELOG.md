@@ -18,6 +18,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   Pauta", the back button, an edited address, a fresh load on any screen), on a laptop and a
   phone, each walking every screen through the menu and checking it drew, not the 😕 error.
 
+## [1.2.2] - 2026-10-28
+
+### Added
+
+- The version that's live shows in small type next to the Pauta name, in the sidebar and in
+  the phone's top bar (it's also at the bottom of the Equipe page).
+
 ## [1.2.1] - 2026-10-28
 
 ### Fixed
@@ -110,7 +117,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/eduelias/pauta/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/eduelias/pauta/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/eduelias/pauta/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/eduelias/pauta/compare/v1.0.0...v1.1.0
