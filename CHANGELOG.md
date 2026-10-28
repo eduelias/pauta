@@ -7,6 +7,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- On a phone, the Quadro's columns widened the whole page, which pushed the tab bar off the
+  screen, so there was no way to leave the Quadro without the browser's back button.
+
+### Added
+
+- Browser tests for every way a signed-in person arrives (an invite link then "Abrir a
+  Pauta", the back button, an edited address, a fresh load on any screen), on a laptop and a
+  phone, each walking every screen through the menu and checking it drew, not the 😕 error.
+
 ## [1.2.1] - 2026-10-28
 
 ### Fixed
