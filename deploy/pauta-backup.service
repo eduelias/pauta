@@ -21,3 +21,5 @@ PrivateTmp=yes
 PrivateDevices=yes
 RestrictAddressFamilies=AF_UNIX
 CapabilityBoundingSet=
+# the DB holds the session-signing secret: copies are for the service user only
+UMask=0077

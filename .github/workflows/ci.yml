@@ -33,7 +33,7 @@ jobs:
       - name: Lockfile is up to date
         run: uv lock --check
         env:
-          UV_FROZEN: ""
+          UV_FROZEN: "false"
       - name: Ruff (lint)
         run: uv run --extra dev ruff check --output-format=github src tests scripts tools
       - name: Ruff (format)

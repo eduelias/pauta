@@ -29,8 +29,8 @@ install -d -o root -g root -m 0755 /opt/pauta /opt/pauta/releases
 for unit in pauta.service pauta-backup.service pauta-backup.timer; do
     install -o root -g root -m 0644 "$HERE/$unit" "/etc/systemd/system/$unit"
 done
-runuser -u "$SERVICE_USER" -- mkdir -p /home/$SERVICE_USER/.local/share/pauta \
-    /home/$SERVICE_USER/backups/pauta/pre-deploy
+runuser -u "$SERVICE_USER" -- mkdir -p -m 0700 /home/$SERVICE_USER/.local/share/pauta \
+    /home/$SERVICE_USER/backups/pauta /home/$SERVICE_USER/backups/pauta/pre-deploy
 if mountpoint -q /media/nas; then
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" /media/nas/backups/pauta
 fi
@@ -74,4 +74,4 @@ if [ -n "$TOKEN_FILE" ] && [ ! -f "$dir/.runner" ]; then
         --work _work)
     (cd "$dir" && ./svc.sh install "$RUNNER_USER" && ./svc.sh start)
 fi
-echo "provisioned: pauta-deploy, units, sudo rule, runner $(cd "$dir" && ./config.sh --version)"
+echo "provisioned: pauta-deploy, units, sudo rule, runner $(cd "$dir" && runuser -u "$RUNNER_USER" -- ./config.sh --version)"
