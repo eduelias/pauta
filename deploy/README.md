@@ -84,6 +84,27 @@ The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user
 shell and no groups, and keeps itself updated. Its jobs run whatever a pushed workflow says
 with that user's rights, so only push workflows you've read.
 
+## Monitoring and alarms
+
+| What | Where | Alerts |
+|---|---|---|
+| Logs | `journalctl -u pauta` (one JSON line per request; `-p err` for errors with tracebacks), `journalctl -t pauta-deploy` | |
+| Numbers | `curl -s 127.0.0.1:8088/metrics` on du7 (refused through Caddy): request and 5xx counts, the last 15 min's latency and failing routes, DB size, newest backup age | |
+| Watchdog | `~/du7-watchdog.py` (cron, every 5 min; `--status` for the table): `pauta` (unit + `/healthz`, restarts it after 2 strikes, never during a deploy), `pauta-5xx` (3+ in 15 min), `pauta-backup` (newest under 26 h, else runs `pauta-backup` once), `pauta-backup-nas`, `pauta-tls` (over 14 days left), `pauta-runner` (restarts it), `pauta-deploy` (last line of `deploy.log` is `FAILED`) | IRC #du7; WhatsApp when a heal didn't help or there is none (at most once per check per 6 h) |
+| From outside | `.github/workflows/uptime.yml`, hourly on GitHub's machines | an issue labelled `uptime` (GitHub email and app push) and WhatsApp; closed with one more WhatsApp when it's back |
+| Releases and deploys | the `alert` jobs in `release.yml` and `deploy.yml` | WhatsApp with the failed stages and the run link |
+
+WhatsApp alerts use the approved **utility** template `du7_service_status` ({{1}} source,
+{{2}} detail) on the famulus number, so they arrive even when nobody has written to famulus in
+24 hours (plain text is silently dropped then). From GitHub they go straight to the Meta Cloud
+API (`scripts/alert.py`, repository secrets `WA_TOKEN`, `WA_PHONE_ID`, `WA_TO`; optional
+variable `WA_TEMPLATE`). On du7 the watchdog posts `{"text", "alert"}` to wa-notify
+(`~/wa-notify/notify.py`, :8095), which sends the same template.
+
+To try the alarm: pause healing (`echo $(( $(date +%s) + 1800 )) > ~/.du7-watchdog-off`),
+`sudo systemctl stop pauta`, run `python3 ~/du7-watchdog.py` four times (strikes, then the
+escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to IRC.
+
 ## People
 
 - The first admin: on du7, `PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta

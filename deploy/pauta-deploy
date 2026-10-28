@@ -29,7 +29,10 @@ export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, n
 
 log() { echo "pauta-deploy: $*" >&2; }
 die() { log "$*"; exit 1; }
-record() { echo "$(date -Is) $*" >> "$ROOT/deploy.log"; }
+record() {  # deploy.log, and the journal (journalctl -t pauta-deploy); FAILED is an error
+    echo "$(date -Is) $*" >> "$ROOT/deploy.log"
+    logger -t pauta-deploy -p "user.$([[ $* == FAILED* ]] && echo err || echo notice)" -- "$*" || true
+}
 as_user() { runuser -u "$SERVICE_USER" -- "$@"; }
 version_of() { basename "$(readlink -e "$1" 2>/dev/null || echo none)"; }
 

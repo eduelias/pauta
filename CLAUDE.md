@@ -17,6 +17,8 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 - `src/pauta/auth.py`: passkey-only accounts, modelled on dominion-archive's. One team, no
   sign-up: invites only (`pauta invite --admin` for the first, then the Equipe page). The first
   account is an admin. Without `PAUTA_AUTH=passkeys` the app runs open (local dev).
+- `src/pauta/obs.py`: JSON request logs (route patterns, never raw paths, bodies or personal
+  data) and the numbers behind `GET /metrics` (loopback only, for du7's watchdog).
 - `src/pauta/server.py`: `/api/...` JSON; everything but login/join needs a session (client
   data is private). Writes from a foreign `Origin` are refused; cookie is SameSite=Strict.
 - `src/pauta/static/`: one vanilla-JS app (`app.js`, hash routes `#/...`), `style.css` (light

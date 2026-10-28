@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from pauta import __version__, cli
+from pauta import __version__, cli, obs
 from pauta.auth import Auth
 from pauta.db import Store
 
@@ -106,3 +106,5 @@ def test_serve_wires_store_auth_and_server(state, monkeypatch, capsys):
     cli.main(["serve", "--port", "9999"])
     assert served["addr"] == ("127.0.0.1", 9999)
     assert "passkeys on pauta.example" in capsys.readouterr().out
+    handler = obs.setup_logging()  # serve set it up (to stderr); leave the logger clean
+    obs.log.removeHandler(handler)

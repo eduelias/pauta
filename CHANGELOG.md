@@ -7,6 +7,35 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Structured logs: one JSON line per request in the journal (`journalctl -u pauta`) with the
+  method, the route pattern (`/api/requests/{id}`, never the raw path), the status, the
+  duration and the account id. No request bodies, IPs, names, cookies or invite tokens. Also
+  `start` (with the version), `auth_failed`, `rate_limited` and `error` (with the traceback)
+  events; errors are journal errors (`journalctl -u pauta -p err`).
+- `GET /metrics` on 127.0.0.1:8088 only (refused through Caddy): requests and 5xx since the
+  start, the last 15 minutes' requests, 5xx, p50/p95 latency and failing routes, the database
+  size and the age of the newest nightly backup.
+- du7's watchdog checks Pauta every 5 minutes: the service and `/healthz` (restarts it), the
+  5xx rate, the nightly backup and its NAS copy (under 26 h), the TLS certificate (over 14
+  days left), the GitHub runner, and failed deploys. Alerts go to IRC #du7 and WhatsApp.
+- An hourly uptime check from GitHub (`uptime.yml`) that works when du7 or the home internet
+  is down: it opens an issue labelled `uptime` and sends a WhatsApp alert, and closes the issue
+  when the site is back.
+- A WhatsApp alert when a release or a manual deploy fails. Alerts use the approved
+  `du7_service_status` template, so they arrive even outside WhatsApp's 24-hour window.
+
+### Fixed
+
+- A crash in a request now answers 500 with a message and logs the traceback; the connection
+  used to drop, which Caddy showed as a 502.
+
+### Changed
+
+- `pauta-deploy` also writes its deploys, switches and rollbacks to the journal
+  (`journalctl -t pauta-deploy`; failures at error priority).
+
 ## [1.1.0] - 2026-10-28
 
 ### Added

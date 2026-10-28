@@ -68,3 +68,28 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       version: ${{ needs.publish.outputs.version }}
+
+  alert:
+    name: WhatsApp if the release failed
+    needs: [ci, publish, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/alert.py
+          sparse-checkout-cone-mode: false
+      - name: Send the alert template
+        env:
+          WA_TOKEN: ${{ secrets.WA_TOKEN }}
+          WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
+          WA_TO: ${{ secrets.WA_TO }}
+          WA_TEMPLATE: ${{ vars.WA_TEMPLATE }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STAGES: >-
+            CI ${{ needs.ci.result }}, publish ${{ needs.publish.result }},
+            deploy ${{ needs.deploy.result }}
+        run: |
+          python3 scripts/alert.py "pauta release $GITHUB_REF_NAME" \
+            "failed ($STAGES). A failed deploy rolls back to the previous release. $RUN"

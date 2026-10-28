@@ -8,15 +8,18 @@ session cookie is SameSite=Strict.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
+import os
 import re
 import sqlite3
 import time
+import traceback
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__
+from . import __version__, obs
 from .auth import Auth, AuthError
 from .db import Invalid, NotFound, Store
 from .ratelimit import RateLimiter
@@ -38,6 +41,9 @@ RATE_BUCKETS = {
     "/api/passkey/login/verify": "login",
 }
 ID = r"(\d{1,9})"
+# passkey answers that fail are logged as auth_failed (the request line has the status too)
+AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
+QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
 
 
 class Reply(Exception):
@@ -46,8 +52,14 @@ class Reply(Exception):
         self.status, self.doc = status, doc
 
 
-def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
+def make_handler(
+    store: Store,
+    auth: Auth,
+    limiter: RateLimiter | None = None,
+    metrics: obs.Metrics | None = None,
+):
     limiter = limiter or RateLimiter()
+    metrics = metrics or obs.Metrics()
     routes: list[tuple[str, re.Pattern, str, str]] = []  # method, path, handler, access
 
     def route(method: str, pattern: str, access: str = "member"):
@@ -60,10 +72,68 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "pauta"
         sys_version = ""
+        # buffered: a response leaves when do_* returns, after its log line and metrics
+        wbufsize = -1
 
-        def log_message(self, fmt, *args):  # quieter: method, path, status only
-            if not str(args[1] if len(args) > 1 else "").startswith("2"):
-                super().log_message(fmt, *args)
+        def log_request(self, code="-", size="-"):  # _observed logs requests as JSON
+            pass
+
+        def log_error(self, fmt, *args):  # malformed requests, before any route: no details
+            obs.event("protocol_error", logging.WARNING, status=args[0] if args else None)
+
+        def send_response(self, code, message=None):
+            self._status = code
+            super().send_response(code, message)
+
+        def _label(self, path: str) -> str:
+            if path in QUIET:
+                return path
+            if not path.startswith("/api/"):
+                return "static"
+            for _, pattern, _, _ in routes:
+                if pattern.match(path):
+                    return obs.route_label(pattern.pattern)
+            return "/api/unknown"
+
+        def _observed(self, method: str):
+            """Every request: dispatch, turn a crash into a 500, then one log line."""
+            start = time.perf_counter()
+            self._status, self._account = 0, None
+            path = urlparse(self.path).path
+            try:
+                self._dispatch(method)
+            except (BrokenPipeError, ConnectionResetError):
+                self._status = self._status or 499  # the client went away
+            except Exception:
+                obs.event(
+                    "error",
+                    logging.ERROR,
+                    method=method,
+                    route=self._label(path),
+                    traceback=traceback.format_exc(),
+                )
+                if not self._status:
+                    self._json(500, {"error": "erro interno; tente de novo"})
+                self._status = 500
+            ms = round((time.perf_counter() - start) * 1000, 1)
+            route = self._label(path)
+            if route in QUIET and self._status < 400:
+                return
+            metrics.record(route, self._status, ms)
+            level = logging.ERROR if self._status >= 500 else logging.INFO
+            obs.event(
+                "request",
+                level,
+                method=method,
+                route=route,
+                status=self._status,
+                ms=ms,
+                account=self._account,
+            )
+            if route in AUTH_ROUTES and self._status != 200:
+                obs.event("auth_failed", logging.WARNING, route=route, status=self._status)
+            elif self._status == 429:
+                obs.event("rate_limited", logging.WARNING, route=route)
 
         # ---- plumbing ---------------------------------------------------------------------
 
@@ -148,6 +218,8 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
             path = urlparse(self.path).path
             if path == "/healthz":
                 return self._health(method)
+            if path == "/metrics":
+                return self._metrics(method)
             if not path.startswith("/api/"):
                 if method not in ("GET", "HEAD"):
                     return self._json(405, {"error": "método não permitido"})
@@ -163,6 +235,7 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
                     if wait:
                         raise Reply(429, {"error": f"muitas tentativas; espere {wait}s"})
                 viewer = auth.viewer(self.headers.get("Cookie"))
+                self._account = viewer["account"]
                 for m, pattern, name, access in routes:
                     match = pattern.match(path)
                     if m != method or not match:
@@ -195,23 +268,41 @@ def make_handler(store: Store, auth: Auth, limiter: RateLimiter | None = None):
                 return self._json(503, {"status": "error", "version": __version__})
             self._json(200, {"status": "ok", "version": __version__})
 
+        def _metrics(self, method: str):
+            """For du7's watchdog: straight to 127.0.0.1:8088 only. Caddy always adds
+            X-Forwarded-For, so through pauta.genic.dev this is a 404."""
+            if not self._proxied() or self.headers.get("X-Forwarded-For"):
+                return self._json(404, {"error": "não encontrado"})
+            if method not in ("GET", "HEAD"):
+                return self._json(405, {"error": "método não permitido"})
+            backups = os.environ.get("PAUTA_BACKUP_DIR")
+            doc = {
+                "version": __version__,
+                **metrics.snapshot(),
+                "db": {"bytes": obs.file_bytes(store.path)},
+                "backup": {"dir": backups, "newest_age_s": obs.newest_age(backups)}
+                if backups
+                else None,
+            }
+            self._json(200, doc)
+
         def do_GET(self):  # noqa: N802
-            self._dispatch("GET")
+            self._observed("GET")
 
         def do_HEAD(self):  # noqa: N802
-            self._dispatch("HEAD")
+            self._observed("HEAD")
 
         def do_POST(self):  # noqa: N802
-            self._dispatch("POST")
+            self._observed("POST")
 
         def do_PUT(self):  # noqa: N802
-            self._dispatch("PUT")
+            self._observed("PUT")
 
         def do_PATCH(self):  # noqa: N802
-            self._dispatch("PATCH")
+            self._observed("PATCH")
 
         def do_DELETE(self):  # noqa: N802
-            self._dispatch("DELETE")
+            self._observed("DELETE")
 
         # ---- who am I ---------------------------------------------------------------------
 

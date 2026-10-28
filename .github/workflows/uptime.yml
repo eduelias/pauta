@@ -1,0 +1,90 @@
+# Is https://pauta.genic.dev up, seen from outside the house? du7's own watchdog can't tell
+# when du7 or the home internet is down, so this runs on GitHub's machines, every hour.
+#
+# Down: opens one issue labelled `uptime` (GitHub email and app push) and sends a WhatsApp
+# template alert (delivered even outside the 24-hour window). Still down: a comment on that
+# issue, no new WhatsApp. Back up: closes the issue and sends one more WhatsApp.
+# Hourly, because this private repo pays for Actions minutes (each run counts as one).
+name: Uptime
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+env:
+  URL: https://pauta.genic.dev/healthz
+  TITLE: pauta.genic.dev is down
+
+jobs:
+  probe:
+    name: pauta.genic.dev/healthz
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/alert.py
+          sparse-checkout-cone-mode: false
+      - name: Ask /healthz (4 tries over about a minute)
+        id: probe
+        run: |
+          body=$RUNNER_TEMP/healthz err=$RUNNER_TEMP/curl.err
+          for i in 1 2 3 4; do
+            code=$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' "$URL" 2>"$err" || true)
+            status=$(jq -r .status "$body" 2>/dev/null || true)
+            if [ "$code" = 200 ] && [ "$status" = ok ]; then
+              echo "state=up" >> "$GITHUB_OUTPUT"
+              echo "up: $(cat "$body")" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ "${code:-000}" = 000 ]; then
+              detail=$(tr -d '\n' < "$err")
+            else
+              detail="HTTP $code, status ${status:-not JSON}"
+            fi
+            echo "try $i: $detail"
+            [ "$i" = 4 ] || sleep 15
+            : > "$body"
+          done
+          echo "state=down" >> "$GITHUB_OUTPUT"
+          echo "detail=$detail" >> "$GITHUB_OUTPUT"
+          echo "down: $detail" >> "$GITHUB_STEP_SUMMARY"
+      - name: Open, update or close the outage issue; WhatsApp on changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ steps.probe.outputs.state }}
+          DETAIL: ${{ steps.probe.outputs.detail }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WA_TOKEN: ${{ secrets.WA_TOKEN }}
+          WA_PHONE_ID: ${{ secrets.WA_PHONE_ID }}
+          WA_TO: ${{ secrets.WA_TO }}
+          WA_TEMPLATE: ${{ vars.WA_TEMPLATE }}
+        run: |
+          gh label create uptime --color B60205 --description "pauta.genic.dev outages" \
+            2>/dev/null || true
+          open=$(gh issue list --label uptime --state open --json number --jq '.[0].number // empty')
+          now=$(date -u '+%Y-%m-%d %H:%M UTC')
+          if [ "$STATE" = down ]; then
+            if [ -z "$open" ]; then
+              gh issue create --label uptime --title "$TITLE" --body \
+                "Seen from GitHub at $now: $DETAIL. Checked every hour; closed when it answers again. Run: $RUN"
+              python3 scripts/alert.py "pauta.genic.dev" \
+                "down, seen from GitHub at $now: $DETAIL. du7 or the home internet may be down. $RUN"
+            else
+              gh issue comment "$open" --body "Still down at $now: $DETAIL. $RUN"
+            fi
+            exit 1  # a red run is GitHub's own email, too
+          fi
+          if [ -n "$open" ]; then
+            gh issue close "$open" --comment "Back up at $now. $RUN"
+            python3 scripts/alert.py "pauta.genic.dev" "back up at $now (outage issue #$open closed)."
+          fi
