@@ -256,6 +256,8 @@ async function route() {
   const { path, query } = hashParts();
   if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
   if (ME.auth && !ME.logged_in) return showGate();
+  // signed in without the boot data, e.g. the page was opened on an invite link: load it first
+  if (!BOOT) return enter();
   $("#gate").hidden = true;
   $("#shell").hidden = false;
   $(".menu")?.remove();
