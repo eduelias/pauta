@@ -7,3 +7,7 @@ state/
 *.db-*
 .DS_Store
 .claude/
+dist/
+test-results/
+.coverage
+coverage.xml

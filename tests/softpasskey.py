@@ -77,9 +77,10 @@ class SoftPasskey:
         }
 
 
-def start(store, auth):
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(store, auth))
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+def start(store, auth, limiter=None):
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(store, auth, limiter))
+    # a short poll so shutdown() doesn't wait half a second per test
+    threading.Thread(target=httpd.serve_forever, args=(0.02,), daemon=True).start()
     return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
 
 

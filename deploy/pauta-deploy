@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Install a Pauta release on du7, switch to it, and roll back if it doesn't come up healthy.
+#
+#   pauta-deploy X.Y.Z WHEEL LOCKFILE   install release X.Y.Z and switch to it
+#   pauta-deploy --rollback             switch back to the release before the current one
+#   pauta-deploy --status               what is live and what is installed
+#
+# Lives at /usr/local/sbin/pauta-deploy (root:root 0755). The GitHub runner user may run it
+# with sudo and nothing else, so every argument is checked here; see deploy/README.md.
+#
+# Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (owned by the service user)
+#          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
+#          /opt/pauta/previous          -> the one before, for --rollback
+#          /opt/pauta/deploy.log        one line per deploy, switch and rollback
+set -euo pipefail
+umask 022
+
+ROOT=/opt/pauta
+RELEASES=$ROOT/releases
+SERVICE=pauta
+SERVICE_USER=esaleh
+STATE_DIR=/home/esaleh/.local/share/pauta
+BACKUPS=/home/esaleh/backups/pauta/pre-deploy
+HEALTH=http://127.0.0.1:8088/healthz
+KEEP=5            # releases kept on disk (current and previous are never pruned)
+PYTHON=/usr/bin/python3
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, no piwheels
+
+log() { echo "pauta-deploy: $*" >&2; }
+die() { log "$*"; exit 1; }
+record() { echo "$(date -Is) $*" >> "$ROOT/deploy.log"; }
+as_user() { runuser -u "$SERVICE_USER" -- "$@"; }
+version_of() { basename "$(readlink -e "$1" 2>/dev/null || echo none)"; }
+
+health_version() {
+    # the version /healthz reports, within ~15 s, or nothing
+    local out
+    for _ in $(seq 30); do
+        if out=$(curl -fsS --max-time 2 "$HEALTH" 2>/dev/null); then
+            "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+switch_to() {  # atomically point `current` at a release dir and restart
+    ln -sfn "$1" "$ROOT/current.new"
+    mv -T "$ROOT/current.new" "$ROOT/current"
+    systemctl restart "$SERVICE"
+}
+
+# release dirs are only ever named X.Y.Z (checked in main), so ls is safe below
+# shellcheck disable=SC2012
+status() {
+    echo "live:     $(version_of "$ROOT/current") (healthz: $(health_version || echo down))"
+    echo "previous: $(version_of "$ROOT/previous")"
+    echo "on disk:  $(ls -1t "$RELEASES" 2>/dev/null | tr '\n' ' ')"
+    echo "recent:"
+    tail -n 5 "$ROOT/deploy.log" 2>/dev/null | sed 's/^/  /' || true
+}
+
+backup_db() {
+    # online SQLite backup with the system Python, so it never runs the new release's code
+    # (which would migrate the schema before the switch)
+    [ -f "$STATE_DIR/pauta.db" ] || return 0
+    local out
+    out="$BACKUPS/pauta-$(date +%Y%m%d-%H%M%S)-before-$1.db"
+    # the DB holds the session-signing secret: backups are for the service user only
+    as_user mkdir -p -m 0700 "$BACKUPS"
+    as_user "$PYTHON" -c 'import os,sqlite3,sys
+os.umask(0o077)
+s, d = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
+s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
+    as_user find "$BACKUPS" -name 'pauta-*.db' -mtime +90 -delete
+    log "database backed up to $out"
+}
+
+install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
+    local version=$1 wheel=$2 lock=$3 dir=$RELEASES/$1
+    if [ -f "$dir/.complete" ]; then
+        log "$version is already installed; reusing it"
+        return 0
+    fi
+    rm -rf "$dir"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$dir"
+    # the runner's workspace isn't readable by the service user: copy the inputs in
+    install -o "$SERVICE_USER" -m 0644 "$wheel" "$lock" "$dir/"
+    as_user "$PYTHON" -m venv "$dir"
+    as_user "$dir/bin/pip" install -q --no-cache-dir --require-hashes --only-binary=:all: \
+        -r "$dir/$(basename "$lock")"
+    as_user "$dir/bin/pip" install -q --no-cache-dir --no-deps "$dir/$(basename "$wheel")"
+    local got
+    got=$(as_user "$dir/bin/pauta" --version)
+    [ "$got" = "pauta $version" ] || die "the wheel says '$got', expected 'pauta $version'"
+    as_user touch "$dir/.complete"
+}
+
+# shellcheck disable=SC2012
+prune() {
+    local keep_cur keep_prev
+    keep_cur=$(readlink -e "$ROOT/current" || true)
+    keep_prev=$(readlink -e "$ROOT/previous" || true)
+    ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r d; do
+        d=${d%/}
+        [ "$d" = "$keep_cur" ] || [ "$d" = "$keep_prev" ] || { rm -rf "$d"; log "pruned $(basename "$d")"; }
+    done
+}
+
+activate() {  # VERSION: switch, check health, roll back on failure
+    local version=$1 old
+    old=$(readlink -e "$ROOT/current" 2>/dev/null || true)
+    if [ "$old" = "$RELEASES/$version" ]; then
+        systemctl restart "$SERVICE"
+    else
+        switch_to "$RELEASES/$version"
+    fi
+    local got
+    got=$(health_version || true)
+    if [ "$got" = "$version" ]; then
+        if [ -n "$old" ] && [ "$old" != "$RELEASES/$version" ]; then
+            ln -sfn "$old" "$ROOT/previous"
+        fi
+        record "live $version (was $(basename "${old:-none}"))"
+        log "$version is live"
+        return 0
+    fi
+    log "$version did not come up healthy (healthz: ${got:-no answer}); last log lines:"
+    journalctl -u "$SERVICE" -n 30 --no-pager >&2 || true
+    if [ -n "$old" ] && [ "$old" != "$RELEASES/$version" ]; then
+        switch_to "$old"
+        record "FAILED $version, rolled back to $(basename "$old") (healthz: $(health_version || echo down))"
+        log "rolled back to $(basename "$old")"
+    else
+        record "FAILED $version, nothing to roll back to"
+    fi
+    exit 1
+}
+
+main() {
+    [ "$(id -u)" -eq 0 ] || die "run me as root (sudo)"
+    install -d -m 0755 "$ROOT" "$RELEASES"
+    exec 9>"$ROOT/.lock"
+    flock -w 600 9 || die "another deploy is running"
+
+    case "${1:-}" in
+        --status)
+            [ $# -eq 1 ] || die "usage: pauta-deploy --status"
+            status
+            ;;
+        --rollback)
+            [ $# -eq 1 ] || die "usage: pauta-deploy --rollback"
+            local prev
+            prev=$(readlink -e "$ROOT/previous" 2>/dev/null) || die "no previous release"
+            [ -f "$prev/.complete" ] || die "previous release $prev is not installed"
+            backup_db "$(basename "$prev")"
+            activate "$(basename "$prev")"
+            ;;
+        *)
+            [ $# -eq 3 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCKFILE | --rollback | --status"
+            local version=$1 wheel=$2 lock=$3
+            [[ "$version" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || die "bad version '$version'"
+            [ "$(basename -- "$wheel")" = "pauta-$version-py3-none-any.whl" ] || die "unexpected wheel '$wheel'"
+            [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
+            [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
+            [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
+            log "installing $version"
+            install_release "$version" "$wheel" "$lock"
+            backup_db "$version"
+            activate "$version"
+            prune
+            ;;
+    esac
+}
+
+main "$@"

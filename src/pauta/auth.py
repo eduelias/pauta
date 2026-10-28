@@ -136,7 +136,10 @@ class Auth:
         """Who is looking. Anonymous visitors see only the login page."""
         if not self.enabled:
             return dict(OPEN_VIEWER)
-        acc = self.account_from_cookie(cookie_header)
+        return self.viewer_for(self.account_from_cookie(cookie_header))
+
+    @staticmethod
+    def viewer_for(acc: dict | None) -> dict:
         return {
             "auth": True,
             "logged_in": bool(acc),
