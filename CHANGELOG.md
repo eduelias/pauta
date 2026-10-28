@@ -28,6 +28,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Fixed
 
+- Opening an invite link while signed in ("Você já entrou" → "Abrir a Pauta") left the app
+  without its startup data, so every screen after the dashboard said "null is not an object
+  (evaluating 'BOOT.options')" until a reload. The app now loads it first.
 - A crash in a request now answers 500 with a message and logs the traceback; the connection
   used to drop, which Caddy showed as a 502.
 
