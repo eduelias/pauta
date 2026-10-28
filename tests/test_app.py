@@ -152,3 +152,19 @@ def test_open_mode(tmp_path):
         assert call(f"{base}/api/invite", {})[0] == 400
     finally:
         httpd.shutdown()
+
+
+def test_link_preview_is_public(site):
+    """Crawlers (WhatsApp, Slack...) see the Open Graph tags and fetch the card without a login."""
+    base, _, _ = site
+    with urllib.request.urlopen(f"{base}/") as r:
+        html = r.read().decode()
+    for tag in (
+        'property="og:title"',
+        'property="og:image" content="https://pauta.genic.dev/og.png"',
+        'name="twitter:card" content="summary_large_image"',
+    ):
+        assert tag in html
+    for path, ctype in (("/og.png", "image/png"), ("/apple-touch-icon.png", "image/png")):
+        with urllib.request.urlopen(f"{base}{path}") as r:
+            assert r.headers["Content-Type"] == ctype and r.read(8) == b"\x89PNG\r\n\x1a\n"
