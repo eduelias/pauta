@@ -518,6 +518,9 @@ async function viewRequest(_q, id) {
             <div class="k">Público-alvo</div><div class="v"><textarea class="input" data-f="audience" rows="1" placeholder="Quem deve ver o anúncio">${esc(r.audience)}</textarea></div>
             <div class="k">Região</div><div class="v"><input class="input" data-f="region" value="${esc(r.region)}" placeholder="Cidade, bairro, raio…"></div>
             <div class="k">Criativos</div><div class="v">${linkField("creatives_url", r.creatives_url, "Link da pasta (Drive)")}</div>
+            <div class="k">Pág. de anúncios</div><div class="v ads-page">${c.ads_page
+              ? `${adsPage(c.ads_page)}<button class="copy" data-copy="${esc(c.ads_page)}">Copiar</button>`
+              : `<a class="muted" href="#/cliente/${c.id}">Cadastrar no cliente</a>`}</div>
           </div>
         </div>
         <div class="panel">
@@ -612,9 +615,17 @@ function clientRows(c) {
     c.contact || c.whatsapp ? row("wa", `${esc(c.contact || "")}${c.contact && c.whatsapp ? " · " : ""}${esc(c.whatsapp || "")}`, wa) : "",
     c.instagram ? row("at", esc(c.instagram), ig) : "",
     c.ad_account ? `<div class="row">${icon("hash")}<span class="grow">Conta ${esc(c.ad_account)}</span><button class="copy" data-copy="${esc(c.ad_account)}">Copiar</button></div>` : "",
+    c.ads_page ? `<div class="row ads-page">${icon("link")}${adsPage(c.ads_page)}<button class="copy" data-copy="${esc(c.ads_page)}">Copiar</button></div>` : "",
     `<div class="row">${icon("key")}<span class="grow">Acesso à conta</span><span class="state ${c.access === "Liberado" ? "Ativo" : c.access === "Solicitado" ? "Pausado" : "Encerrado"}">${esc(c.access)}</span></div>`,
     drive ? row("folder", "Pasta de criativos", drive) : "",
   ].join("");
+}
+
+// the ads page is free text: a link opens in a new tab, anything else is shown as written
+function adsPage(v) {
+  const u = safeUrl(v);
+  return u ? `<a class="grow" href="${esc(u)}" target="_blank" rel="noopener" title="${esc(v)}">Página de anúncios</a>`
+    : `<span class="grow">${esc(v)}</span>`;
 }
 
 function bindCopy(root) {
@@ -713,22 +724,34 @@ function quickClient() {
 async function viewClients(query) {
   const clients = await api("GET", "/api/clients");
   let q = query.get("q") || "";
+  const states = BOOT.options.state;
+  let st = states.includes(query.get("s")) ? query.get("s") : "";
+  const count = (s) => clients.filter((c) => !s || c.state === s).length;
   app.innerHTML = `<div>
     <div class="head"><div><h1>Clientes</h1><p>${clients.filter((c) => c.state === "Ativo").length} ativos de ${clients.length}.</p></div>
       <div class="actions"><a class="btn primary" href="#/cliente/novo">${icon("plus")}Novo cliente</a></div></div>
-    <div class="toolbar"><div class="search">${icon("search")}<input class="input" id="q" placeholder="Buscar cliente…" value="${esc(q)}"></div></div>
+    <div class="toolbar"><div class="search">${icon("search")}<input class="input" id="q" placeholder="Buscar cliente…" value="${esc(q)}"></div>
+      <div class="seg" id="states">${["", ...states].map((s) => `<button type="button" data-v="${esc(s)}" class="${s === st ? "on" : ""}">${esc(s || "Todos")} <span class="n">${count(s)}</span></button>`).join("")}</div></div>
     <div id="grid"></div></div>`;
   const draw = () => {
     const n = q.trim().toLowerCase();
-    const list = clients.filter((c) => !n || [c.name, c.segment, c.contact, c.instagram].join(" ").toLowerCase().includes(n));
+    const list = clients.filter((c) => (!st || c.state === st) && (!n || [c.name, c.segment, c.contact, c.instagram].join(" ").toLowerCase().includes(n)));
     $("#grid").innerHTML = list.length ? `<div class="cgrid">${list.map((c) => `<a class="ccard ${c.state === "Encerrado" ? "closed" : ""}" href="#/cliente/${c.id}">
       <div class="top">${avatar(c.name, "md")}<div style="min-width:0"><b>${esc(c.name)}</b><span>${esc(c.segment || "Sem segmento")}${c.instagram ? ` · ${esc(c.instagram)}` : ""}</span></div></div>
       <div class="foot"><span class="state ${esc(c.state)}">${esc(c.state)}</span>
         ${c.open_requests ? `<span class="open">${c.open_requests} em aberto</span>` : `<span>${c.total_requests} pedido${c.total_requests === 1 ? "" : "s"}</span>`}
         ${c.last_request ? `<span style="margin-left:auto">${esc(ago(c.last_request))}</span>` : ""}</div></a>`).join("")}</div>`
-      : `<div class="panel empty"><span class="big">🏢</span>${clients.length ? "Nenhum cliente encontrado." : "Nenhum cliente ainda. Comece cadastrando o primeiro."}</div>`;
+      : `<div class="panel empty"><span class="big">🏢</span>${clients.length ? (st && !n ? `Nenhum cliente ${esc(st.toLowerCase())}.` : "Nenhum cliente encontrado.") : "Nenhum cliente ainda. Comece cadastrando o primeiro."}</div>`;
   };
   $("#q").addEventListener("input", (e) => { q = e.target.value; draw(); });
+  $("#states").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    st = b.dataset.v;
+    $$("#states button").forEach((x) => x.classList.toggle("on", x === b));
+    history.replaceState(null, "", st ? `#/clientes?s=${encodeURIComponent(st)}` : "#/clientes");
+    draw();
+  });
   draw();
 }
 
@@ -742,6 +765,7 @@ function clientForm(c = {}) {
     <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" data-f="whatsapp" inputmode="tel" value="${esc(c.whatsapp || "")}" placeholder="(11) 98888-0000"></div>
     <div class="field"><label>Instagram / página</label><input class="input" name="instagram" data-f="instagram" value="${esc(c.instagram || "")}" placeholder="@perfil"></div>
     <div class="field"><label>ID da conta de anúncios</label><input class="input" name="ad_account" data-f="ad_account" value="${esc(c.ad_account || "")}" placeholder="1234567890"></div>
+    <div class="field wide"><label>Link da página de anúncios</label><input class="input" name="ads_page" data-f="ads_page" value="${esc(c.ads_page || "")}" placeholder="https://www.facebook.com/ads/library/…"></div>
     <div class="field"><label>Acesso à conta</label>${seg("access", o.access, c.access || "Pendente")}</div>
     <div class="field"><label>Situação</label>${seg("state", o.state, c.state || "Ativo")}</div>
     <div class="field wide"><label>Pasta de criativos (Drive)</label><input class="input" name="drive_url" data-f="drive_url" value="${esc(c.drive_url || "")}" placeholder="https://drive.google.com/…"></div>
@@ -791,7 +815,7 @@ async function viewClient(_q, id) {
           <div class="quiet-off">${clientForm(c)}</div></section>
       </div>
       <aside><div class="panel clientbox"><div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}</div>
-        ${ME.is_admin && !c.requests.length ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
+        ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
     </div></div>`;
   const save = async (patch, el) => {
     try {
@@ -810,12 +834,41 @@ async function viewClient(_q, id) {
     $$("button", s).forEach((x) => x.classList.toggle("on", x === b));
     save({ [s.dataset.seg]: b.dataset.v });
   }));
-  $("#del")?.addEventListener("click", async () => {
-    if (!confirm(`Excluir ${c.name}?`)) return;
-    await api("DELETE", `/api/clients/${c.id}`);
-    location.hash = "#/clientes";
-  });
+  $("#del")?.addEventListener("click", () => deleteClient(c));
   bindCopy(app);
+}
+
+// Deleting a client with requests takes them (and their history) along, so the name has to
+// be typed to confirm; to keep the history, mark the client Encerrado instead.
+function deleteClient(c) {
+  const n = c.requests.length;
+  const m = $("#modal");
+  m.innerHTML = `<form class="panel" id="delc"><h2>Excluir ${esc(c.name)}?</h2>
+    <p>${n ? `Isso apaga o cliente <b>e ${n === 1 ? "o pedido" : `os ${n} pedidos`}</b> dele, com todo o histórico e os comentários.` : "Isso apaga o cadastro do cliente."} Não dá para desfazer.</p>
+    ${n ? `<p class="muted small">Para guardar o histórico, marque o cliente como <b>Encerrado</b> em vez de excluir.</p>
+    <div class="field mt"><label>Digite o nome do cliente para confirmar</label><input class="input" name="confirm" autocomplete="off" placeholder="${esc(c.name)}"></div>` : ""}
+    <div class="actions"><button type="button" class="btn ghost" data-a="cancel">Cancelar</button><button class="btn danger-solid" ${n ? "disabled" : ""}>${icon("trash")}Excluir</button></div></form>`;
+  m.hidden = false;
+  const f = $("#delc");
+  const go = $("button:not([data-a])", f);
+  const close = () => { m.hidden = true; m.innerHTML = ""; };
+  const norm = (s) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  if (n) {
+    f.confirm.focus();
+    f.confirm.addEventListener("input", () => { go.disabled = norm(f.confirm.value) !== norm(c.name); });
+  } else go.focus();
+  m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") close(); };
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (go.disabled) return;
+    go.disabled = true;
+    try {
+      await api("DELETE", `/api/clients/${c.id}${n ? "?with_requests=1" : ""}`);
+      close();
+      toast(n ? `${c.name} e ${n === 1 ? "1 pedido excluídos" : `${n} pedidos excluídos`}` : `${c.name} excluído`);
+      location.hash = "#/clientes";
+    } catch (err) { toast(err.message, true); go.disabled = false; }
+  });
 }
 
 // ---------- team, account, settings ---------------------------------------------------------

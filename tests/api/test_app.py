@@ -97,6 +97,20 @@ def test_request_flow(team):
     assert call(f"{base}/api/clients/{c['id']}", cookie=nato, method="DELETE")[0] == 200
 
 
+def test_admin_deletes_a_client_with_its_requests(team):
+    base, nato, piero, _ = team
+    c = call(f"{base}/api/clients", {"name": "Teste", "ads_page": "fb.com/ads/x"}, nato)[1]
+    assert c["ads_page"] == "fb.com/ads/x"
+    call(f"{base}/api/requests", {"client": c["id"], "what": "a"}, nato)
+    url = f"{base}/api/clients/{c['id']}?with_requests=1"
+    assert call(url, cookie=piero, method="DELETE")[0] == 403  # members can't
+    assert call(f"{base}/api/clients/{c['id']}", cookie=nato, method="DELETE")[0] == 400
+    status, doc, _ = call(url, cookie=nato, method="DELETE")
+    assert status == 200 and doc == {"ok": True, "requests_deleted": 1}
+    assert call(f"{base}/api/requests", cookie=nato)[1] == []
+    assert call(url, cookie=nato, method="DELETE")[0] == 404
+
+
 def test_cross_origin_writes_refused(team):
     base, nato, _, _ = team
     evil = {"Origin": "https://evil.example"}

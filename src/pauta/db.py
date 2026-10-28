@@ -18,7 +18,7 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS client (
     contact TEXT NOT NULL DEFAULT '', whatsapp TEXT NOT NULL DEFAULT '',
     instagram TEXT NOT NULL DEFAULT '', ad_account TEXT NOT NULL DEFAULT '',
     access TEXT NOT NULL DEFAULT 'Pendente', drive_url TEXT NOT NULL DEFAULT '',
+    ads_page TEXT NOT NULL DEFAULT '',
     since TEXT, state TEXT NOT NULL DEFAULT 'Ativo', notes TEXT NOT NULL DEFAULT '',
     created TEXT NOT NULL DEFAULT (datetime('now')),
     updated TEXT NOT NULL DEFAULT (datetime('now'))
@@ -231,6 +232,7 @@ CLIENT_FIELDS = {
     "ad_account": _text(60),
     "access": _choice(ACCESS),
     "drive_url": _url,
+    "ads_page": _text(500),
     "since": _date,
     "state": _choice(CLIENT_STATES),
     "notes": _long(4000),
@@ -308,6 +310,10 @@ class Store:
             cols = {r[1] for r in db.execute("PRAGMA table_info(account)")}
             if "email" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            # v3: the client's ads page (free text: usually a Meta Ad Library or page link)
+            cols = {r[1] for r in db.execute("PRAGMA table_info(client)")}
+            if "ads_page" not in cols:
+                db.execute("ALTER TABLE client ADD COLUMN ads_page TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -434,12 +440,18 @@ class Store:
                     )
         return self.client(cid)
 
-    def delete_client(self, cid: int) -> None:
+    def delete_client(self, cid: int, with_requests: bool = False) -> int:
+        """Delete a client. One with requests is only deleted together with them (and their
+        timelines) when asked to; returns how many requests went with it."""
         with self.db() as db:
-            if db.execute("SELECT 1 FROM request WHERE client=?", (cid,)).fetchone():
-                raise Invalid("este cliente tem pedidos; marque-o como Encerrado")
-            if not db.execute("DELETE FROM client WHERE id=?", (cid,)).rowcount:
+            if not db.execute("SELECT 1 FROM client WHERE id=?", (cid,)).fetchone():
                 raise NotFound("cliente não encontrado")
+            n = db.execute("SELECT COUNT(*) FROM request WHERE client=?", (cid,)).fetchone()[0]
+            if n and not with_requests:
+                raise Invalid("este cliente tem pedidos; marque-o como Encerrado")
+            db.execute("DELETE FROM request WHERE client=?", (cid,))  # events cascade
+            db.execute("DELETE FROM client WHERE id=?", (cid,))
+        return n
 
     # ---- requests ---------------------------------------------------------------------------
 
