@@ -256,6 +256,8 @@ def cmd_onedrive(args) -> None:
     q = st.get("quota") or {}
     if q.get("total"):
         print(f"space {q['used'] / 2**30:.1f} of {q['total'] / 2**30:.0f} GB used")
+    elif st.get("used") is not None:
+        print(f"pauta's folder holds {st['used'] / 2**20:.1f} MB")
     if st["error"]:
         sys.exit(f"problem: {st['error']}")
 

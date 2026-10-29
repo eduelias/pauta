@@ -326,9 +326,13 @@ class OneDrive:
         }
         if quota and saved:
             try:
-                drive, _ = self._graph("GET", "/me/drive?$select=quota")
-                q = drive.get("quota") or {}
-                out["quota"] = {"used": q.get("used"), "total": q.get("total")}
+                if self.root:
+                    drive, _ = self._graph("GET", "/me/drive?$select=quota")
+                    q = drive.get("quota") or {}
+                    out["quota"] = {"used": q.get("used"), "total": q.get("total")}
+                else:  # the app folder permission can't read the drive's quota (Graph: 403)
+                    folder, _ = self._graph("GET", "/me/drive/special/approot?$select=size")
+                    out["used"] = int(folder.get("size") or 0)
             except DriveError as e:
                 out["error"] = out["error"] or str(e)
         return out

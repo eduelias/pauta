@@ -153,7 +153,11 @@ class FakeGraph:
         if path == "/me":
             return h._send(200, {"displayName": "Piero", "userPrincipalName": "piero@example.com"})
         if path == "/me/drive":
+            if "AppFolder" in (self.scopes or [""])[-1]:  # as the real one answers
+                return h._send(403, {"error": {"code": "accessDenied"}})
             return h._send(200, {"quota": {"used": 5 * 2**30, "total": 1024 * 2**30}})
+        if path == "/me/drive/special/approot" and method == "GET":
+            return h._send(200, {"size": sum(len(i["data"]) for i in self.items.values())})
         m = re.fullmatch(r"/me/drive/(special/approot|root):/(.+):/createUploadSession", path)
         if m and method == "POST":
             if self.quota_full:

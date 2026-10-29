@@ -126,7 +126,7 @@ def test_onedrive(state, fake, monkeypatch, capsys):
     cli.main(["onedrive", "connect", "--poll", "0"])
     out = capsys.readouterr().out
     assert "enter the code ABCD-1234" in out and "connected as Piero <piero@example.com>" in out
-    assert "space 5.0 of 1024 GB used" in out
+    assert "pauta's folder holds 0.0 MB" in out
     fake.down = True
     with pytest.raises(SystemExit, match="problem: o OneDrive não respondeu"):
         cli.main(["onedrive", "status"])

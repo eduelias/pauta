@@ -70,7 +70,7 @@ def test_device_code_flow(store, fake):
     assert stat.S_IMODE(os.stat(d.token_file).st_mode) == 0o600
     st = d.status(quota=True)
     assert st["connected"] and st["account"] == "piero@example.com" and st["name"] == "Piero"
-    assert st["quota"] == {"used": 5 * 2**30, "total": 1024 * 2**30} and st["pending"] is None
+    assert st["used"] == 0 and "quota" not in st and not st["error"] and st["pending"] is None
     # the token is never in the database
     with store.db() as db:
         assert "rt1" not in json.dumps([list(r) for r in db.execute("SELECT * FROM meta")])
@@ -147,6 +147,7 @@ def test_upload_to_a_custom_root(store, fake):
     fake.approved = True
     d.poll()
     assert fake.scopes == [DRIVE_SCOPES]
+    assert d.status(quota=True)["quota"] == {"used": 5 * 2**30, "total": 1024 * 2**30}
     item = put(d, b"abc", "a?b.png", ("Ótica: Visão",))
     assert fake.items[item["id"]]["path"] == "root/Clientes/Pauta/Ótica_ Visão/a_b.png"
 

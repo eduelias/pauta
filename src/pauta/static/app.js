@@ -1126,7 +1126,8 @@ function driveBody(d) {
       <button class="btn primary" id="driveconnect">${icon("cloud")}Conectar OneDrive</button>`;
   }
   const q = d.quota && d.quota.total ? `<div class="quota"><div style="width:${Math.min(100, Math.round(100 * d.quota.used / d.quota.total))}%"></div></div>
-    <span class="muted small">${esc(fileSize(d.quota.used))} usados de ${esc(fileSize(d.quota.total))}</span>` : "";
+    <span class="muted small">${esc(fileSize(d.quota.used))} usados de ${esc(fileSize(d.quota.total))}</span>`
+    : d.used != null ? `<p class="muted small mt">A Pauta ocupa ${esc(fileSize(d.used))} neste OneDrive.</p>` : "";
   return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
     <div class="member">${avatar(d.name || d.account || "OneDrive", "md round")}<div class="who"><b>${esc(d.name || d.account)}</b>
       <span>${esc(d.account)} · pasta ${esc(d.folder)} · até ${esc(d.max_mb)} MB por arquivo</span></div></div>

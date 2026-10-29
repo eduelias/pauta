@@ -48,7 +48,7 @@ def connect(base, nato, fake):
     fake.approved = True
     doc = call(f"{base}/api/onedrive", cookie=nato)[1]
     assert doc["state"] == "connected" and doc["account"] == "piero@example.com"
-    assert doc["quota"]["total"] == 1024 * 2**30
+    assert doc["used"] == 0 and not doc["error"]  # app folder scope: Pauta's folder size
 
 
 @pytest.fixture()

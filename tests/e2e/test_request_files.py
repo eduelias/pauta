@@ -31,7 +31,7 @@ def test_connect_upload_share_and_remove(live, device, fake):
     expect(page.locator("#drive")).to_contain_text("microsoft.com/link")
     fake.approved = True
     expect(page.locator("#drive")).to_contain_text("piero@example.com", timeout=10_000)
-    expect(page.locator("#drive")).to_contain_text("usados de")
+    expect(page.locator("#drive")).to_contain_text("A Pauta ocupa")
 
     # upload two files to a request
     c = store.save_client({"name": "Clínica Bem Estar"})
