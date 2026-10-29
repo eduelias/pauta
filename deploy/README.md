@@ -112,7 +112,13 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
-  ask an admin for a fresh invite and disable the old account.
+  ask an admin for a fresh invite and disable the old account. Disabling ends every session
+  the account had; "Sair em todos os aparelhos" does the same for your own account.
+- Sign everyone out (a leaked cookie, a suspicion): delete
+  `~/.local/share/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is
+  never in the DB or its backups; a missing key file is simply made again.
+- The team always keeps one active admin. If the only admin loses access, make a new admin
+  invite with the CLI command above.
 
 ## Taking it offline
 

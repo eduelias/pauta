@@ -7,6 +7,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# a flood can't take the whole Pi with it
+TasksMax=256
+MemoryMax=256M
 User=esaleh
 Group=esaleh
 Environment=PYTHONUNBUFFERED=1

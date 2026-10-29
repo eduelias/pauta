@@ -22,6 +22,8 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
+from pathlib import Path
 
 from webauthn import (
     generate_authentication_options,
@@ -50,6 +52,37 @@ DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localho
 
 def _h(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def clean_name(name) -> str:
+    """A display name: no control or invisible format characters, single spaces, 40 max."""
+    name = "".join(c for c in str(name or "") if unicodedata.category(c) not in ("Cc", "Cf"))
+    return " ".join(name.split())[:40]
+
+
+def _fold(name: str) -> str:
+    """What makes two names look the same: case, accents and compatibility forms."""
+    name = unicodedata.normalize("NFKD", name.casefold())
+    return "".join(c for c in name if not unicodedata.combining(c))
+
+
+def load_secret(store: Store) -> bytes:
+    """The session-signing key lives next to the DB, never in it, so a copy of the DB (the
+    nightly backups) can't be used to sign in. Delete the file to sign everyone out."""
+    path = Path(f"{store.path}.session-key")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        secret = path.read_text().strip()
+    else:
+        secret = secrets.token_urlsafe(32)
+        with os.fdopen(fd, "w") as f:
+            f.write(secret + "\n")
+    if len(secret) < 32:
+        raise RuntimeError(f"{path} is too short to be a session key; delete it")
+    with store.db() as db:  # 1.2 and older kept it in the DB, and so in every backup
+        db.execute("DELETE FROM meta WHERE key='session_secret'")
+    return secret.encode()
 
 
 class AuthError(Exception):
@@ -85,15 +118,7 @@ class Auth:
         self.origins = origins or env_origins or DEV_ORIGINS
         self._flows: dict[str, dict] = {}
         self._lock = threading.Lock()
-        with store.db() as db:
-            row = db.execute("SELECT value FROM meta WHERE key='session_secret'").fetchone()
-            if not row:
-                db.execute(
-                    "INSERT INTO meta(key, value) VALUES ('session_secret', ?)",
-                    (secrets.token_urlsafe(32),),
-                )
-                row = db.execute("SELECT value FROM meta WHERE key='session_secret'").fetchone()
-        self.secret = row[0].encode()
+        self.secret = load_secret(store)
 
     # ---- sessions -------------------------------------------------------------------------
 
@@ -103,7 +128,10 @@ class Auth:
 
     def make_cookie(self, account_id: int, secure: bool) -> str:
         expires = int(time.time()) + SESSION_DAYS * 86400
-        payload = f"{account_id}|{expires}"
+        with self.store.db() as db:
+            gen = db.execute("SELECT session_gen FROM account WHERE id=?", (account_id,))
+            gen = gen.fetchone()[0]
+        payload = f"{account_id}|{gen}|{expires}"
         attrs = f"Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; SameSite=Strict"
         return f"{COOKIE}={payload}|{self._sign(payload)}; {attrs}{'; Secure' if secure else ''}"
 
@@ -118,19 +146,27 @@ class Auth:
             return None
         for part in cookie_header.split(";"):
             name, _, value = part.strip().partition("=")
-            if name != COOKIE or value.count("|") != 2:
+            if name != COOKIE or value.count("|") != 3:
                 continue
-            aid, expires, sig = value.split("|")
-            if not hmac.compare_digest(sig, self._sign(f"{aid}|{expires}")):
+            aid, gen, expires, sig = value.split("|")
+            if not hmac.compare_digest(sig, self._sign(f"{aid}|{gen}|{expires}")):
                 return None
-            if not expires.isdigit() or int(expires) < time.time() or not aid.isdigit():
+            if not all(x.isdigit() for x in (aid, gen, expires)) or int(expires) < time.time():
                 return None
             with self.store.db() as db:
                 row = db.execute(
-                    "SELECT * FROM account WHERE id=? AND NOT disabled", (int(aid),)
+                    "SELECT * FROM account WHERE id=? AND session_gen=? AND NOT disabled",
+                    (int(aid), int(gen)),
                 ).fetchone()
             return dict(row) if row else None
         return None
+
+    def end_sessions(self, account_id: int | None) -> None:
+        """Sign the account out everywhere: every cookie issued so far stops working."""
+        if account_id is None:
+            return
+        with self.store.db() as db:
+            db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
 
     def viewer(self, cookie_header: str | None) -> dict:
         """Who is looking. Anonymous visitors see only the login page."""
@@ -223,9 +259,11 @@ class Auth:
         else:
             if not invite or not self.invite_info(invite):
                 raise AuthError("este convite não vale mais; peça um novo")
-            display = " ".join(str(name or "").split())[:40]
+            display = clean_name(name)
             if not display:
                 raise AuthError("digite seu nome")
+            with self.store.db() as db:
+                self._check_name_free(db, display)
             handle, existing = bytes_to_base64url(secrets.token_bytes(16)), []
         options = generate_registration_options(
             rp_id=self.rp_id,
@@ -235,7 +273,7 @@ class Auth:
             user_id=base64url_to_bytes(handle),
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.REQUIRED,
-                user_verification=UserVerificationRequirement.PREFERRED,
+                user_verification=UserVerificationRequirement.REQUIRED,
             ),
             exclude_credentials=[
                 PublicKeyCredentialDescriptor(id=base64url_to_bytes(c)) for c in existing
@@ -253,32 +291,40 @@ class Auth:
 
     def register_verify(self, fid: str, credential: dict) -> dict:
         flow = self._take_flow(fid, "register")
+        _check_credential(credential)
         try:
             v = verify_registration_response(
                 credential=credential,
                 expected_challenge=flow["challenge"],
                 expected_rp_id=self.rp_id,
                 expected_origin=self.origins,
+                require_user_verification=True,
             )
         except Exception as e:  # the library raises several types for bad responses
             raise AuthError(f"passkey não aceita: {e}") from e
         cred_id = bytes_to_base64url(v.credential_id)
-        transports = ",".join(credential.get("response", {}).get("transports", []) or [])
+        response = credential.get("response")
+        transports = (response.get("transports") if isinstance(response, dict) else None) or []
+        transports = ",".join(t for t in transports if isinstance(t, str))[:200]
         with self.store.db() as db:
+            db.execute("BEGIN IMMEDIATE")  # one join at a time: an invite's uses can't race
             if flow["account"]:
                 account_id = flow["account"]
             else:
                 inv = self._invite_row(db, flow["invite"])
-                if not inv:
+                used = db.execute(
+                    "UPDATE invite SET uses = uses + 1 "
+                    "WHERE token_hash=? AND uses < max_uses AND expires >= ?",
+                    (_h(flow["invite"] or ""), time.time()),
+                ).rowcount
+                if not inv or used != 1:
                     raise AuthError("este convite não vale mais; peça um novo")
+                self._check_name_free(db, flow["name"])
                 first = db.execute("SELECT 1 FROM account LIMIT 1").fetchone() is None
                 account_id = db.execute(
                     "INSERT INTO account(name, handle, is_admin) VALUES (?,?,?)",
                     (flow["name"], flow["handle"], int(first or inv["admin"])),
                 ).lastrowid
-                db.execute(
-                    "UPDATE invite SET uses = uses + 1 WHERE token_hash=?", (inv["token_hash"],)
-                )
             db.execute(
                 "INSERT INTO passkey(id, account, public_key, sign_count, transports) "
                 "VALUES (?,?,?,?,?)",
@@ -291,13 +337,14 @@ class Auth:
 
     def login_options(self) -> dict:
         options = generate_authentication_options(
-            rp_id=self.rp_id, user_verification=UserVerificationRequirement.PREFERRED
+            rp_id=self.rp_id, user_verification=UserVerificationRequirement.REQUIRED
         )
         fid = self._new_flow(kind="login", challenge=options.challenge)
         return {"flow": fid, "options": json.loads(options_to_json(options))}
 
     def login_verify(self, fid: str, credential: dict) -> dict:
         flow = self._take_flow(fid, "login")
+        _check_credential(credential)
         cred_id = str(credential.get("id") or credential.get("rawId") or "")
         with self.store.db() as db:
             pk = db.execute(
@@ -317,6 +364,7 @@ class Auth:
                     expected_origin=self.origins,
                     credential_public_key=pk["public_key"],
                     credential_current_sign_count=pk["sign_count"],
+                    require_user_verification=True,
                 )
             except Exception as e:
                 raise AuthError(f"passkey não aceita: {e}") from e
@@ -330,22 +378,41 @@ class Auth:
     # ---- admin ----------------------------------------------------------------------------
 
     def set_member(self, account_id: int, *, disabled=None, is_admin=None, by: int | None):
+        if any(v is not None and not isinstance(v, bool) for v in (disabled, is_admin)):
+            raise AuthError("valor inválido")
         with self.store.db() as db:
             row = db.execute("SELECT * FROM account WHERE id=?", (account_id,)).fetchone()
             if not row:
                 raise AuthError("conta não encontrada")
             if account_id == by and (disabled or is_admin is False):
                 raise AuthError("você não pode desativar nem rebaixar a si mesmo")
-            if disabled is not None:
-                db.execute("UPDATE account SET disabled=? WHERE id=?", (int(disabled), account_id))
+            if disabled is not None and disabled != bool(row["disabled"]):
+                # disabling ends every session, and re-enabling doesn't bring old ones back
+                db.execute(
+                    "UPDATE account SET disabled=?, session_gen = session_gen + 1 WHERE id=?",
+                    (int(disabled), account_id),
+                )
             if is_admin is not None:
                 db.execute("UPDATE account SET is_admin=? WHERE id=?", (int(is_admin), account_id))
+            admins = db.execute(
+                "SELECT COUNT(*) FROM account WHERE is_admin AND NOT disabled"
+            ).fetchone()[0]
+            if not admins:  # raising rolls the change back
+                raise AuthError("a equipe precisa de pelo menos um administrador ativo")
+
+    @staticmethod
+    def _check_name_free(db, name: str, account_id: int | None = None) -> None:
+        """Two people can't look the same on the timeline."""
+        for other, taken in db.execute("SELECT id, name FROM account"):
+            if other != account_id and _fold(taken) == _fold(name):
+                raise AuthError("já tem alguém da equipe com esse nome; use outro")
 
     def rename(self, account_id: int, name: str) -> None:
-        name = " ".join(str(name or "").split())[:40]
+        name = clean_name(name)
         if not name:
             raise AuthError("digite seu nome")
         with self.store.db() as db:
+            self._check_name_free(db, name, account_id)
             db.execute("UPDATE account SET name=? WHERE id=?", (name, account_id))
 
     def set_email(self, account_id: int, email: str) -> None:
@@ -354,4 +421,17 @@ class Auth:
         if email and (len(email) > 254 or not EMAIL.fullmatch(email)):
             raise AuthError("esse e-mail não parece válido")
         with self.store.db() as db:
+            if (
+                email
+                and db.execute(
+                    "SELECT 1 FROM account WHERE id<>? AND lower(trim(email))=?",
+                    (account_id, email.lower()),
+                ).fetchone()
+            ):
+                raise AuthError("esse e-mail já é de outra pessoa da equipe")
             db.execute("UPDATE account SET email=? WHERE id=?", (email, account_id))
+
+
+def _check_credential(credential) -> None:
+    if not isinstance(credential, dict):
+        raise AuthError("passkey não aceita: resposta inválida")

@@ -18,14 +18,14 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,
-    disabled INTEGER NOT NULL DEFAULT 0,
+    disabled INTEGER NOT NULL DEFAULT 0, session_gen INTEGER NOT NULL DEFAULT 0,
     created TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS passkey (
@@ -135,19 +135,47 @@ class NotFound(LookupError):
 
 # ---- field checks ------------------------------------------------------------------------
 
+# control characters, and the bidi overrides/isolates that make text display out of order;
+# _long keeps tabs and newlines
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+# links that run code if anything ever renders them as a link
+DANGEROUS_SCHEME = re.compile(r"^(javascript|vbscript|data|file):", re.I)
+MAX_ID = 2**31 - 1
+
 
 def _text(limit):
     def check(v, _db):
-        return " ".join(str(v or "").split())[:limit]
+        return " ".join(CONTROL.sub("", str(v or "")).split())[:limit]
 
     return check
 
 
 def _long(limit):
     def check(v, _db):
-        return str(v or "").replace("\r\n", "\n").strip()[:limit]
+        return CONTROL.sub("", str(v or "").replace("\r\n", "\n")).strip()[:limit]
 
     return check
+
+
+def _not_a_script(limit):
+    """Free text that is usually a link: anything goes except a link that would run code."""
+    text = _text(limit)
+
+    def check(v, db):
+        v = text(v, db)
+        if DANGEROUS_SCHEME.match(re.sub(r"\s", "", v)):
+            raise Invalid("esse link não é aceito; use um link https://")
+        return v
+
+    return check
+
+
+def _id(v) -> int | None:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 0 < n <= MAX_ID else None
 
 
 def _url(v, _db):
@@ -202,10 +230,9 @@ def _choice(options, blank=False):
 
 
 def _client(v, db):
-    try:
-        cid = int(v)
-    except (TypeError, ValueError):
-        raise Invalid("escolha um cliente") from None
+    cid = _id(v)
+    if cid is None:
+        raise Invalid("escolha um cliente")
     if not db.execute("SELECT 1 FROM client WHERE id=?", (cid,)).fetchone():
         raise Invalid("cliente não encontrado")
     return cid
@@ -214,10 +241,9 @@ def _client(v, db):
 def _account(v, db):
     if v in (None, "", 0):
         return None
-    try:
-        aid = int(v)
-    except (TypeError, ValueError):
-        raise Invalid("responsável inválido") from None
+    aid = _id(v)
+    if aid is None:
+        raise Invalid("responsável inválido")
     if not db.execute("SELECT 1 FROM account WHERE id=? AND NOT disabled", (aid,)).fetchone():
         raise Invalid("responsável não encontrado")
     return aid
@@ -228,11 +254,11 @@ CLIENT_FIELDS = {
     "segment": _text(MAX_OPTION),
     "contact": _text(80),
     "whatsapp": _text(40),
-    "instagram": _text(120),
+    "instagram": _not_a_script(120),
     "ad_account": _text(60),
     "access": _choice(ACCESS),
     "drive_url": _url,
-    "ads_page": _text(500),
+    "ads_page": _not_a_script(500),
     "since": _date,
     "state": _choice(CLIENT_STATES),
     "notes": _long(4000),
@@ -310,6 +336,9 @@ class Store:
             cols = {r[1] for r in db.execute("PRAGMA table_info(account)")}
             if "email" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            # v4: bumped to end every session of an account (logout, disable, enable)
+            if "session_gen" not in cols:
+                db.execute("ALTER TABLE account ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0")
             # v3: the client's ads page (free text: usually a Meta Ad Library or page link)
             cols = {r[1] for r in db.execute("PRAGMA table_info(client)")}
             if "ads_page" not in cols:
