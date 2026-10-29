@@ -1,5 +1,5 @@
-# Appended to /etc/caddy/Caddyfile on du7 (which also serves dom.du7.dev; its global block
-# binds 192.168.2.68 only and disables the :80 redirect server).
+# Appended to /etc/caddy/Caddyfile on du7 (which serves other sites too; its global block
+# binds du7's LAN address only and disables the :80 redirect server).
 pauta.genic.dev {
 	tls {
 		issuer acme {

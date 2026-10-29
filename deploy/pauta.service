@@ -10,28 +10,29 @@ Wants=network-online.target
 # a flood can't take the whole Pi with it
 TasksMax=256
 MemoryMax=256M
-User=esaleh
-Group=esaleh
+User=pauta
+Group=pauta
 Environment=PYTHONUNBUFFERED=1
 # the DB of record (accounts, passkeys, clients, requests); releases never touch it
-Environment=PAUTA_STATE_DIR=/home/esaleh/.local/share/pauta
-WorkingDirectory=/home/esaleh/.local/share/pauta
+Environment=PAUTA_STATE_DIR=/var/lib/pauta
+WorkingDirectory=/var/lib/pauta
 # passkeys only work on the domain they were made on
 Environment=PAUTA_AUTH=passkeys
 Environment=PAUTA_RP_ID=pauta.genic.dev
 Environment=PAUTA_ORIGIN=https://pauta.genic.dev
-# the newest nightly backup's age shows in /metrics (read only: ProtectHome=read-only)
-Environment=PAUTA_BACKUP_DIR=/home/esaleh/backups/pauta
+# the newest nightly backup's age shows in /metrics (read only)
+Environment=PAUTA_BACKUP_DIR=/var/backups/pauta
 # loopback only: Caddy (pauta.genic.dev) is the one way in
 ExecStart=/opt/pauta/current/bin/pauta serve --host 127.0.0.1 --port 8088
 Restart=on-failure
 RestartSec=5
 
-# sandbox: read-only system and home, write access only to the data directory
+# sandbox: its own user, a read-only system, no /home at all (nobody's keys or .env files),
+# write access only to its data directory
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/esaleh/.local/share/pauta
+ProtectHome=tmpfs
+ReadWritePaths=/var/lib/pauta
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes

@@ -1,72 +1,95 @@
 # 2. Collaborators, and a public repository
 
-- **Status:** accepted (decided 2026-10-29). The repo-side parts are built; the du7 parts
-  apply the next time du7 is reachable (deploy/README.md, "Collaborators").
+- **Status:** accepted (decided 2026-10-29, revised the same day after a review of the
+  delivery chain). The repo-side parts are built; the du7 parts apply the next time du7 is
+  reachable (deploy/README.md, "Collaborators").
 
 ## Context
 
 Until now only the owner pushed to this repository. The team's lead will become a
-maintainer so he (and his Claude) can make the changes the team needs without waiting for
-the owner. That changes who can make code run:
+collaborator so he (and his Claude) can make the changes the team needs without waiting for
+the owner. That changes who can make code run, and where:
 
 - **du7's self-hosted runner** runs whatever a workflow says. Anyone with write access can
-  push a branch whose workflow targets it, and in a public repo so can a pull request from
-  a fork. The runner's user may `sudo pauta-deploy`, which installed any wheel it was
-  handed; the service runs as `esaleh` and holds the clients' data.
+  push a branch whose workflow targets it, start or re-run a workflow, and in a public repo
+  a fork's pull request can target it too. The runner's user may `sudo pauta-deploy`.
+- **Releases are editable.** On a personal account there is one collaborator role, with
+  write access: it can create releases and replace the files of existing ones (immutable
+  releases are not retroactive). pauta-deploy used to check a wheel against the release's
+  own `SHA256SUMS`, so swapped files plus swapped sums would have installed, and the old
+  check ran the new wheel (`pauta --version`) as `esaleh`, outside any sandbox.
+- **The service ran as `esaleh`**, whose home holds SSH keys and other services' secrets;
+  `ProtectHome=read-only` still let it read them.
 - **Repository secrets** (the WhatsApp token) reach any workflow on any pushed branch.
-- **Tags deploy**: pushing `vX.Y.Z` releases and deploys.
+- **Caches**: a push to `main` writes the uv cache that a release's build would restore.
 
-The account is on GitHub Free: rulesets (branch protection), required reviews, secret
-scanning and private vulnerability reporting only exist for **public** repositories. The
-history holds no secrets (gitleaks over every commit) and no client data (only example
-names, numbers and addresses), so going public is the way to get them.
+The account is on GitHub Free: rulesets (branch protection), required reviews, environment
+reviewers, secret scanning and private vulnerability reporting only exist for **public**
+repositories. The history holds no secrets (gitleaks over every commit) and no client data.
 
 ## Decision
 
-| Who | May |
+**What a collaborator can do on GitHub, and what keeps it from du7.** The collaborator role
+on a personal repository can't be narrowed, so everything rests on du7 trusting only the
+owner's runs and only bytes the owner's release run built:
+
+| A collaborator can | What contains it |
 |---|---|
-| Owner (admin) | everything; bypasses the rulesets (releases push a commit to `main`) |
-| Maintainer | branch, open and merge PRs once CI is green; a PR touching an owned path also needs the owner's approval. No settings, secrets, environments, rulesets or release tags |
-| Anyone else | fork and open PRs; their workflows only run after the owner approves the run |
+| push branches, open and merge PRs | the `main` ruleset: PRs with all CI checks green (checks must come from GitHub Actions, `integration_id` 15368); paths in `.github/CODEOWNERS` need the owner's review |
+| merge app code without review | it reaches du7 only in a release, and `release.py cut` lists every commit since the last tag that isn't the owner's and asks for the version again. On du7 it runs as `pauta`, sandboxed, with no `/home` in sight |
+| create or edit releases, swap their files | du7 never installs from the release page. A release run passes the sha256s of what *it* built straight to pauta-deploy, which installs this run's own artifact only if it matches. A run publishing a tag that already has a release fails |
+| start Deploy by hand, re-run any job | the runner's job guard refuses every du7 job not started *and* (re-)run by the owner; a hand-started deploy can only switch to a release already installed on du7. Once public, the owner also approves each `production` deploy |
+| approve a fork's workflow run | fork runs get a read-only token and no secrets, and the guard refuses them on du7 |
+| create tags | not `v*`: the `release tags` ruleset leaves those to the owner, and releases are immutable once published |
+| read secrets from a pushed branch | the WhatsApp secrets live in the `alerts` environment, which only `main` and `v*` reach |
+| disable a workflow (say, Uptime), cancel or delete runs | accepted: it costs history and an outside check, not data. du7's own watchdog keeps watching |
 
 On GitHub (`scripts/repo-settings.sh apply`, kept in the repo so it can be re-run and reviewed):
 
 - **`main` ruleset**: no direct pushes, force pushes or deletion; a PR with all CI checks
-  green; code owner review for the paths in `.github/CODEOWNERS` (CI, deploy, scripts,
-  Makefile, sign-in, rate limits, the passkey test signer, dependencies and the coverage
-  gate in `pyproject.toml`, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, these decisions).
-  Stale approvals are dismissed on new pushes. Merge commits or squash, no rebase.
-- **`release tags` ruleset**: only the owner creates, moves or deletes `v*` tags, so only
-  the owner releases and deploys. **Immutable releases**: a published wheel and its
-  `SHA256SUMS` can never be swapped.
-- **Environments**: `production` (the du7 job) and `alerts` (the WhatsApp secrets) only run
-  from `main` and `v*` tags. The WhatsApp secrets move from the repository into `alerts`,
-  so a pushed branch can't read them.
+  green from GitHub Actions; code owner review for the paths in `.github/CODEOWNERS`
+  (CI, deploy, scripts, Makefile, sign-in, rate limits, the passkey test signer,
+  dependencies and the coverage gate, CLAUDE.md, CONTRIBUTING.md, SECURITY.md, these
+  decisions); stale approvals dismissed on new pushes; merge commits or squash.
+- **`release tags` ruleset** and **immutable releases**.
+- **Environments**: `production` (the du7 job; once public, the owner approves each deploy)
+  and `alerts` (the WhatsApp secrets), both reachable only from `main` and `v*` tags. The
+  alerts send with a WhatsApp token of their own if possible, not famulus's.
 - **Actions**: GitHub's own actions plus `astral-sh/setup-uv` and `rhysd/actionlint`, each
-  pinned to a full SHA; the `GITHUB_TOKEN` is read-only by default and can't approve PRs;
-  runs from outside contributors' forks wait for the owner's approval.
-- **Security**: Dependabot alerts and security updates (version updates were already on),
-  secret scanning with push protection, private vulnerability reporting, CodeQL.
+  pinned to a full SHA; `GITHUB_TOKEN` read-only by default and unable to approve PRs; while
+  private, forks run no workflows; once public, outside contributors' runs need approval.
+  The build and the dependency audit use no cache.
+- **Security**: Dependabot alerts and security updates, secret scanning with push
+  protection, private vulnerability reporting, CodeQL.
+- `repo-settings.sh invite` refuses until the rulesets are active, no WhatsApp secret is
+  repository-wide, releases are immutable, and a deploy's log shows the du7 guard.
 
 On du7 (`deploy/provision-du7.sh`):
 
-- **Job guard**: the runner's job-started hook (`deploy/runner-job-guard`, root-owned,
-  enabled by a root-owned systemd drop-in) refuses every job except `du7` of `release.yml`
-  on a `vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`. A branch, a pull
-  request or a fork gets a failed job before any step runs.
-- **Published releases only**: `pauta-deploy` fetches the release's `SHA256SUMS` from GitHub
-  itself and refuses a wheel or lockfile that doesn't match it.
+- **Job guard** (`deploy/runner-job-guard`, root-owned, set by a root-owned systemd drop-in):
+  only job `du7` of `release.yml` on a `vX.Y.Z` tag, or of `deploy.yml` started by hand on
+  `main`, and only when `GITHUB_ACTOR` and `GITHUB_TRIGGERING_ACTOR` are the owner.
+- **The runner is root's**: its code, home and registration belong to root; `gh-runner` can
+  write only `_work` and `_diag`. It no longer updates itself; `provision-du7.sh` does.
+- **pauta-deploy** works from `/`, runs Python isolated (`-I`), copies its inputs into a
+  root-owned directory before hashing them and installs from there, reads the version from
+  the wheel's metadata, and requires the build's sha256s; `--activate` only switches to an
+  installed release.
+- **A `pauta` user** runs the app and its backups (`/var/lib/pauta`, `/var/backups/pauta`),
+  with `ProtectHome=tmpfs`. This is the production half of decision 1's "own user".
 
 ## Consequences
 
-- The order matters: merge this, make the repo public and run `apply` and `secrets`, update
-  du7, and only then invite the maintainer (`repo-settings.sh invite` asks). Until du7 is
-  updated, the runner is unguarded: approve no fork runs and add nobody in between.
-- `pauta-deploy` needs the release downloadable without a token, so du7 is updated *after*
-  the repo is public (while private, deploys would stop with "can't fetch SHA256SUMS").
-- The owner's own releases are unchanged (`make release`); every release still needs the
-  owner, by design.
-- Without Pro, going private again would switch the rulesets off.
-- The commit history shows the owner's two e-mail addresses (work and personal), and
-  `deploy/` shows du7's LAN address and paths. Neither is a credential.
-- Proposal 0002 in the parked PR #8 (a guard for agent PRs) becomes 0003 if it's revived.
+- Order: merge; update du7 (needs a runner registration token once, to turn self-update
+  off); check a deploy passes the guard; move the WhatsApp secrets; make the repo public
+  and `apply`; invite (`invite` checks the rest). Nobody is invited before the guard is live.
+- From the merge until du7 is updated, release deploys stop at the du7 step (du7's old
+  pauta-deploy doesn't take hashes); it says so in the job.
+- The runner has to be updated by hand (`provision-du7.sh` with the new version) within 30
+  days of each runner release, or GitHub stops sending it jobs.
+- The owner's releases still need only `make release`; any commit not entirely the owner's
+  is shown first. Once public, each deploy also waits for the owner's approval.
+- Going private again would switch the rulesets and environment reviewers off (Free).
+- The commit history shows the owner's two e-mail addresses; rewriting it is the owner's
+  call. `deploy/` no longer names du7's LAN address, its DNS name or its other services.
+- The parked PR #8's decision (a guard for agent PRs) becomes 0003 if it's revived.

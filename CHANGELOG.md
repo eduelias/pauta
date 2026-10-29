@@ -14,8 +14,15 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 - Ready for collaborators and a public repository (decision 2): CODEOWNERS for CI, deploy,
   sign-in and dependencies, rulesets and settings as code (`scripts/repo-settings.sh`), the
   WhatsApp secrets in an `alerts` environment, immutable releases, and on du7 a runner that
-  refuses every job but the deploy and a `pauta-deploy` that only installs the published
-  release's files. `SECURITY.md` and `CONTRIBUTING.md` are new.
+  refuses every job but the owner's deploy. `SECURITY.md` and `CONTRIBUTING.md` are new.
+- The delivery chain, after a review: du7 installs only the wheel and lockfile the owner's
+  release run built (checked by sha256 in a root-owned copy, never files from the release
+  page, and nothing from the wheel runs before the switch); a hand-started deploy only
+  switches to a release already on du7; du7's runner refuses jobs not started and re-run by
+  the owner and belongs to root; Pauta runs as its own `pauta` user with no `/home` in sight
+  (its data moves to `/var/lib/pauta`); the build uses no cache; `release.py cut` lists
+  commits that aren't the owner's; `repo-settings.sh invite` checks everything first; the
+  demo data's phone numbers and handles are visibly fake; `deploy/` names no LAN details.
 
 Fixes from a security review of 1.2.3. Everyone has to sign in again once after this release
 (the session key moved), which takes a tap with the passkey.

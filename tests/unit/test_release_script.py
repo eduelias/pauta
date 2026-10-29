@@ -86,3 +86,32 @@ def test_the_real_changelog_is_well_formed():
     assert next(iter(found)) == "Unreleased"
     version = release.project_version((root / "pyproject.toml").read_text())
     assert version in found or found["Unreleased"], "describe the changes under Unreleased"
+
+
+def _log(*rows):
+    return "\n".join("\0".join(r) for r in rows) + "\n"
+
+
+def test_outside_commits_lists_what_isnt_the_owners():
+    log = _log(
+        ("a1", "du7@msn.com", "du7@msn.com", "Eduardo", "Release 1.2.3"),
+        ("b2", "eduardo@du7.dev", "noreply@github.com", "Eduardo", "Merge #9"),
+        ("c3", "nato@example.com", "nato@example.com", "Nato", "Filtro de clientes"),
+        ("d4", "nato@example.com", "noreply@github.com", "Nato", "Merge pull request #12"),
+        # the owner's name and e-mail, committed by someone else
+        ("e5", "du7@msn.com", "nato@example.com", "Eduardo", "Rebased by Nato"),
+    )
+    assert release.outside_commits(log) == [
+        "c3 Nato <nato@example.com>: Filtro de clientes",
+        "d4 Nato <nato@example.com>: Merge pull request #12",
+        "e5 Eduardo <du7@msn.com>: Rebased by Nato",
+    ]
+    assert release.outside_commits("") == []
+
+
+def test_confirm_outside(capsys):
+    release.confirm_outside([], "1.3.0", ask=lambda _: pytest.fail("asked for nothing"))
+    release.confirm_outside(["c3 Nato: x"], "1.3.0", ask=lambda _: " 1.3.0\n")
+    assert "c3 Nato: x" in capsys.readouterr().out
+    with pytest.raises(release.ReleaseError, match="not confirmed"):
+        release.confirm_outside(["c3 Nato: x"], "1.3.0", ask=lambda _: "y")

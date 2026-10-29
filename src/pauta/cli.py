@@ -77,30 +77,39 @@ def cmd_backup(args) -> None:
 
 
 def cmd_demo(args) -> None:
-    """Fill an empty database with made-up clients and requests, to see the app working."""
+    """Fill an empty database with made-up clients and requests, to see the app working.
+
+    Numbers and handles are visibly fake ((11) 90000-000N, @exemplo_*): never real ones."""
     store = Store(db_path())
     if store.clients() and not args.force:
         sys.exit("the database already has clients; --force to add demo data anyway")
     today = date.today()
     d = lambda n: (today + timedelta(days=n)).isoformat()  # noqa: E731
     clients = [
-        ("Clínica Bem Estar", "Estética", "Ana", "(11) 98888-0000", "@clinicabemestar", "Liberado"),
+        ("Clínica Bem Estar", "Estética", "Ana", "(11) 90000-0001", "@exemplo_clinica", "Liberado"),
         (
             "Padaria Trigo de Ouro",
             "Alimentação",
             "Seu Jorge",
-            "(11) 97777-1212",
-            "@trigodeouro",
+            "(11) 90000-0002",
+            "@exemplo_padaria",
             "Liberado",
         ),
-        ("Studio Lume Pilates", "Saúde", "Carla", "(21) 99654-3321", "@studiolume", "Solicitado"),
-        ("Ótica Visão Clara", "Varejo", "Marcos", "(31) 98123-4567", "@visaoclara", "Liberado"),
+        (
+            "Studio Lume Pilates",
+            "Saúde",
+            "Carla",
+            "(11) 90000-0003",
+            "@exemplo_pilates",
+            "Solicitado",
+        ),
+        ("Ótica Visão Clara", "Varejo", "Marcos", "(11) 90000-0004", "@exemplo_otica", "Liberado"),
         (
             "Colégio Horizonte",
             "Educação",
             "Patrícia",
-            "(41) 99111-2233",
-            "@colegiohorizonte",
+            "(11) 90000-0005",
+            "@exemplo_colegio",
             "Pendente",
         ),
     ]

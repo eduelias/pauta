@@ -57,19 +57,36 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          WHEEL_SHA256: ${{ needs.ci.outputs.wheel_sha256 }}
+          LOCK_SHA256: ${{ needs.ci.outputs.lock_sha256 }}
         run: |
           (cd dist && sha256sum -c SHA256SUMS)
-          # releases are immutable once published: attach everything to a draft, then publish
+          echo "$WHEEL_SHA256  dist/pauta-$VERSION-py3-none-any.whl" | sha256sum -c -
+          echo "$LOCK_SHA256  dist/requirements.lock" | sha256sum -c -
+          # a release made by anyone else for this tag would carry their files: refuse it
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "::error::a release for $GITHUB_REF_NAME already exists; only this run makes one"
+            exit 1
+          fi
+          # releases are immutable once published: attach everything to a draft, check what
+          # GitHub holds is what was built, then publish
           gh release create "$GITHUB_REF_NAME" dist/* --draft \
             --verify-tag --title "Pauta $VERSION" --notes-file notes.md
+          gh release download "$GITHUB_REF_NAME" --dir uploaded
+          (cd dist && sha256sum -- *) | sort -k2 > built.sums
+          (cd uploaded && sha256sum -- *) | sort -k2 > uploaded.sums
+          diff built.sums uploaded.sums || { echo "::error::the draft's files changed"; exit 1; }
           gh release edit "$GITHUB_REF_NAME" --draft=false
 
   deploy:
     name: Deploy
-    needs: publish
+    needs: [ci, publish]
     uses: ./.github/workflows/deploy.yml
     with:
       version: ${{ needs.publish.outputs.version }}
+      # from this run's own build, never from the release page
+      wheel_sha256: ${{ needs.ci.outputs.wheel_sha256 }}
+      lock_sha256: ${{ needs.ci.outputs.lock_sha256 }}
 
   alert:
     name: WhatsApp if the release failed

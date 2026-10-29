@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # Install a Pauta release on du7, switch to it, and roll back if it doesn't come up healthy.
 #
-#   pauta-deploy X.Y.Z WHEEL LOCKFILE   install release X.Y.Z and switch to it
-#   pauta-deploy --rollback             switch back to the release before the current one
-#   pauta-deploy --status               what is live and what is installed
+#   pauta-deploy X.Y.Z WHEEL LOCKFILE WHEEL_SHA256 LOCK_SHA256
+#                                  install release X.Y.Z (absolute paths) and switch to it
+#   pauta-deploy --activate X.Y.Z  switch to a release that is already installed
+#   pauta-deploy --rollback        switch back to the release before the current one
+#   pauta-deploy --status          what is live and what is installed
+#   pauta-deploy --capabilities    what this version supports (deploy.yml checks it)
 #
 # Lives at /usr/local/sbin/pauta-deploy (root:root 0755). The GitHub runner user may run it
-# with sudo and nothing else, so every argument is checked here, and a wheel is only
-# installed if it is byte for byte the one in the published GitHub release; see
-# deploy/README.md.
+# with sudo and nothing else, so it trusts nothing it is handed:
+#   - the wheel and lockfile must match the sha256s the release run computed when it built
+#     them (deploy.yml passes them from release.yml, never from the release page);
+#   - they are copied into a root-owned directory first, checked there, and installed from
+#     there, so nobody can swap them between the check and the install;
+#   - the version is read from the wheel's metadata: nothing from it runs before the switch;
+#   - it works from / and runs Python isolated (-I), so files in the caller's directory are
+#     never imported.
+# See deploy/README.md.
 #
 # Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (owned by the service user)
 #          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
@@ -20,14 +29,15 @@ umask 022
 ROOT=/opt/pauta
 RELEASES=$ROOT/releases
 SERVICE=pauta
-SERVICE_USER=esaleh
-STATE_DIR=/home/esaleh/.local/share/pauta
-BACKUPS=/home/esaleh/backups/pauta/pre-deploy
+SERVICE_USER=pauta
+STATE_DIR=/var/lib/pauta
+BACKUPS=/var/backups/pauta/pre-deploy
 HEALTH=http://127.0.0.1:8088/healthz
 KEEP=5            # releases kept on disk (current and previous are never pruned)
-PYTHON=/usr/bin/python3
-# where published releases live: the wheel and lockfile must match its SHA256SUMS
-RELEASES_URL=https://github.com/eduelias/pauta/releases/download
+PY=(/usr/bin/python3 -I)
+VERSION_RE='^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$'
+SHA_RE='^[0-9a-f]{64}$'
+STAGED_OWNER=(-o root -g root)  # who owns the checked copies (the tests run unprivileged)
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, no piwheels
 
@@ -45,7 +55,7 @@ health_version() {
     local out
     for _ in $(seq 30); do
         if out=$(curl -fsS --max-time 2 "$HEALTH" 2>/dev/null); then
-            "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
+            "${PY[@]}" -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
             return 0
         fi
         sleep 0.5
@@ -77,7 +87,7 @@ backup_db() {
     out="$BACKUPS/pauta-$(date +%Y%m%d-%H%M%S)-before-$1.db"
     # the DB holds the session-signing secret: backups are for the service user only
     as_user mkdir -p -m 0700 "$BACKUPS"
-    as_user "$PYTHON" -c 'import os,sqlite3,sys
+    as_user "${PY[@]}" -c 'import os,sqlite3,sys
 os.umask(0o077)
 s, d = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
 s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
@@ -85,47 +95,50 @@ s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
     log "database backed up to $out"
 }
 
-fetch_sums() {  # VERSION -> the published release's SHA256SUMS on stdout
-    curl -fsSL --max-time 30 --proto '=https' --proto-redir '=https' \
-        "$RELEASES_URL/v$1/SHA256SUMS"
+sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+
+wheel_version() {  # WHEEL -> the Version in its metadata, if its Name is pauta
+    "${PY[@]}" -c 'import sys, zipfile
+from email.parser import HeaderParser
+with zipfile.ZipFile(sys.argv[1]) as z:
+    names = [n for n in z.namelist() if n.count("/") == 1 and n.endswith(".dist-info/METADATA")]
+    if len(names) != 1:
+        sys.exit("the wheel has no single dist-info/METADATA")
+    meta = HeaderParser().parsestr(z.read(names[0]).decode())
+name, version = meta["Name"], meta["Version"]
+if name != "pauta":
+    sys.exit(f"the wheel is {name!r}, not pauta")
+print(version)' "$1"
 }
 
-check_sum() {  # SUMS NAME FILE: FILE's sha256 is the one SUMS lists for NAME
-    local want got
-    want=$(awk -v n="$2" '$2 == n || $2 == "*" n { print $1 }' <<<"$1")
-    [[ $want =~ ^[0-9a-f]{64}$ ]] || die "the release's SHA256SUMS lists no $2"
-    got=$(sha256sum "$3" | cut -d' ' -f1)
-    [ "$got" = "$want" ] || die "$2 is not the published one (sha256 $got, release says $want)"
+stage() {  # VERSION WHEEL LOCK WHEEL_SHA256 LOCK_SHA256 -> a root-owned dir with checked copies
+    local version=$1 wheel=$2 lock=$3 dir got
+    dir=$(mktemp -d "$ROOT/.incoming.XXXXXX")
+    chmod 0755 "$dir"  # the service user installs from it; only root can change it
+    install ${STAGED_OWNER[@]+"${STAGED_OWNER[@]}"} -m 0644 "$wheel" "$dir/pauta-$version-py3-none-any.whl"
+    install ${STAGED_OWNER[@]+"${STAGED_OWNER[@]}"} -m 0644 "$lock" "$dir/requirements.lock"
+    got=$(sha256_of "$dir/pauta-$version-py3-none-any.whl")
+    [ "$got" = "$4" ] || { rm -rf "$dir"; die "the wheel is not the one the release built (sha256 $got, expected $4)"; }
+    got=$(sha256_of "$dir/requirements.lock")
+    [ "$got" = "$5" ] || { rm -rf "$dir"; die "requirements.lock is not the one the release built (sha256 $got, expected $5)"; }
+    got=$(wheel_version "$dir/pauta-$version-py3-none-any.whl") || { rm -rf "$dir"; die "can't read the wheel's metadata"; }
+    [ "$got" = "$version" ] || { rm -rf "$dir"; die "the wheel says version '$got', expected '$version'"; }
+    echo "$dir"
 }
 
-verify_release() {  # VERSION WHEEL LOCK
-    # Whoever runs this through sudo hands us the files, so trust only what GitHub publishes:
-    # releases are immutable and only the owner can push release tags (deploy/README.md).
-    local sums
-    sums=$(fetch_sums "$1") ||
-        die "can't fetch SHA256SUMS of v$1 from GitHub (is the release published?)"
-    check_sum "$sums" "$(basename -- "$2")" "$2"
-    check_sum "$sums" requirements.lock "$3"
-    log "$(basename -- "$2") and requirements.lock match the published v$1"
-}
-
-install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
-    local version=$1 wheel=$2 lock=$3 dir=$RELEASES/$1
+install_release() {  # VERSION STAGED_DIR -> builds $RELEASES/VERSION unless already complete
+    local version=$1 staged=$2 dir=$RELEASES/$1
     if [ -f "$dir/.complete" ]; then
         log "$version is already installed; reusing it"
         return 0
     fi
     rm -rf "$dir"
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$dir"
-    # the runner's workspace isn't readable by the service user: copy the inputs in
-    install -o "$SERVICE_USER" -m 0644 "$wheel" "$lock" "$dir/"
-    as_user "$PYTHON" -m venv "$dir"
+    as_user "${PY[@]}" -m venv "$dir"
     as_user "$dir/bin/pip" install -q --no-cache-dir --require-hashes --only-binary=:all: \
-        -r "$dir/$(basename "$lock")"
-    as_user "$dir/bin/pip" install -q --no-cache-dir --no-deps "$dir/$(basename "$wheel")"
-    local got
-    got=$(as_user "$dir/bin/pauta" --version)
-    [ "$got" = "pauta $version" ] || die "the wheel says '$got', expected 'pauta $version'"
+        -r "$staged/requirements.lock"
+    as_user "$dir/bin/pip" install -q --no-cache-dir --no-deps \
+        "$staged/pauta-$version-py3-none-any.whl"
     as_user touch "$dir/.complete"
 }
 
@@ -171,12 +184,16 @@ activate() {  # VERSION: switch, check health, roll back on failure
 }
 
 main() {
+    cd /
     [ "$(id -u)" -eq 0 ] || die "run me as root (sudo)"
     install -d -m 0755 "$ROOT" "$RELEASES"
     exec 9>"$ROOT/.lock"
     flock -w 600 9 || die "another deploy is running"
 
     case "${1:-}" in
+        --capabilities)
+            echo "pinned activate"
+            ;;
         --status)
             [ $# -eq 1 ] || die "usage: pauta-deploy --status"
             status
@@ -189,17 +206,28 @@ main() {
             backup_db "$(basename "$prev")"
             activate "$(basename "$prev")"
             ;;
+        --activate)
+            [ $# -eq 2 ] || die "usage: pauta-deploy --activate X.Y.Z"
+            [[ $2 =~ $VERSION_RE ]] || die "bad version '$2'"
+            [ -f "$RELEASES/$2/.complete" ] ||
+                die "$2 is not installed on du7; new versions only come from a release"
+            backup_db "$2"
+            activate "$2"
+            ;;
         *)
-            [ $# -eq 3 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCKFILE | --rollback | --status"
-            local version=$1 wheel=$2 lock=$3
-            [[ "$version" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || die "bad version '$version'"
+            [ $# -eq 5 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCK WHEEL_SHA256 LOCK_SHA256 | --activate X.Y.Z | --rollback | --status"
+            local version=$1 wheel=$2 lock=$3 staged
+            [[ $version =~ $VERSION_RE ]] || die "bad version '$version'"
+            [[ $4 =~ $SHA_RE && $5 =~ $SHA_RE ]] || die "the sha256s must be 64 lowercase hex digits"
+            [[ $wheel == /* && $lock == /* ]] || die "give absolute paths"
             [ "$(basename -- "$wheel")" = "pauta-$version-py3-none-any.whl" ] || die "unexpected wheel '$wheel'"
             [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
             [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
             [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
-            verify_release "$version" "$wheel" "$lock"
-            log "installing $version"
-            install_release "$version" "$wheel" "$lock"
+            staged=$(stage "$version" "$wheel" "$lock" "$4" "$5")
+            trap 'rm -rf "$staged"' EXIT
+            log "installing $version (sha256 $4)"
+            install_release "$version" "$staged"
             backup_db "$version"
             activate "$version"
             prune

@@ -7,6 +7,12 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    # what the release deploys: du7 installs these exact bytes and nothing else
+    outputs:
+      wheel_sha256:
+        value: ${{ jobs.build.outputs.wheel_sha256 }}
+      lock_sha256:
+        value: ${{ jobs.build.outputs.lock_sha256 }}
 
 permissions:
   contents: read
@@ -112,6 +118,7 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.11"
+          enable-cache: false # a cache any push to main can write must not judge what ships
       - name: Known vulnerabilities in what ships (pip-audit)
         run: |
           uv export --no-dev --no-emit-project --format requirements-txt -o runtime.txt
@@ -122,11 +129,15 @@ jobs:
     needs: [lint, test, e2e, audit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      wheel_sha256: ${{ steps.sums.outputs.wheel }}
+      lock_sha256: ${{ steps.sums.outputs.lock }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.11"
+          enable-cache: false # what ships is built from a clean slate, never a restored cache
       - name: Build the wheel and sdist
         run: uv build
       - name: Pin the runtime dependencies (with hashes) for the deploy
@@ -151,7 +162,11 @@ jobs:
           curl -fsS localhost:8099/ | grep -q 'og:image'
           echo "pauta $version: installs, starts and answers" >> "$GITHUB_STEP_SUMMARY"
       - name: Checksums
-        run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+        id: sums
+        run: |
+          cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+          echo "wheel=$(sha256sum pauta-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "lock=$(sha256sum requirements.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

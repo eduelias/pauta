@@ -7,17 +7,21 @@
 #                                             security features
 #   scripts/repo-settings.sh secrets          move the WhatsApp secrets into the `alerts`
 #                                             environment (WA_TOKEN from 1Password)
-#   scripts/repo-settings.sh invite LOGIN     add a maintainer (only after the du7 guard is on)
+#   scripts/repo-settings.sh invite LOGIN     add a collaborator (refuses until it's safe)
 #   scripts/repo-settings.sh show             print what is set now
 #
-# Needs `gh` signed in as the owner (and `op` for `secrets`). On GitHub Free, rulesets,
+# Needs `gh` signed in as the owner (and `op` plus PAUTA_ALERTS_WA_TOKEN_REF for `secrets`). On GitHub Free, rulesets,
 # required reviews, secret scanning and private vulnerability reporting only work on a
 # public repository: those steps say so and carry on while it is private.
 set -euo pipefail
 
 REPO=${PAUTA_REPO:-eduelias/pauta}
+OWNER=${REPO%%/*}
 ADMIN_ROLE=5   # RepositoryRole id of "admin": the owner bypasses the rulesets
-WA_TOKEN_REF="op://Du7 Tech/famulus-stack .env/WA_TOKEN"
+ACTIONS_APP=15368   # required checks must come from GitHub Actions, not a posted status
+# The 1Password reference of the WhatsApp token the alerts send with (`secrets`). Prefer a
+# token of its own (a Meta system user that may only send messages), not famulus's.
+WA_TOKEN_REF=${PAUTA_ALERTS_WA_TOKEN_REF:-}
 CHECKS=("Lint" "Tests (Python 3.11)" "Tests (Python 3.12)" "Tests (Python 3.13)"
         "Browser (end to end)" "Dependency audit" "Build and smoke test")
 
@@ -107,10 +111,18 @@ EOF
     say "== environments"
     environment production   # the du7 deploy job
     environment alerts       # the WhatsApp secrets (see `secrets`)
+    # every du7 deploy waits for the owner's click (environment reviewers: public repos only)
+    local owner_id
+    owner_id=$(gh api "users/$OWNER" --jq .id)
+    public_only "production: the owner approves each deploy" -X PUT \
+        "repos/$REPO/environments/production" --input - <<EOF
+{"reviewers": [{"type": "User", "id": $owner_id}], "prevent_self_review": false,
+ "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
+EOF
 
     say "== rulesets"
     local checks
-    checks=$(printf '{"context": "%s"},' "${CHECKS[@]}")
+    checks=$(printf '{"context": "%s", "integration_id": '"$ACTIONS_APP"'},' "${CHECKS[@]}")
     ruleset main "$(cat <<EOF
 {"name": "main", "target": "branch", "enforcement": "active",
  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
@@ -156,6 +168,10 @@ secrets() {
     # Repository secrets reach any workflow on any branch a collaborator pushes; environment
     # secrets only reach jobs on main and release tags.
     command -v op >/dev/null || { say "needs the 1Password CLI (op)"; exit 1; }
+    [ -n "$WA_TOKEN_REF" ] || {
+        say "set PAUTA_ALERTS_WA_TOKEN_REF to the op:// reference of the alerts' WhatsApp token"
+        exit 1
+    }
     local phone to
     read -r -p "WA_PHONE_ID (the famulus number's phone id): " phone
     read -r -p "WA_TO (the owner's number, digits only): " to
@@ -174,12 +190,31 @@ secrets() {
 }
 
 invite() {
-    local login=${1:?usage: repo-settings.sh invite LOGIN}
-    say "Before this: the du7 job guard is on (deploy/README.md, 'Collaborators')."
-    read -r -p "Is it? [y/N] " yes
-    [ "$yes" = y ] || { say "not inviting"; exit 1; }
-    gh api -X PUT "repos/$REPO/collaborators/$login" -f permission=maintain >/dev/null
-    say "ok    invited $login as maintainer"
+    # Only once everything a collaborator could get around is in place (decision 2).
+    local login=${1:?usage: repo-settings.sh invite LOGIN} problems=() rules secrets log run
+    rules=$(gh api "repos/$REPO/rulesets" --jq '[.[] | select(.enforcement == "active") | .name] | join(",")' 2>/dev/null) || rules=
+    [[ ",$rules," == *",main,"* ]] || problems+=("the main ruleset isn't active")
+    [[ ",$rules," == *",release tags,"* ]] || problems+=("the release tags ruleset isn't active")
+    secrets=$(gh secret list --repo "$REPO" --json name --jq '[.[].name | select(startswith("WA_"))] | join(",")')
+    [ -z "$secrets" ] || problems+=("repository secrets $secrets are readable from any branch: run 'secrets'")
+    [ "$(gh api "repos/$REPO/immutable-releases" --jq .enabled)" = true ] ||
+        problems+=("releases aren't immutable")
+    # the guard prints "runner-job-guard: ... may deploy" in every du7 job it lets through
+    run=$(gh run list --repo "$REPO" --workflow Deploy --status success --limit 1 \
+        --json databaseId --jq '.[0].databaseId // empty')
+    [ -n "$run" ] || run=$(gh run list --repo "$REPO" --workflow Release --status success \
+        --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+    log=$( [ -n "$run" ] && gh run view "$run" --repo "$REPO" --log 2>/dev/null || true)
+    grep -q "runner-job-guard: .* may deploy" <<<"$log" ||
+        problems+=("no deploy since the du7 job guard went on (deploy/README.md, Collaborators)")
+    if [ ${#problems[@]} -gt 0 ]; then
+        printf 'not inviting:\n'; printf '  - %s\n' "${problems[@]}"
+        exit 1
+    fi
+    # on a personal account there is one collaborator role (write); decision 2 says what that
+    # allows and what keeps it off du7
+    gh api -X PUT "repos/$REPO/collaborators/$login" >/dev/null
+    say "ok    invited $login as a collaborator"
 }
 
 show() {

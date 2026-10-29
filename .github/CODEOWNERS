@@ -1,5 +1,5 @@
 # Changes to these need the owner's approval (the main ruleset requires code owner review).
-# Everything else a maintainer may merge once CI is green. Why: docs/decisions/0002.
+# Everything else a collaborator may merge once CI is green. Why: docs/decisions/0002.
 
 # CI, releases, the deploy to du7, and the rules themselves
 /.github/                 @eduelias

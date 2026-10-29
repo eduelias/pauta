@@ -15,7 +15,8 @@
 4. `make check` must pass: it is exactly what CI runs (lint, tests with coverage ≥ 90%,
    browser tests).
 5. Push and open a pull request. When every check is green, merge it yourself. If it touches
-   a path in `.github/CODEOWNERS`, the owner reviews it first.
+   a path in `.github/CODEOWNERS`, the owner reviews it first. Before a release the owner
+   sees every commit that isn't theirs.
 6. Releasing is the owner's job (`make release V=X.Y.Z`): it deploys to du7. Ask when a
    batch of merged changes should go live.
 
@@ -30,6 +31,12 @@
 - Never point anything at https://pauta.genic.dev or du7: `make run` gives you a local copy
   in open mode, `make demo` fills it with made-up data.
 - UI text is Brazilian Portuguese; code, comments, commits and docs are English.
+
+## For the owner, reviewing a PR
+
+Read the diff on GitHub; CI has already run the tests on GitHub's machines. Don't check out a
+collaborator's branch and run `make check`, `make run` or its tests on the Mac outside a
+container: tests are code, and they would run with your keys and 1Password session.
 
 ## Working with Claude Code
 

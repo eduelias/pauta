@@ -57,7 +57,7 @@ Decisions (what was decided and why, including things not built yet) are in `doc
 
 ## Working here as a collaborator
 
-Maintainers (and their Claude) follow `CONTRIBUTING.md`: a branch and a pull request per
+Collaborators (and their Claude) follow `CONTRIBUTING.md`: a branch and a pull request per
 change, never a push to `main` (the ruleset refuses it), `make check` before pushing, a line
 under Unreleased in `CHANGELOG.md`. Merge your own PR once CI is green. Paths in
 `.github/CODEOWNERS` (CI, `deploy/`, `scripts/`, `Makefile`, `auth.py`, `ratelimit.py`,

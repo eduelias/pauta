@@ -25,6 +25,15 @@ PYPROJECT = ROOT / "pyproject.toml"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 HEADING = re.compile(r"^## \[(?P<v>[^\]]+)\](?: - (?P<date>\d{4}-\d{2}-\d{2}))?\s*$", re.M)
 REPO_URL = "https://github.com/eduelias/pauta"
+# Commits by anyone else are listed before a release, for the owner to confirm: a release
+# deploys to du7. Git identities are not authentication; this is a reminder to look, not a
+# gate (the gates are the rulesets and the du7 job guard, decision 2).
+OWNER_EMAILS = {
+    "du7@msn.com",
+    "eduardo@du7.dev",
+    "12836540+eduelias@users.noreply.github.com",
+}
+GITHUB_COMMITTER = "noreply@github.com"  # merges and edits made on github.com
 
 
 class ReleaseError(Exception):
@@ -98,6 +107,30 @@ def bump(changelog: str, pyproject: str, version: str, today: str) -> tuple[str,
     return changelog, pyproject
 
 
+def outside_commits(log: str, owners: set[str] = OWNER_EMAILS) -> list[str]:
+    """The commits in `git log --format=%h%x00%ae%x00%ce%x00%an%x00%s` output that aren't
+    entirely the owner's (authored and committed by them, or merged by them on GitHub)."""
+    out = []
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        sha, author, committer, name, subject = line.split("\0", 4)
+        if author not in owners or committer not in owners | {GITHUB_COMMITTER}:
+            out.append(f"{sha} {name} <{author}>: {subject}")
+    return out
+
+
+def confirm_outside(outside: list[str], version: str, ask=input) -> None:
+    """Show what others wrote that this release ships; go on only if the version is typed."""
+    if not outside:
+        return
+    print(f"{version} ships {len(outside)} commit(s) not entirely yours (read them first):")
+    for line in outside:
+        print(f"  {line}")
+    if ask(f"Type {version} to release them: ").strip() != version:
+        raise ReleaseError("not confirmed; nothing changed")
+
+
 def git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
@@ -112,6 +145,17 @@ def cmd_cut(version: str, push: bool) -> None:
     git("fetch", "-q", "origin", "main")
     if git("rev-parse", "HEAD") != git("rev-parse", "origin/main"):
         raise ReleaseError("main is not the same as origin/main; pull or push first")
+    git("fetch", "-q", "--tags", "origin")
+    last = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v*", "origin/main"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    span = f"{last}..origin/main" if last else "origin/main"
+    confirm_outside(
+        outside_commits(git("log", "--format=%h%x00%ae%x00%ce%x00%an%x00%s", span)), version
+    )
     changelog, pyproject = bump(
         CHANGELOG.read_text(), PYPROJECT.read_text(), version, date.today().isoformat()
     )
