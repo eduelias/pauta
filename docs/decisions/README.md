@@ -7,4 +7,4 @@ both files.
 | # | Decision | Status |
 |---|---|---|
 | [1](0001-acceptance-environment.md) | An acceptance environment on du7, deployed from `main` | Accepted, not built |
-| [2](0002-coding-agent-lane.md) | Coding-agent PRs may not touch CI, deploy, auth, scripts, dependencies or the coverage gate | Accepted |
+| [3](0003-coding-agent-lane.md) | Coding-agent PRs may not touch CI, deploy, auth, scripts, dependencies or the coverage gate | Accepted |

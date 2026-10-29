@@ -11,7 +11,7 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 - CI: an Agent guard check. Pull requests from the coding agent (label `agent` or an `agent/`
   branch) fail if they touch CI, the deploy, sign-in, rate limiting, the scripts, the
-  dependencies or the coverage gate (decision 2).
+  dependencies or the coverage gate (decision 3).
 
 ## [1.2.3] - 2026-10-28
 

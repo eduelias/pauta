@@ -1,4 +1,4 @@
-# 2. Coding-agent pull requests stay in their lane
+# 3. Coding-agent pull requests stay in their lane
 
 - **Status:** accepted (decided 2026-10-28)
 
