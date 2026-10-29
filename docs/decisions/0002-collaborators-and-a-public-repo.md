@@ -1,6 +1,6 @@
 # 2. Collaborators, and a public repository
 
-- **Status:** accepted (decided 2026-10-29, revised the same day after a review of the
+- **Status:** accepted (decided 2026-10-29, revised the same day after two reviews of the
   delivery chain). The repo-side parts are built; the du7 parts apply the next time du7 is
   reachable (deploy/README.md, "Collaborators").
 
@@ -35,10 +35,11 @@ owner's runs and only bytes the owner's release run built:
 
 | A collaborator can | What contains it |
 |---|---|
-| push branches, open and merge PRs | the `main` ruleset: PRs with all CI checks green (checks must come from GitHub Actions, `integration_id` 15368); paths in `.github/CODEOWNERS` need the owner's review |
-| merge app code without review | it reaches du7 only in a release, and `release.py cut` lists every commit since the last tag that isn't the owner's and asks for the version again. On du7 it runs as `pauta`, sandboxed, with no `/home` in sight |
+| push branches, open and merge PRs | only `contrib/**` branches (the `branches` ruleset keeps every other branch the owner's and Dependabot's, so nobody slips a commit into a PR the owner merges with the bypass; the owner merges with `--match-head-commit`). `main` takes PRs with all CI checks green from GitHub Actions (`integration_id` 15368). CODEOWNERS is default-deny: only `src/pauta/`, `tests/`, `CHANGELOG.md` and `README.md` (minus sign-in, rate limits and the test passkey signer) are merged without the owner |
+| add build or tool configuration (`uv.toml`, a new workflow, an index) | default-deny CODEOWNERS; `release.py cut` refuses while a `uv.toml` exists and never runs uv on the checkout (it edits `uv.lock`'s version itself); the build runs with `UV_NO_CONFIG` and a pinned hatchling |
+| merge app code without review | it reaches du7 only in a release, and `release.py cut` lists every commit since the last tag that isn't the owner's and asks for the version again. CI hashes the build before any of its code runs. On du7 it runs as `pauta`: no `/home`, no network but loopback, no other users' processes, the usual system calls only, and its installed releases are root's |
 | create or edit releases, swap their files | du7 never installs from the release page. A release run passes the sha256s of what *it* built straight to pauta-deploy, which installs this run's own artifact only if it matches. A run publishing a tag that already has a release fails |
-| start Deploy by hand, re-run any job | the runner's job guard refuses every du7 job not started *and* (re-)run by the owner; a hand-started deploy can only switch to a release already installed on du7. Once public, the owner also approves each `production` deploy |
+| start Deploy by hand, re-run any job | the runner's job guard refuses every du7 job not started *and* (re-)run by the owner; a hand-started deploy can only switch to a release already installed on du7, its version is checked first, and only the owner's runs send the failure alert. Once public, the owner also approves each `production` deploy |
 | approve a fork's workflow run | fork runs get a read-only token and no secrets, and the guard refuses them on du7 |
 | create tags | not `v*`: the `release tags` ruleset leaves those to the owner, and releases are immutable once published |
 | read secrets from a pushed branch | the WhatsApp secrets live in the `alerts` environment, which only `main` and `v*` reach |
@@ -71,15 +72,19 @@ On du7 (`deploy/provision-du7.sh`):
   `main`, and only when `GITHUB_ACTOR` and `GITHUB_TRIGGERING_ACTOR` are the owner.
 - **The runner is root's and has a user of its own**: `pauta-runner` (until now it shared
   `gh-runner` with dominion-archive's runner, so either repo's jobs could `sudo` the other's
-  deploy script). Its code, home and registration belong to root; `pauta-runner` can write
-  only `_work` and `_diag`. It no longer updates itself; `provision-du7.sh` does.
-- **pauta-deploy** works from `/`, runs Python isolated (`-I`), copies its inputs into a
-  root-owned directory before hashing them and installs from there, reads the version from
-  the wheel's metadata, and requires the build's sha256s; `--activate` only switches to an
-  installed release.
+  deploy script; dominion's runner needs the same treatment). A fresh install: its code,
+  home, `.env`, `.path` and unit (`deploy/pauta-runner.service`) belong to root;
+  `pauta-runner` can write only `_work` and `_diag`. It no longer updates itself;
+  `provision-du7.sh` does.
+- **pauta-deploy** works from `/`, runs Python isolated (`-I`), copies its inputs (no links
+  followed) into a private root-owned directory before hashing them and installs from there,
+  reads the version from the wheel's metadata, requires the build's sha256s, and hands each
+  installed venv to root; `--activate` only switches to an installed release. The guard is
+  the barrier: anything running as `pauta-runner` could still bring its own wheel and hashes.
 - **A `pauta` user** runs the app and its backups (`/var/lib/pauta`, `/var/backups/pauta`),
-  with `ProtectHome=tmpfs`; the nightly copy to the NAS (exFAT, writable only by the owner's
-  uid) runs as root after the backup. This is the production half of decision 1's "own user".
+  sandboxed as above; the nightly copy to the NAS (exFAT, writable only by the owner's uid)
+  runs as the owner, never as root, and only takes regular files owned by `pauta`. The owner
+  runs the CLI through `pauta-cli`, a transient sandboxed unit. This is the production half of decision 1's "own user".
 
 ## Consequences
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Run the live release's `pauta` command on du7's database, sandboxed like the service:
+#
+#   sudo pauta-cli invite --admin      sudo pauta-cli users
+#
+# Never `sudo -u pauta /opt/pauta/current/bin/pauta ...` from a terminal: that runs release
+# code on your terminal (TIOCSTI), with the network and without the service's sandbox. This
+# starts it as a transient systemd unit instead, as `pauta`, with no /home, no network and
+# write access to the data directory only. Lives at /usr/local/sbin/pauta-cli (root 0755).
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "run me with sudo" >&2; exit 1; }
+cd /
+exec systemd-run --quiet --pipe --wait --collect --service-type=exec \
+    --uid=pauta --gid=pauta \
+    -p ProtectSystem=strict -p ProtectHome=tmpfs -p ReadWritePaths=/var/lib/pauta \
+    -p PrivateNetwork=yes -p PrivateTmp=yes -p PrivateDevices=yes -p NoNewPrivileges=yes \
+    -p ProtectProc=invisible -p ProtectKernelTunables=yes -p ProtectControlGroups=yes \
+    -p CapabilityBoundingSet= -p SystemCallFilter=@system-service -p UMask=0077 \
+    -p WorkingDirectory=/var/lib/pauta \
+    -E PAUTA_STATE_DIR=/var/lib/pauta -E PAUTA_AUTH=passkeys \
+    -E PAUTA_RP_ID=pauta.genic.dev -E PAUTA_ORIGIN=https://pauta.genic.dev \
+    /opt/pauta/current/bin/pauta "$@"

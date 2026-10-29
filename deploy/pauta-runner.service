@@ -1,0 +1,24 @@
+# The GitHub Actions runner for eduelias/pauta's deploys on du7, installed by provision-du7.sh
+# as actions.runner.eduelias-pauta.du7.service (the name GitHub's own installer would use).
+# Written here instead of by the runner's svc.sh so that what runs, as whom, and the job guard
+# are all in this repo and owned by root.
+[Unit]
+Description=GitHub Actions runner du7 for eduelias/pauta (deploys only; deploy/README.md)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pauta-runner
+Group=pauta-runner
+WorkingDirectory=/opt/pauta-runner/actions-runner
+ExecStart=/opt/pauta-runner/actions-runner/runsvc.sh
+# every job first passes the guard (also in the runner's own, root-owned .env)
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

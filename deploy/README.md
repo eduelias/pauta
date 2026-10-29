@@ -15,8 +15,8 @@ phone ──https──▶ home router :443 ──▶ du7 :443 on its LAN addres
 | Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release, owned by `pauta`), `/opt/pauta/current` → the live one |
 | DB of record | `/var/lib/pauta/pauta.db` (`PAUTA_STATE_DIR`, `pauta` only): accounts, passkeys, invites, clients, requests |
-| Backups | nightly 03:40 (`pauta-backup.timer`) → `/var/backups/pauta`, then the newest copied to the NAS (`/media/nas/backups/pauta`, exFAT, so as root), 30 days each; before every deploy → `/var/backups/pauta/pre-deploy`, 90 days. The `pauta` group (the owner is in it) sees their ages, not their contents |
-| Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: its own user, read-only system, no `/home` at all, writes only to the data and backup dirs |
+| Backups | nightly 03:40 (`pauta-backup.timer`) → `/var/backups/pauta`, then `pauta-backup-nas.service` copies the newest to the NAS (`/media/nas/backups/pauta`, exFAT, so as its owner, never root; `deploy/pauta-nas-copy` only takes regular files owned by `pauta`), 30 days each; before every deploy → `/var/backups/pauta/pre-deploy`, 90 days. The `pauta` group (the owner is in it) sees their ages, not their contents |
+| Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}`, `pauta-backup-nas.service` (copies of `deploy/`), sandboxed: own user, read-only system, no `/home`, no network but loopback (the backups: none), no other users' processes, the usual system calls only, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
 | Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/pauta-runner/actions-runner` (root's; its own user `pauta-runner` writes only `_work` and `_diag`), unit `actions.runner.eduelias-pauta.du7.service`. No other repository's runner may run as `pauta-runner` (it may `sudo pauta-deploy`); dominion-archive's runs as `gh-runner`; every job first passes `/usr/local/lib/pauta/runner-job-guard` (drop-in `job-guard.conf`) |
 
@@ -29,15 +29,20 @@ changes described under **Unreleased** in `CHANGELOG.md`:
 make release V=1.2.0
 ```
 
-That runs `scripts/release.py cut 1.2.0 --push`: it moves the Unreleased notes into 1.2.0,
-bumps `pyproject.toml`, commits "Release 1.2.0", tags `v1.2.0` and pushes both. The tag
-starts `.github/workflows/release.yml`:
+That runs `scripts/release.py cut 1.2.0 --push`. It refuses unless CI passed on `main`'s
+commit and there is no `uv.toml`, lists every commit since the last tag that isn't entirely
+the owner's (type the version to go on; set `git config --add pauta.ownerEmail <address>`
+for each address you commit with), moves the Unreleased notes into 1.2.0, bumps
+`pyproject.toml` and `uv.lock` (by hand: it never runs uv on the checkout), commits "Release
+1.2.0", tags `v1.2.0` and pushes both. The tag starts `.github/workflows/release.yml`:
 
-1. **CI**: lint, tests on Python 3.11–3.13 with coverage, browser tests, dependency audit,
-   then the wheel is built, installed in a clean venv and started (`/healthz` must answer).
+1. **CI**: lint, tests on Python 3.11–3.13 with coverage, browser tests, dependency audit;
+   then the wheel and lockfile are built (no cache, no `uv.toml`), hashed and uploaded before
+   any of their code runs, and a separate job installs and starts them (`/healthz`).
 2. **Publish**: checks the tag, `pyproject.toml` and `CHANGELOG.md` agree, and creates the
    GitHub release with the CHANGELOG notes, the wheel, the sdist, `requirements.lock`
-   (runtime dependencies pinned by hash) and `SHA256SUMS`.
+   (runtime dependencies pinned by hash) and `SHA256SUMS`, checks the published files are the
+   built ones, and (once the repo is public) attests their build provenance.
 3. **Deploy** (`deploy.yml`): on du7, after the job guard has checked that the owner pushed
    the tag, takes this run's own build (the `dist` artifact, not the release page) and runs
    `sudo pauta-deploy 1.2.0 <wheel> <lockfile> <wheel sha256> <lockfile sha256>`, with the
@@ -64,8 +69,10 @@ else) fails at Publish.
 
 - A release that is still on du7 (`pauta-deploy --status` lists them; the last 5 are kept):
   GitHub → Actions → **Deploy** → *Run workflow* on `main` → the version. Only the owner's run
-  passes the job guard. Anything older is not reinstalled from the release page: cut a new
-  release from the old code instead.
+  passes the job guard. This is also how to redeploy a release whose run is older than 30
+  days: re-running that release's du7 job fails once its build artifact has expired.
+  Anything no longer on du7 is not reinstalled from the release page: cut a new release from
+  the old code instead.
 - Straight on du7, to the release before the current one: `sudo pauta-deploy --rollback`.
 - What's live: `sudo pauta-deploy --status`.
 
@@ -93,13 +100,30 @@ any change to `deploy/` and to update the runner: it doesn't update itself, and 
 sending jobs to a runner more than 30 days behind its latest release. The token is only
 needed when the runner must register (the first time, and once to turn self-update off).
 
-For a first release on a fresh du7, put one in place by hand with the assets of a GitHub
-release you built (`sudo pauta-deploy X.Y.Z /abs/path/pauta-X.Y.Z-py3-none-any.whl
-/abs/path/requirements.lock <sha256> <sha256>`), append `Caddyfile.pauta` to the Caddyfile
-and `systemctl reload caddy`.
+For a first release on a fresh du7, check where its files came from before installing them:
+the release page alone proves nothing (a collaborator can replace its files). Download the
+wheel and lockfile of a release and verify them against the release workflow's signed
+provenance (public repo), then install with their sha256s:
+
+```
+gh attestation verify pauta-X.Y.Z-py3-none-any.whl -R eduelias/pauta \
+    --signer-workflow eduelias/pauta/.github/workflows/release.yml
+gh attestation verify requirements.lock -R eduelias/pauta \
+    --signer-workflow eduelias/pauta/.github/workflows/release.yml
+sudo pauta-deploy X.Y.Z "$PWD/pauta-X.Y.Z-py3-none-any.whl" "$PWD/requirements.lock" \
+    "$(sha256sum pauta-X.Y.Z-py3-none-any.whl | cut -d' ' -f1)" "$(sha256sum requirements.lock | cut -d' ' -f1)"
+```
+
+(While private there is no provenance: build the tag yourself, `uv build` and `uv export
+--no-dev --no-emit-project --format requirements-txt -o dist/requirements.lock`.) Then append
+`Caddyfile.pauta` to the Caddyfile and `systemctl reload caddy`. Caddy's global block must keep
+its admin API off TCP (`admin off`, or `admin unix//run/caddy/admin.sock`): the app may talk
+to loopback, and an admin API on 127.0.0.1:2019 would let it rewrite Caddy's config.
 
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
-shell and no groups, and owns nothing but its work and log directories. Its job-started
+shell and no groups, and owns nothing but its work and log directories: its home, code,
+`.env`, `.path` and unit are root's (the unit is `deploy/pauta-runner.service`, not the
+runner's `svc.sh`). Its job-started
 hook, `/usr/local/lib/pauta/runner-job-guard`, refuses every job except `du7` of
 `release.yml` on a `vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`, each only
 when the owner started (and re-ran) it; refusals are in `journalctl -t pauta-runner-guard`.
@@ -125,9 +149,16 @@ nobody before step 4; in this order:
    It needs the token because the runner moves to its own user. Then update
    `~/du7-watchdog.py`'s `pauta-backup` check to `/var/backups/pauta` (the owner can list
    it: they are in the `pauta` group).
-3. Check it: `systemctl show actions.runner.eduelias-pauta.du7.service -p Environment` names
-   the guard; `sudo -u pauta ls /home` fails; Actions → Deploy → Run workflow on `main` with
-   the live version deploys, and its du7 job log shows `runner-job-guard: … may deploy`.
+3. Check it:
+   - `systemctl show actions.runner.eduelias-pauta.du7.service -p Environment` names the
+     guard, and `sudo cat /opt/pauta-runner/actions-runner/.env` does too;
+   - `sudo pauta-cli users` lists the accounts (the DB moved);
+   - Actions → Deploy → Run workflow on `main` with the live version deploys, and its du7
+     job log shows `runner-job-guard: … may deploy`;
+   - the guard refuses what it should: push a branch `guard-test` whose workflow runs
+     `echo hi` with `runs-on: [self-hosted, du7, pauta]`; its job must fail before the step,
+     with `refusing this job on du7` (and a line in `journalctl -t pauta-runner-guard`).
+     Delete the branch after.
 4. On the Mac: `PAUTA_ALERTS_WA_TOKEN_REF='op://…' scripts/repo-settings.sh secrets` (the
    WhatsApp secrets into the `alerts` environment; ideally a token of its own, see "Monitoring
    and alarms"). Make the repository public (Settings → General → Danger Zone), then
@@ -165,10 +196,15 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 
 ## People
 
-- The first admin: on du7, `sudo -u pauta PAUTA_STATE_DIR=/var/lib/pauta
-  /opt/pauta/current/bin/pauta invite --admin` prints a link (7 days, one person). The first account is always an admin.
+- The first admin: on du7, `sudo pauta-cli invite --admin` prints a link (7 days, one
+  person). The first account is always an admin.
+- `pauta-cli` (deploy/pauta-cli) runs the live release's `pauta` command as `pauta` in a
+  transient, sandboxed systemd unit. Don't run `/opt/pauta/current/bin/pauta` directly with
+  `sudo -u pauta`: that runs release code on your terminal (and bookworm's sudo doesn't
+  default to `use_pty`; add `Defaults use_pty` to sudoers to be safe), with the network and
+  without the service's sandbox.
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
-- `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
+- `sudo pauta-cli users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
   ask an admin for a fresh invite and disable the old account. Disabling ends every session
   the account had; "Sair em todos os aparelhos" does the same for your own account.
@@ -182,5 +218,6 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 
 `sudo systemctl stop pauta` takes it offline; remove the Caddy block and the `pauta` DNS
 record to undo it completely. The DB stays in `/var/lib/pauta`. To retire the runner:
-`cd /opt/pauta-runner/actions-runner && sudo ./svc.sh uninstall`, remove it under the repo's
-Settings → Actions → Runners, and delete `/etc/sudoers.d/pauta-runner`.
+`sudo systemctl disable --now actions.runner.eduelias-pauta.du7.service`, delete that unit
+file, `/opt/pauta-runner` and `/etc/sudoers.d/pauta-runner`, and remove it under the repo's
+Settings → Actions → Runners.

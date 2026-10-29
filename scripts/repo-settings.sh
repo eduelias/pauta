@@ -23,7 +23,8 @@ ACTIONS_APP=15368   # required checks must come from GitHub Actions, not a poste
 # token of its own (a Meta system user that may only send messages), not famulus's.
 WA_TOKEN_REF=${PAUTA_ALERTS_WA_TOKEN_REF:-}
 CHECKS=("Lint" "Tests (Python 3.11)" "Tests (Python 3.12)" "Tests (Python 3.13)"
-        "Browser (end to end)" "Dependency audit" "Build and smoke test")
+        "Browser (end to end)" "Dependency audit" "Build" "Smoke test")
+DEPENDABOT_APP=29110   # may push its own update branches
 
 say() { printf '%s\n' "$*"; }
 try() {  # DESCRIPTION gh-api-args...: run it, explain a refusal instead of stopping
@@ -141,6 +142,19 @@ EOF
  ]}
 EOF
 )"
+    # other branches are the owner's (a collaborator pushing to one of the owner's PR branches
+    # would slip into a merge the owner makes with the bypass), except a collaborator's own
+    # contrib/** and Dependabot's
+    ruleset "branches" "$(cat <<EOF
+{"name": "branches", "target": "branch", "enforcement": "active",
+ "conditions": {"ref_name": {"include": ["~ALL"],
+                             "exclude": ["~DEFAULT_BRANCH", "refs/heads/contrib/**"]}},
+ "bypass_actors": [
+  {"actor_id": $ADMIN_ROLE, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+  {"actor_id": $DEPENDABOT_APP, "actor_type": "Integration", "bypass_mode": "always"}],
+ "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}]}
+EOF
+)"
     # only the owner pushes, moves or deletes release tags (a tag deploys to du7)
     ruleset "release tags" "$(cat <<EOF
 {"name": "release tags", "target": "tag", "enforcement": "active",
@@ -195,6 +209,14 @@ invite() {
     rules=$(gh api "repos/$REPO/rulesets" --jq '[.[] | select(.enforcement == "active") | .name] | join(",")' 2>/dev/null) || rules=
     [[ ",$rules," == *",main,"* ]] || problems+=("the main ruleset isn't active")
     [[ ",$rules," == *",release tags,"* ]] || problems+=("the release tags ruleset isn't active")
+    [[ ",$rules," == *",branches,"* ]] || problems+=("the branches ruleset isn't active")
+    [ "$(gh api "repos/$REPO" --jq .visibility)" = public ] ||
+        problems+=("the repo is private: rulesets and environment reviewers only work when public")
+    [ "$(gh api "repos/$REPO/actions/permissions/fork-pr-contributor-approval" --jq .approval_policy 2>/dev/null)" = all_external_contributors ] ||
+        problems+=("forks from outside don't need approval to run workflows")
+    gh api "repos/$REPO/environments/production" \
+        --jq '.protection_rules[] | select(.type == "required_reviewers") | .reviewers[].reviewer.login' \
+        2>/dev/null | grep -qx "$OWNER" || problems+=("production deploys don't wait for $OWNER's approval")
     secrets=$(gh secret list --repo "$REPO" --json name --jq '[.[].name | select(startswith("WA_"))] | join(",")')
     [ -z "$secrets" ] || problems+=("repository secrets $secrets are readable from any branch: run 'secrets'")
     [ "$(gh api "repos/$REPO/immutable-releases" --jq .enabled)" = true ] ||

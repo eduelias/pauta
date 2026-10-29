@@ -92,6 +92,9 @@ def _log(*rows):
     return "\n".join("\0".join(r) for r in rows) + "\n"
 
 
+OWNERS = {"du7@msn.com", "eduardo@du7.dev"}
+
+
 def test_outside_commits_lists_what_isnt_the_owners():
     log = _log(
         ("a1", "du7@msn.com", "du7@msn.com", "Eduardo", "Release 1.2.3"),
@@ -101,12 +104,13 @@ def test_outside_commits_lists_what_isnt_the_owners():
         # the owner's name and e-mail, committed by someone else
         ("e5", "du7@msn.com", "nato@example.com", "Eduardo", "Rebased by Nato"),
     )
-    assert release.outside_commits(log) == [
+    assert release.outside_commits(log, OWNERS) == [
         "c3 Nato <nato@example.com>: Filtro de clientes",
         "d4 Nato <nato@example.com>: Merge pull request #12",
         "e5 Eduardo <du7@msn.com>: Rebased by Nato",
     ]
-    assert release.outside_commits("") == []
+    assert release.outside_commits("", OWNERS) == []
+    assert release.OWNER_NOREPLY in release.owner_emails()
 
 
 def test_confirm_outside(capsys):
@@ -115,3 +119,18 @@ def test_confirm_outside(capsys):
     assert "c3 Nato: x" in capsys.readouterr().out
     with pytest.raises(release.ReleaseError, match="not confirmed"):
         release.confirm_outside(["c3 Nato: x"], "1.3.0", ask=lambda _: "y")
+
+
+def test_bump_lock_changes_only_pautas_version():
+    lock = (
+        'version = 1\n\n[[package]]\nname = "pauta"\nversion = "1.2.3"\n'
+        'source = { editable = "." }\n'
+        '\n[[package]]\nname = "webauthn"\nversion = "1.2.3"\n'
+    )
+    new = release.bump_lock(lock, "1.3.0")
+    assert 'name = "pauta"\nversion = "1.3.0"' in new
+    assert 'name = "webauthn"\nversion = "1.2.3"' in new
+    with pytest.raises(release.ReleaseError, match="single pauta"):
+        release.bump_lock("version = 1\n", "1.3.0")
+    real = (Path(__file__).resolve().parents[2] / "uv.lock").read_text()
+    assert release.bump_lock(real, "9.9.9").count('version = "9.9.9"') == 1

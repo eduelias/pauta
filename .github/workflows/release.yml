@@ -25,6 +25,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write # build provenance (attestations), once the repo is public
+      attestations: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -77,6 +79,19 @@ jobs:
           (cd uploaded && sha256sum -- *) | sort -k2 > uploaded.sums
           diff built.sums uploaded.sums || { echo "::error::the draft's files changed"; exit 1; }
           gh release edit "$GITHUB_REF_NAME" --draft=false
+          # published (immutable from here): what anyone downloads is still what was built
+          gh release download "$GITHUB_REF_NAME" --dir published
+          (cd published && sha256sum -- *) | sort -k2 > published.sums
+          diff built.sums published.sums || { echo "::error::the published files differ"; exit 1; }
+      # signed provenance: `gh attestation verify --signer-workflow` proves a file came from
+      # this workflow on a release tag (attestations are free for public repositories only)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: github.event.repository.visibility == 'public'
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/requirements.lock
 
   deploy:
     name: Deploy
@@ -91,7 +106,8 @@ jobs:
   alert:
     name: WhatsApp if the release failed
     needs: [ci, publish, deploy]
-    if: failure()
+    # only the owner's runs message the owner (anyone with write access can re-run a workflow)
+    if: failure() && github.triggering_actor == 'eduelias'
     runs-on: ubuntu-latest
     # the WhatsApp secrets live in the `alerts` environment: main and release tags only
     environment: alerts

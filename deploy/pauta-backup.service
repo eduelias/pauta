@@ -2,6 +2,8 @@
 [Unit]
 Description=Pauta: nightly pauta.db backup
 After=pauta.service
+# then the newest copy goes to the NAS (pauta-backup-nas.service: as the NAS's owner, not root)
+OnSuccess=pauta-backup-nas.service
 
 [Service]
 Type=oneshot
@@ -9,11 +11,8 @@ User=pauta
 Group=pauta
 Environment=PAUTA_STATE_DIR=/var/lib/pauta
 WorkingDirectory=/var/lib/pauta
-# 30 days in /var/backups/pauta, then the newest copied to the NAS drive mounted on du7. The
-# NAS is exFAT, writable by esaleh only, so that copy runs as root ("+"), outside the
-# sandbox, and a missing NAS doesn't fail the backup ("-"); the watchdog checks it.
+# 30 days in /var/backups/pauta
 ExecStart=/opt/pauta/current/bin/pauta backup --dir /var/backups/pauta --keep-days 30
-ExecStartPost=-+/bin/sh -c 'mountpoint -q /media/nas && cp -p "$$(ls -1t /var/backups/pauta/pauta-*.db | head -n 1)" /media/nas/backups/pauta/ && find /media/nas/backups/pauta -name "pauta-*.db" -mtime +30 -delete'
 
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -34,6 +33,9 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 RestrictNamespaces=yes
 LockPersonality=yes
+ProtectProc=invisible
+ProcSubset=pid
 SystemCallArchitectures=native
-# the DB holds the session-signing secret: copies are for the service user only
-UMask=0077
+SystemCallFilter=@system-service
+# copies are for pauta and its group (the owner, and the NAS copy that runs as the owner)
+UMask=0027

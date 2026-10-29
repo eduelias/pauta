@@ -1,0 +1,89 @@
+#!/usr/bin/python3 -I
+"""Copy the newest Pauta backup to the NAS and prune NAS copies older than 30 days.
+
+Run by pauta-backup-nas.service (after each nightly backup) as the NAS's owner: the drive is
+exFAT, mounted for one uid, so no other user can write there. The unit is sandboxed (no
+/home, no network, write access to the NAS folder only). Its source, /var/backups/pauta,
+belongs to `pauta`, whose code could plant anything there, so this only copies a regular
+file owned by `pauta` with the backup name pattern, opened without following links (or
+blocking on a FIFO), and never deletes anything on the NAS that isn't such a copy.
+
+Lives at /usr/local/lib/pauta/pauta-nas-copy (root:root 0755); see deploy/README.md.
+"""
+
+from __future__ import annotations
+
+import os
+import pwd
+import re
+import shutil
+import stat
+import sys
+import time
+
+SRC = "/var/backups/pauta"
+DEST = "/media/nas/backups/pauta"
+OWNER = "pauta"
+KEEP_DAYS = 30
+NAME = re.compile(r"^pauta-\d{8}-\d{6}\.db$")
+
+
+def newest(src: str, owner_uid: int) -> str | None:
+    """The newest backup in src that is a regular file owned by owner_uid (lstat: no links)."""
+    best: tuple[float, str] | None = None
+    with os.scandir(src) as entries:
+        for e in entries:
+            if not NAME.match(e.name):
+                continue
+            st = e.stat(follow_symlinks=False)
+            if stat.S_ISREG(st.st_mode) and st.st_uid == owner_uid:
+                if best is None or st.st_mtime > best[0]:
+                    best = (st.st_mtime, e.name)
+    return best[1] if best else None
+
+
+def copy(src: str, name: str, dest: str, owner_uid: int) -> str:
+    """Copy src/name to dest/name, re-checking the file after opening it."""
+    fd = os.open(os.path.join(src, name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as fin:
+        st = os.fstat(fin.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != owner_uid:
+            raise SystemExit(f"{name} is not a regular file owned by {OWNER}; not copied")
+        part = os.path.join(dest, f".{name}.part")
+        out = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(out, "wb") as fout:
+            shutil.copyfileobj(fin, fout, 1 << 20)
+            fout.flush()
+            os.fsync(fout.fileno())
+        os.utime(part, (st.st_atime, st.st_mtime))
+        target = os.path.join(dest, name)
+        os.replace(part, target)
+    return target
+
+
+def prune(dest: str, keep_days: int, now: float) -> list[str]:
+    """Remove backup copies (regular files with the backup name) older than keep_days."""
+    gone = []
+    with os.scandir(dest) as entries:
+        for e in entries:
+            if NAME.match(e.name) and e.is_file(follow_symlinks=False):
+                if e.stat(follow_symlinks=False).st_mtime < now - keep_days * 86400:
+                    os.unlink(e.path)
+                    gone.append(e.name)
+    return gone
+
+
+def main() -> int:
+    owner_uid = pwd.getpwnam(OWNER).pw_uid
+    name = newest(SRC, owner_uid)
+    if name is None:
+        print(f"no backup in {SRC}", file=sys.stderr)
+        return 1
+    print(copy(SRC, name, DEST, owner_uid))
+    for old in prune(DEST, KEEP_DAYS, time.time()):
+        print(f"pruned {old}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

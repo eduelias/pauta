@@ -109,8 +109,8 @@ def build(tmp_path):
 
 
 def deploy_fn(call: str, b, cwd=None, **env):
-    """Source pauta-deploy (unprivileged: copies owned by the caller, ROOT in tmp) and run."""
-    script = f'source "{DEPLOY / "pauta-deploy"}"; STAGED_OWNER=(); ROOT="$ROOT_DIR"; {call}'
+    """Source pauta-deploy (unprivileged, with ROOT in tmp) and run one of its functions."""
+    script = f'source "{DEPLOY / "pauta-deploy"}"; ROOT="$ROOT_DIR"; {call}'
     full = {"ROOT_DIR": str(b["root"]), "PATH": os.environ["PATH"], **env}
     return subprocess.run(["bash", "-c", script], env=full, capture_output=True, text=True, cwd=cwd)
 
@@ -137,6 +137,30 @@ def test_the_built_files_are_staged_as_copies(build):
     # changing the caller's file afterwards changes nothing that gets installed
     build["wheel"].write_bytes(b"swapped after the check")
     assert (staged / "pauta-1.2.3-py3-none-any.whl").read_bytes() != b"swapped after the check"
+
+
+def test_the_staging_dir_opens_only_after_the_checks(build):
+    staged = Path(stage(build).stdout.strip())
+    assert oct(staged.stat().st_mode & 0o777) == "0o755"
+    assert oct((staged / "requirements.lock").stat().st_mode & 0o777) == "0o644"
+    before = set(build["root"].glob(".incoming.*"))
+    r = stage(build, lock_sha="0" * 64)  # refused: removed, never opened up
+    assert r.returncode == 1 and set(build["root"].glob(".incoming.*")) == before
+
+
+def test_links_and_fifos_are_not_followed(build, tmp_path):
+    secret = tmp_path / "shadow"
+    secret.write_text("root:secret")
+    real = build["lock"].read_bytes()
+    build["lock"].unlink()
+    build["lock"].symlink_to(secret)
+    r = stage(build, lock_sha=hashlib.sha256(real).hexdigest())
+    assert r.returncode == 1 and "can't copy the lockfile" in r.stderr
+    build["lock"].unlink()
+    os.mkfifo(build["lock"])
+    r = stage(build, lock_sha=hashlib.sha256(real).hexdigest())
+    assert r.returncode == 1 and "is not a regular file" in r.stderr
+    assert not list(build["root"].glob(".incoming.*"))
 
 
 def test_a_swapped_wheel_is_refused(build):

@@ -47,7 +47,16 @@ RestrictNamespaces=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# loopback only, both ways: Caddy reaches it on 127.0.0.1 and it needs nothing else (no LAN,
+# no internet). Other loopback services are still in reach, so Caddy's admin API must not
+# listen on TCP (deploy/README.md)
+IPAddressDeny=any
+IPAddressAllow=localhost
+# other users' processes are invisible, and only the usual system calls are allowed
+ProtectProc=invisible
+ProcSubset=pid
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
 UMask=0077
 
 [Install]

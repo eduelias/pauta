@@ -25,14 +25,13 @@ PYPROJECT = ROOT / "pyproject.toml"
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 HEADING = re.compile(r"^## \[(?P<v>[^\]]+)\](?: - (?P<date>\d{4}-\d{2}-\d{2}))?\s*$", re.M)
 REPO_URL = "https://github.com/eduelias/pauta"
+LOCK = ROOT / "uv.lock"
 # Commits by anyone else are listed before a release, for the owner to confirm: a release
 # deploys to du7. Git identities are not authentication; this is a reminder to look, not a
-# gate (the gates are the rulesets and the du7 job guard, decision 2).
-OWNER_EMAILS = {
-    "du7@msn.com",
-    "eduardo@du7.dev",
-    "12836540+eduelias@users.noreply.github.com",
-}
+# gate (the gates are the rulesets and the du7 job guard, decision 2). The owner's
+# addresses: their GitHub noreply one, `git config user.email`, and any `git config --add
+# pauta.ownerEmail ...` (kept in the owner's git config, not in this public file).
+OWNER_NOREPLY = "12836540+eduelias@users.noreply.github.com"
 GITHUB_COMMITTER = "noreply@github.com"  # merges and edits made on github.com
 
 
@@ -107,9 +106,29 @@ def bump(changelog: str, pyproject: str, version: str, today: str) -> tuple[str,
     return changelog, pyproject
 
 
-def outside_commits(log: str, owners: set[str] = OWNER_EMAILS) -> list[str]:
+def bump_lock(lock: str, version: str) -> str:
+    """uv.lock with pauta's own version set to `version`, edited in place: running uv here
+    would read uv.toml and indexes from the checkout, which may not be the owner's."""
+    new, n = re.subn(
+        r'(\[\[package\]\]\nname = "pauta"\nversion = ")[^"]+(")', rf"\g<1>{version}\2", lock
+    )
+    if n != 1:
+        raise ReleaseError("uv.lock has no single pauta package entry")
+    return new
+
+
+def owner_emails() -> set[str]:
+    found = {OWNER_NOREPLY}
+    for args in (["config", "user.email"], ["config", "--get-all", "pauta.ownerEmail"]):
+        r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        found |= {line.strip() for line in r.stdout.splitlines() if line.strip()}
+    return found
+
+
+def outside_commits(log: str, owners: set[str] | None = None) -> list[str]:
     """The commits in `git log --format=%h%x00%ae%x00%ce%x00%an%x00%s` output that aren't
     entirely the owner's (authored and committed by them, or merged by them on GitHub)."""
+    owners = owner_emails() if owners is None else owners
     out = []
     for line in log.splitlines():
         if not line.strip():
@@ -131,6 +150,34 @@ def confirm_outside(outside: list[str], version: str, ask=input) -> None:
         raise ReleaseError("not confirmed; nothing changed")
 
 
+def ci_passed(sha: str) -> None:
+    """CI ran on this exact commit of main and passed (needs `gh`, signed in)."""
+    r = subprocess.run(
+        [
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            REPO_URL.removeprefix("https://github.com/"),
+            "--workflow",
+            "CI",
+            "--commit",
+            sha,
+            "--json",
+            "conclusion",
+            "--jq",
+            ".[].conclusion",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        raise ReleaseError(f"can't ask GitHub about CI on {sha[:7]}: {r.stderr.strip()}")
+    if "success" not in r.stdout.split():
+        raise ReleaseError(f"CI hasn't passed on {sha[:7]} (origin/main) yet")
+
+
 def git(*args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
@@ -145,6 +192,9 @@ def cmd_cut(version: str, push: bool) -> None:
     git("fetch", "-q", "origin", "main")
     if git("rev-parse", "HEAD") != git("rev-parse", "origin/main"):
         raise ReleaseError("main is not the same as origin/main; pull or push first")
+    if (ROOT / "uv.toml").exists():
+        raise ReleaseError("uv.toml exists: uv would take its indexes; remove it or review it")
+    ci_passed(git("rev-parse", "origin/main"))
     git("fetch", "-q", "--tags", "origin")
     last = subprocess.run(
         ["git", "describe", "--tags", "--abbrev=0", "--match", "v*", "origin/main"],
@@ -161,7 +211,7 @@ def cmd_cut(version: str, push: bool) -> None:
     )
     CHANGELOG.write_text(changelog)
     PYPROJECT.write_text(pyproject)
-    subprocess.run(["uv", "lock", "-q"], cwd=ROOT, check=True)
+    LOCK.write_text(bump_lock(LOCK.read_text(), version))
     git("add", "CHANGELOG.md", "pyproject.toml", "uv.lock")
     git("commit", "-q", "-m", f"Release {version}")
     git("tag", "-a", f"v{version}", "-m", f"Pauta {version}\n\n{notes(changelog, version)}")

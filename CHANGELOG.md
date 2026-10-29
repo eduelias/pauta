@@ -23,6 +23,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   (its data moves to `/var/lib/pauta`); the build uses no cache; `release.py cut` lists
   commits that aren't the owner's; `repo-settings.sh invite` checks everything first; the
   demo data's phone numbers and handles are visibly fake; `deploy/` names no LAN details.
+- And after a second review: collaborators push only to `contrib/**`; CODEOWNERS is
+  default-deny outside the app's code and tests; `release.py` never runs uv on the checkout
+  and checks CI passed; the build is hashed before any of it runs; the release attests its
+  provenance (once public); the NAS copy no longer runs as root; the app has no network but
+  loopback and can't see other processes; the owner runs the CLI through a sandboxed
+  `pauta-cli`; installed releases belong to root.
 
 Fixes from a security review of 1.2.3. Everyone has to sign in again once after this release
 (the session key moved), which takes a tap with the passkey.

@@ -41,13 +41,13 @@ jobs:
         env:
           UV_FROZEN: "false"
       - name: Ruff (lint)
-        run: uv run --extra dev ruff check --output-format=github src tests scripts tools
+        run: uv run --extra dev ruff check --output-format=github src tests scripts tools deploy/pauta-nas-copy
       - name: Ruff (format)
-        run: uv run --extra dev ruff format --check src tests scripts tools
+        run: uv run --extra dev ruff format --check src tests scripts tools deploy/pauta-nas-copy
       - name: JavaScript parses
         run: node --check src/pauta/static/app.js
       - name: Deploy scripts (shellcheck)
-        run: shellcheck deploy/pauta-deploy deploy/provision-du7.sh deploy/runner-job-guard scripts/repo-settings.sh
+        run: shellcheck deploy/pauta-deploy deploy/provision-du7.sh deploy/runner-job-guard deploy/pauta-cli scripts/repo-settings.sh
       - name: Workflows (actionlint)
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
 
@@ -125,13 +125,17 @@ jobs:
           uvx pip-audit --strict --require-hashes --disable-pip -r runtime.txt
 
   build:
-    name: Build and smoke test
+    # hashes and uploads what ships before any of its code runs: the smoke test is a job of its
+    # own, on another machine, against the uploaded files
+    name: Build
     needs: [lint, test, e2e, audit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       wheel_sha256: ${{ steps.sums.outputs.wheel }}
       lock_sha256: ${{ steps.sums.outputs.lock }}
+    env:
+      UV_NO_CONFIG: "1" # no uv.toml from the checkout decides how this is built
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -144,6 +148,34 @@ jobs:
         run: >-
           uv export --no-dev --no-emit-project --format requirements-txt
           -o dist/requirements.lock
+      - name: Checksums
+        id: sums
+        run: |
+          cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+          echo "wheel=$(sha256sum pauta-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "lock=$(sha256sum requirements.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+  smoke:
+    name: Smoke test
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.11"
+          enable-cache: false
+      - name: The files are the ones the build hashed
+        run: cd dist && sha256sum -c SHA256SUMS
       - name: The wheel carries the web app
         run: |
           wheel=$(ls dist/pauta-*.whl)
@@ -161,14 +193,3 @@ jobs:
           test "$(curl -fsS localhost:8099/healthz | jq -r .version)" = "$version"
           curl -fsS localhost:8099/ | grep -q 'og:image'
           echo "pauta $version: installs, starts and answers" >> "$GITHUB_STEP_SUMMARY"
-      - name: Checksums
-        id: sums
-        run: |
-          cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
-          echo "wheel=$(sha256sum pauta-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          echo "lock=$(sha256sum requirements.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist
-          path: dist/
-          retention-days: 30

@@ -11,10 +11,11 @@
 #
 # It is re-runnable and does, in order:
 #   - the `pauta` system user, and moves the DB and backups out of /home/esaleh (once);
-#   - pauta-deploy, the units, the sudo rule;
-#   - the runner: installed or updated to RUNNER_VERSION, registered with self-update off,
-#     its files owned by root (only _work and _diag are the runner user's);
-#   - the job guard, which refuses every job but the owner's deploy.
+#   - pauta-deploy, pauta-cli, the NAS copy, the units, the sudo rule;
+#   - pauta's old runner (as the shared gh-runner) retired, once;
+#   - the runner, as its own pauta-runner: installed or updated to RUNNER_VERSION, registered
+#     with self-update off, its files owned by root (only _work and _diag are its user's),
+#     and the job guard, which refuses every job but the owner's deploy.
 # The first release still has to be put in place by pauta-deploy; see deploy/README.md.
 set -euo pipefail
 
@@ -48,38 +49,42 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
         --comment "Pauta (pauta.genic.dev)" "$SERVICE_USER"
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR"
-# 0750: the owner (in the pauta group) and du7's watchdog can see backup ages, not read them
+# 0750: the owner (in the pauta group) and the NAS copy, which runs as the owner, may read
+# the nightly backups; the pre-deploy ones stay pauta's
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$BACKUP_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$BACKUP_DIR/pre-deploy"
 usermod -a -G "$SERVICE_USER" "$OLD_USER"
-# the NAS is exFAT mounted for esaleh: pauta-backup copies to it as root (ExecStartPost=+)
 if mountpoint -q /media/nas; then
-    install -d "$NAS_DIR"
+    install -d "$NAS_DIR"   # exFAT: every file there is the owner's, whoever writes it
 fi
 
 # --- once: move the DB and backups from /home/esaleh to the pauta user ----------------------
 if [ -f "$OLD_STATE/pauta.db" ] && [ ! -f "$STATE_DIR/pauta.db" ]; then
     say "moving $OLD_STATE to $STATE_DIR"
     systemctl stop pauta-backup.timer pauta.service 2>/dev/null || true
-    cp -a "$OLD_STATE/." "$STATE_DIR/"
+    cp -a "$OLD_STATE/." "$STATE_DIR/"   # the DB, its -wal/-shm and its session key
     if [ -d "$OLD_BACKUPS" ]; then
         cp -a "$OLD_BACKUPS/." "$BACKUP_DIR/"
     fi
     chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR" "$BACKUP_DIR"
     chmod 0700 "$STATE_DIR" "$BACKUP_DIR/pre-deploy"
     chmod 0750 "$BACKUP_DIR"
-    if [ -d /opt/pauta/releases ]; then
-        chown -R "$SERVICE_USER:$SERVICE_USER" /opt/pauta/releases
-    fi
     # kept, not deleted: remove by hand once the new place has run for a while
     mv "$OLD_STATE" "$OLD_STATE.moved-$(date +%Y%m%d)"
     say "the old copy is in $OLD_STATE.moved-$(date +%Y%m%d)"
 fi
+# installed releases are root's: the service may read them, never change them
+if [ -d /opt/pauta/releases ]; then
+    chown -R -h root:root /opt/pauta/releases
+fi
 
-# --- the deploy script, the layout and the units -----------------------------------------
+# --- the deploy script, the tools and the units ---------------------------------------------
 install -o root -g root -m 0755 "$HERE/pauta-deploy" /usr/local/sbin/pauta-deploy
-install -d -o root -g root -m 0755 /opt/pauta /opt/pauta/releases
-for unit in pauta.service pauta-backup.service pauta-backup.timer; do
+install -o root -g root -m 0755 "$HERE/pauta-cli" /usr/local/sbin/pauta-cli
+install -d -o root -g root -m 0755 /usr/local/lib/pauta /opt/pauta /opt/pauta/releases
+install -o root -g root -m 0755 "$HERE/pauta-nas-copy" /usr/local/lib/pauta/pauta-nas-copy
+install -o root -g root -m 0755 "$HERE/runner-job-guard" /usr/local/lib/pauta/runner-job-guard
+for unit in pauta.service pauta-backup.service pauta-backup-nas.service pauta-backup.timer; do
     install -o root -g root -m 0644 "$HERE/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
@@ -88,19 +93,26 @@ if [ -e /opt/pauta/current ]; then
     systemctl restart pauta.service
 fi
 
-# --- the runner user: no shell, no groups, one sudo rule ---------------------------------
-if ! id "$RUNNER_USER" >/dev/null 2>&1; then
-    useradd --system --home-dir "$RUNNER_HOME" --create-home --shell /usr/sbin/nologin \
-        --comment "GitHub Actions runner (eduelias/pauta deploys)" "$RUNNER_USER"
+# --- once: retire the runner that ran as the shared gh-runner --------------------------------
+# Unconditionally: that user (dominion-archive's runner) may no longer deploy Pauta.
+rm -f /etc/sudoers.d/gh-runner-pauta
+if [ -f "/etc/systemd/system/$RUNNER_UNIT" ] &&
+        grep -q "^ExecStart=$OLD_RUNNER_DIR/" "/etc/systemd/system/$RUNNER_UNIT"; then
+    say "retiring the old runner in $OLD_RUNNER_DIR (as gh-runner)"
+    systemctl disable --now "$RUNNER_UNIT"
+    rm -f "/etc/systemd/system/$RUNNER_UNIT"
+    rm -rf "/etc/systemd/system/$RUNNER_UNIT.d"
+    systemctl daemon-reload
 fi
-# once: retire the runner that ran as the shared gh-runner (same name: registering the new
-# one with --replace takes its place on GitHub)
-if [ -f "$OLD_RUNNER_DIR/.runner" ] && grep -q '"gitHubUrl": *"https://github.com/eduelias/pauta"' "$OLD_RUNNER_DIR/.runner"; then
-    [ -n "$TOKEN_FILE" ] || { echo "moving the runner to $RUNNER_USER needs a TOKEN_FILE" >&2; exit 1; }
-    say "retiring $OLD_RUNNER_DIR (gh-runner)"
-    (cd "$OLD_RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) || true
-    rm -f /etc/sudoers.d/gh-runner-pauta
-    rm -rf "$OLD_RUNNER_DIR"   # its credentials, invalid once the new one registers
+if [ -f "$OLD_RUNNER_DIR/.runner" ] &&
+        grep -q '"gitHubUrl": *"https://github.com/eduelias/pauta"' "$OLD_RUNNER_DIR/.runner"; then
+    rm -rf "$OLD_RUNNER_DIR"   # its credentials; the new runner registers under the same name
+fi
+
+# --- the runner user: no shell, no groups, nothing of its own but its work dirs --------------
+if ! id "$RUNNER_USER" >/dev/null 2>&1; then
+    useradd --system --home-dir "$RUNNER_HOME" --no-create-home --shell /usr/sbin/nologin \
+        --comment "GitHub Actions runner (eduelias/pauta deploys)" "$RUNNER_USER"
 fi
 rule=/etc/sudoers.d/pauta-runner
 cat > "$rule.tmp" <<EOF
@@ -112,8 +124,9 @@ chmod 0440 "$rule.tmp"
 visudo -cf "$rule.tmp" >/dev/null
 mv "$rule.tmp" "$rule"
 
-# --- the runner itself: installed or updated, then owned by root ----------------------------
+# --- the runner itself: a fresh install, owned by root, updated by this script --------------
 dir=$RUNNER_HOME/actions-runner
+install -d -o root -g "$RUNNER_USER" -m 0750 "$RUNNER_HOME"
 installed=$( [ -x "$dir/config.sh" ] && (cd "$dir" && runuser -u "$RUNNER_USER" -- ./config.sh --version) 2>/dev/null || echo none)
 systemctl stop "$RUNNER_UNIT" 2>/dev/null || true
 if [ "$installed" != "$RUNNER_VERSION" ]; then
@@ -123,35 +136,32 @@ if [ "$installed" != "$RUNNER_VERSION" ]; then
     curl -fsSL --proto '=https' -o "$tmp/$tarball" \
         "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/$tarball"
     echo "$RUNNER_SHA256  $tmp/$tarball" | sha256sum -c -
-    install -d -m 0755 "$dir"
-    tar -xzf "$tmp/$tarball" -C "$dir"   # over the old one: keeps .runner and .credentials
+    install -d -o root -g root -m 0755 "$dir"
+    tar -xzf "$tmp/$tarball" --no-same-owner -C "$dir"   # over an older one: keeps .runner
     rm -rf "$tmp"
     "$dir/bin/installdependencies.sh"
 fi
-# The runner may not update itself (its files are root's): this script updates it. Register
-# again when it isn't registered yet, or was registered with self-update on.
+# It may not update itself (its files are root's). Register when it isn't registered yet or
+# was registered with self-update on; --replace takes over the name du7 on GitHub.
 if [ ! -f "$dir/.runner" ] || ! grep -q '"disableUpdate": *true' "$dir/.runner"; then
     [ -n "$TOKEN_FILE" ] || {
-        echo "the runner needs registering (again, with self-update off): pass a TOKEN_FILE" >&2
+        echo "the runner needs registering (with self-update off): pass a TOKEN_FILE" >&2
         exit 1
     }
     token=$(cat "$TOKEN_FILE")
     rm -f "$TOKEN_FILE"
-    chown -R "$RUNNER_USER:$RUNNER_USER" "$dir"   # config.sh runs as the runner user
+    chown -R "$RUNNER_USER:$RUNNER_USER" "$dir"   # config.sh writes as the runner user
     (cd "$dir" && runuser -u "$RUNNER_USER" -- ./config.sh --unattended --replace \
         --url "$REPO_URL" --token "$token" --name du7 --labels du7,pauta \
         --work _work --disableupdate)
-    if [ ! -f "/etc/systemd/system/$RUNNER_UNIT" ]; then
-        (cd "$dir" && ./svc.sh install "$RUNNER_USER")
-    fi
 fi
-# Root owns the runner's code, its home and its registration; the runner user can only write
-# its work and log directories and read its credentials. So a job can't change the runner
-# or the hook for the jobs after it.
-chown -R root:root "$RUNNER_HOME"
+# Root writes what the runner reads at start, so a job can't change it for the next one: the
+# Listener loads .env over the unit's environment, so the guard is set there too.
+printf 'LANG=C.UTF-8\nACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard\n' > "$dir/.env"
+printf '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' > "$dir/.path"
+install -o root -g root -m 0755 "$dir/bin/runsvc.sh" "$dir/runsvc.sh"
+chown -R -h root:root "$dir"
 chmod -R go-w "$dir"
-chown root:"$RUNNER_USER" "$RUNNER_HOME"
-chmod 0750 "$RUNNER_HOME"
 for f in .runner .credentials .credentials_rsaparams; do
     if [ -f "$dir/$f" ]; then
         chown root:"$RUNNER_USER" "$dir/$f"
@@ -159,18 +169,8 @@ for f in .runner .credentials .credentials_rsaparams; do
     fi
 done
 install -d -o "$RUNNER_USER" -g "$RUNNER_USER" -m 0750 "$dir/_work" "$dir/_diag"
-chown -R "$RUNNER_USER:$RUNNER_USER" "$dir/_work" "$dir/_diag"
-
-# --- the job guard: the runner refuses every job but the owner's deploy --------------------
-# Root-owned, and set through a root-owned systemd drop-in.
-install -d -o root -g root -m 0755 /usr/local/lib/pauta
-install -o root -g root -m 0755 "$HERE/runner-job-guard" /usr/local/lib/pauta/runner-job-guard
-install -d -o root -g root -m 0755 "/etc/systemd/system/$RUNNER_UNIT.d"
-cat > "/etc/systemd/system/$RUNNER_UNIT.d/job-guard.conf" <<EOF
-# Every job on du7 first passes /usr/local/lib/pauta/runner-job-guard (deploy/README.md).
-[Service]
-Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard
-EOF
+chown -R -h "$RUNNER_USER:$RUNNER_USER" "$dir/_work" "$dir/_diag"
+install -o root -g root -m 0644 "$HERE/pauta-runner.service" "/etc/systemd/system/$RUNNER_UNIT"
 systemctl daemon-reload
 systemctl enable --now "$RUNNER_UNIT"
 sleep 5

@@ -37,8 +37,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    name: Version ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: X.Y.Z, and from the owner
+        env:
+          VERSION: ${{ inputs.version }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || { echo "::error::not X.Y.Z"; exit 1; }
+          [ "$ACTOR" = eduelias ] || { echo "::error::only the owner deploys (du7 refuses others)"; exit 1; }
+
   du7:
     name: du7 → pauta.genic.dev
+    needs: check
     runs-on: [self-hosted, du7, pauta]
     timeout-minutes: 15
     environment:
@@ -107,9 +121,12 @@ jobs:
 
   alert:
     name: WhatsApp if the deploy failed
-    needs: [du7, public]
-    # a deploy started by a release is reported by release.yml's own alert job
-    if: failure() && github.event_name == 'workflow_dispatch'
+    needs: [check, du7, public]
+    # a deploy started by a release is reported by release.yml's own alert job; only the owner's
+    # runs message the owner, and only with a version that passed the check
+    if: >-
+      failure() && github.event_name == 'workflow_dispatch' &&
+      github.triggering_actor == 'eduelias' && needs.check.result == 'success'
     runs-on: ubuntu-latest
     # the WhatsApp secrets live in the `alerts` environment: main and release tags only
     environment: alerts

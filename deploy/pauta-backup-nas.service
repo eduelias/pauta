@@ -1,0 +1,38 @@
+# Copy the newest Pauta backup to the NAS drive (started by pauta-backup.service on success).
+# The NAS is exFAT, mounted for the owner's uid, so the copy runs as the owner (in the pauta
+# group, which may read the backups), never as root. deploy/pauta-nas-copy trusts nothing in
+# /var/backups/pauta it can't check: no links, only regular files owned by pauta.
+[Unit]
+Description=Pauta: copy the newest backup to the NAS
+ConditionPathIsMountPoint=/media/nas
+
+[Service]
+Type=oneshot
+User=esaleh
+Group=esaleh
+ExecStart=/usr/bin/python3 -I /usr/local/lib/pauta/pauta-nas-copy
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+ReadWritePaths=/media/nas/backups/pauta
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
