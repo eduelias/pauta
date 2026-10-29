@@ -1,8 +1,8 @@
 """Tiny stdlib HTTP server: the static app plus JSON endpoints under /api.
 
 Everything except the login/join endpoints needs a signed-in account (client data is private;
-there is no public view). Writes must come from an allowed origin with a JSON body, and the
-session cookie is SameSite=Strict.
+there is no public view). Writes must come from an allowed origin with a JSON body (file
+uploads send the file itself), and the session cookie is SameSite=Strict.
 """
 
 from __future__ import annotations
@@ -19,11 +19,12 @@ import time
 import traceback
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__, obs
 from .auth import Auth, AuthError
 from .db import Invalid, NotFound, Store
+from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
 
 STATIC = Path(__file__).parent / "static"
@@ -51,6 +52,7 @@ ID = r"(\d{1,9})"
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
 AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
 QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
+SENT = object()  # a route that wrote its own response (a redirect, an image)
 
 
 class Reply(Exception):
@@ -64,15 +66,18 @@ def make_handler(
     auth: Auth,
     limiter: RateLimiter | None = None,
     metrics: obs.Metrics | None = None,
+    drive: OneDrive | None = None,
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
+    drive = drive or OneDrive.from_env(store.path)
     slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
-    routes: list[tuple[str, re.Pattern, str, str]] = []  # method, path, handler, access
+    # method, path, handler, access, raw (the body is a file, not JSON)
+    routes: list[tuple[str, re.Pattern, str, str, bool]] = []
 
-    def route(method: str, pattern: str, access: str = "member"):
+    def route(method: str, pattern: str, access: str = "member", raw: bool = False):
         def deco(fn):
-            routes.append((method, re.compile(f"^{pattern}$"), fn.__name__, access))
+            routes.append((method, re.compile(f"^{pattern}$"), fn.__name__, access, raw))
             return fn
 
         return deco
@@ -112,7 +117,7 @@ def make_handler(
                 return path
             if not path.startswith("/api/"):
                 return "static"
-            for _, pattern, _, _ in routes:
+            for _, pattern, *_ in routes:
                 if pattern.match(path):
                     return obs.route_label(pattern.pattern)
             return "/api/unknown"
@@ -220,6 +225,19 @@ def make_handler(
                 raise Reply(400, {"error": "JSON inválido"})
             return doc
 
+        def _redirect(self, url: str):
+            self.send_response(302)
+            self._headers("text/plain", 0, {"Location": url, "Cache-Control": "no-store"})
+
+        def _reader(self):
+            def read(n: int) -> bytes:
+                try:
+                    return self.rfile.read(n)
+                except TimeoutError:
+                    raise DriveError("o envio parou no meio; tente de novo", 408) from None
+
+            return read
+
         def _check_origin(self):
             if not auth.enabled:
                 return
@@ -268,7 +286,7 @@ def make_handler(
                         raise Reply(429, {"error": f"muitas tentativas; espere {wait}s"})
                 viewer = auth.viewer(self.headers.get("Cookie"))
                 self._account = viewer["account"]
-                for m, pattern, name, access in routes:
+                for m, pattern, name, access, raw in routes:
                     match = pattern.match(path)
                     if m != method or not match:
                         continue
@@ -276,8 +294,10 @@ def make_handler(
                         raise Reply(401, {"error": "entre com sua passkey"})
                     if access == "admin" and not viewer["is_admin"]:
                         raise Reply(403, {"error": "só para administradores"})
-                    body = self._body() if method in ("POST", "PUT", "PATCH") else {}
+                    body = self._body() if method in ("POST", "PUT", "PATCH") and not raw else {}
                     out = getattr(self, name)(viewer, body, *match.groups())
+                    if out is SENT:
+                        return
                     if isinstance(out, tuple):
                         return self._json(200, out[0], cookie=out[1])
                     return self._json(200, out)
@@ -288,6 +308,8 @@ def make_handler(
                 self._json(400, {"error": str(e)})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
+            except DriveError as e:
+                self._json(e.status, {"error": str(e)})
 
         def _health(self, method: str):
             """For the deploy and uptime checks: no auth, no data, just "the DB answers"."""
@@ -315,6 +337,11 @@ def make_handler(
                 "backup": {"dir": backups, "newest_age_s": obs.newest_age(backups)}
                 if backups
                 else None,
+                "onedrive": {
+                    "enabled": drive.enabled,
+                    "connected": drive.connected,
+                    "error": drive.error,
+                },
             }
             self._json(200, doc)
 
@@ -364,6 +391,11 @@ def make_handler(
                 "members": members,
                 "avatars": avatars,
                 "version": __version__,
+                "files": {
+                    "enabled": drive.enabled,
+                    "connected": drive.connected,
+                    "max_mb": drive.max_bytes // (1024 * 1024),
+                },
             }
 
         @route("GET", "/api/export", "admin")
@@ -398,8 +430,54 @@ def make_handler(
 
         @route("DELETE", f"/api/requests/{ID}", "admin")
         def delete_request(self, viewer, _body, rid):
-            store.delete_request(int(rid))
+            store.delete_request(int(rid))  # its files stay in OneDrive
             return {"ok": True}
+
+        # ---- files (in OneDrive) ----------------------------------------------------------
+
+        @route("POST", f"/api/requests/{ID}/files", raw=True)
+        def upload(self, viewer, _body, rid):
+            """The body is the file; its name comes URI-encoded in X-File-Name."""
+            # one upload per connection: after an error the rest of the body is unread
+            self.close_connection = True
+            folder = store.file_folder(int(rid))
+            length = (self.headers.get("Content-Length") or "").strip()
+            if not length.isdigit():
+                raise Reply(411, {"error": "envie o tamanho do arquivo"})
+            name = unquote(self.headers.get("X-File-Name") or "").strip()
+            if not name:
+                raise Reply(400, {"error": "o arquivo precisa de um nome"})
+            item = drive.upload(folder, name, int(length), self._reader())
+            obs.event("file_uploaded", bytes=item["size"])
+            return store.add_file(int(rid), item, viewer["account"])
+
+        @route("GET", f"/api/files/{ID}")
+        def download(self, viewer, _body, fid):
+            self._redirect(drive.download_url(store.file(int(fid))["item"]))
+            return SENT
+
+        @route("GET", f"/api/files/{ID}/thumb")
+        def thumb(self, viewer, _body, fid):
+            raw, ctype = drive.thumbnail(store.file(int(fid))["item"])
+            self.send_response(200)
+            self._headers(ctype, len(raw), {"Cache-Control": "private, max-age=86400"})
+            self._write(raw)
+            return SENT
+
+        @route("DELETE", f"/api/files/{ID}")
+        def remove_file(self, viewer, _body, fid):
+            f = store.file(int(fid))
+            if not viewer["is_admin"] and f["account"] != viewer["account"]:
+                raise Reply(403, {"error": "só quem enviou ou um administrador pode remover"})
+            drive.delete(f["item"])
+            return store.remove_file(int(fid), viewer["account"])
+
+        @route("POST", f"/api/requests/{ID}/share")
+        def share(self, viewer, _body, rid):
+            folder = store.request_folder(int(rid))
+            if not folder:
+                raise Reply(400, {"error": "envie um arquivo primeiro"})
+            return {"url": drive.share_link(folder)}
 
         # ---- clients ----------------------------------------------------------------------
 
@@ -441,6 +519,23 @@ def make_handler(
                 by=viewer["account"],
             )
             return store.members()
+
+        @route("GET", "/api/onedrive", "admin")
+        def drive_status(self, viewer, _body):
+            """Also how the Equipe page waits for the code to be approved: each call while
+            a connection is pending asks Microsoft once."""
+            state = drive.poll() if drive.pending() else "idle"
+            return {**drive.status(quota=state != "pending"), "state": state}
+
+        @route("POST", "/api/onedrive/connect", "admin")
+        def drive_connect(self, viewer, _body):
+            drive.start_connect()
+            return {**drive.status(), "state": "pending"}
+
+        @route("DELETE", "/api/onedrive", "admin")
+        def drive_disconnect(self, viewer, _body):
+            drive.disconnect()
+            return {**drive.status(), "state": "idle"}
 
         @route("PUT", "/api/options/(kind|goal|segment)", "admin")
         def options(self, viewer, body, lst):

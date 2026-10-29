@@ -22,6 +22,10 @@ Environment=PAUTA_RP_ID=pauta.genic.dev
 Environment=PAUTA_ORIGIN=https://pauta.genic.dev
 # the newest nightly backup's age shows in /metrics (read only: ProtectHome=read-only)
 Environment=PAUTA_BACKUP_DIR=/home/esaleh/backups/pauta
+# files on requests go to OneDrive (decision 3). A public client id, not a secret: the
+# "Pauta" app registration in du7@msn.com's Entra directory. Its token is written next to
+# the DB (pauta.db.onedrive-token) when an admin connects on the Equipe page
+Environment=PAUTA_ONEDRIVE_CLIENT_ID=a6a25189-1541-430b-ba90-be78b92a8e30
 # loopback only: Caddy (pauta.genic.dev) is the one way in
 ExecStart=/opt/pauta/current/bin/pauta serve --host 127.0.0.1 --port 8088
 Restart=on-failure

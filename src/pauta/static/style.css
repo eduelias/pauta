@@ -503,3 +503,28 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 @keyframes flash { 0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-done) 40%, transparent); } 100% { box-shadow: none; } }
 textarea.req-title { resize: none; overflow: hidden; min-height: 0; }
 aside .kv { grid-template-columns: 88px 1fr; }
+
+/* files on a request (stored in OneDrive) */
+#files.drop { border-color: var(--accent); background: var(--accent-soft); }
+.files { display: flex; flex-direction: column; }
+.file { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line-2); }
+.file:last-child { border-bottom: 0; }
+.file .thumb { width: 52px; height: 52px; flex: none; border-radius: var(--radius-sm); overflow: hidden;
+  display: grid; place-items: center; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); }
+.file .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.file .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.file .meta a { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file .meta span { font-size: 12.5px; color: var(--muted); }
+.upl { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 6px 0; }
+.upl span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upl progress { width: 40%; accent-color: var(--accent); }
+.sharebox { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 12px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
+.sharebox .invlink { word-break: break-all; }
+.drivecode { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.drivecode code { font-size: 26px; font-weight: 750; letter-spacing: .12em; padding: 6px 14px;
+  border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); }
+.quota { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; margin: 6px 0 4px; }
+.quota div { height: 100%; background: var(--accent); }
+.warnbox { border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius-sm);
+  padding: 8px 12px; font-size: 14px; }

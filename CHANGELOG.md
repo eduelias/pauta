@@ -7,6 +7,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Arquivos nos pedidos: envie imagens e vídeos direto na página do pedido (botão ou arrastar),
+  com miniatura, quem enviou e quando, e uma linha na conversa e histórico. Os arquivos ficam
+  no OneDrive do time, não no servidor; "Link para o cliente" gera um link só de
+  visualização para mandar no WhatsApp. Um administrador conecta o OneDrive uma vez em
+  Equipe → OneDrive, com um código (decision 3).
+
 ## [1.3.0] - 2026-10-29
 
 ### Security
