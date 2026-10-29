@@ -7,14 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-10-29
-
 ### Security
 
-- Ready for collaborators and a public repository (decision 2): CODEOWNERS for CI, deploy,
-  sign-in and dependencies, rulesets and settings as code (`scripts/repo-settings.sh`), the
-  WhatsApp secrets in an `alerts` environment, immutable releases, and on du7 a runner that
-  refuses every job but the owner's deploy. `SECURITY.md` and `CONTRIBUTING.md` are new.
 - The delivery chain, after a review: du7 installs only the wheel and lockfile the owner's
   release run built (checked by sha256 in a root-owned copy, never files from the release
   page, and nothing from the wheel runs before the switch); a hand-started deploy only
@@ -29,6 +23,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   provenance (once public); the NAS copy no longer runs as root; the app has no network but
   loopback and can't see other processes; the owner runs the CLI through a sandboxed
   `pauta-cli`; installed releases belong to root.
+
+## [1.3.0] - 2026-10-29
+
+### Security
+
+- Ready for collaborators and a public repository (decision 2): CODEOWNERS for CI, deploy,
+  sign-in and dependencies, rulesets and settings as code (`scripts/repo-settings.sh`), the
+  WhatsApp secrets in an `alerts` environment, immutable releases, and on du7 a runner that
+  refuses every job but the deploy and a `pauta-deploy` that only installs the published
+  release's files. `SECURITY.md` and `CONTRIBUTING.md` are new.
 
 Fixes from a security review of 1.2.3. Everyone has to sign in again once after this release
 (the session key moved), which takes a tap with the passkey.

@@ -62,13 +62,17 @@ fi
 if [ -f "$OLD_STATE/pauta.db" ] && [ ! -f "$STATE_DIR/pauta.db" ]; then
     say "moving $OLD_STATE to $STATE_DIR"
     systemctl stop pauta-backup.timer pauta.service 2>/dev/null || true
-    cp -a "$OLD_STATE/." "$STATE_DIR/"   # the DB, its -wal/-shm and its session key
+    # the DB, its -wal/-shm and pauta.db.session-key (left behind, everyone signs in once more)
+    cp -a "$OLD_STATE/." "$STATE_DIR/"
     if [ -d "$OLD_BACKUPS" ]; then
         cp -a "$OLD_BACKUPS/." "$BACKUP_DIR/"
     fi
     chown -R "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR" "$BACKUP_DIR"
     chmod 0700 "$STATE_DIR" "$BACKUP_DIR/pre-deploy"
     chmod 0750 "$BACKUP_DIR"
+    if [ -f "$STATE_DIR/pauta.db.session-key" ]; then
+        chmod 0600 "$STATE_DIR/pauta.db.session-key"
+    fi
     # kept, not deleted: remove by hand once the new place has run for a while
     mv "$OLD_STATE" "$OLD_STATE.moved-$(date +%Y%m%d)"
     say "the old copy is in $OLD_STATE.moved-$(date +%Y%m%d)"
