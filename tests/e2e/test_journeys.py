@@ -132,7 +132,8 @@ def test_a_slow_screen_does_not_overwrite_the_next_one(live, device):
 
     page.route("**/api/requests", hold_first)
     page.goto(f"{base}/#/pedidos")
-    page.wait_for_function("document.querySelector('#app .spinner')")
+    # a locator, not wait_for_function: evaluating a string breaks the CSP (no unsafe-eval)
+    page.locator("#app .spinner").wait_for(state="attached")
     assert held, "the list screen should be waiting on /api/requests"
     page.goto(f"{base}/#/equipe")
     expect(page.get_by_role("heading", name="Equipe")).to_be_visible()
