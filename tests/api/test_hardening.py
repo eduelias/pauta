@@ -1,5 +1,6 @@
 """The fixes from the October 2026 security review: one test per way in that was closed."""
 
+import contextlib
 import json
 import os
 import socket
@@ -14,6 +15,17 @@ from pauta import server as server_mod
 from pauta.auth import Auth, AuthError
 from pauta.db import Invalid, Store
 from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, login, start
+
+
+@contextlib.contextmanager
+def raw(path):
+    """A plain connection that is committed and closed: sqlite3's own `with` only commits."""
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def send_raw(base, data: bytes, wait: float = 5) -> bytes:
@@ -32,18 +44,18 @@ def send_raw(base, data: bytes, wait: float = 5) -> bytes:
 def test_the_signing_key_is_not_in_the_database(store, auth):
     key = f"{store.path}.session-key"
     assert os.stat(key).st_mode & 0o777 == 0o600
-    with sqlite3.connect(store.path) as db:
+    with raw(store.path) as db:
         assert not db.execute("SELECT 1 FROM meta WHERE key='session_secret'").fetchone()
 
 
 def test_an_old_database_loses_its_key_and_everyone_signs_in_again(tmp_path):
     db = tmp_path / "pauta.db"
     Store(db)
-    with sqlite3.connect(db) as conn:  # how 1.2 kept it
+    with raw(db) as conn:  # how 1.2 kept it
         conn.execute("INSERT INTO meta(key, value) VALUES ('session_secret', 'old-secret')")
     a = Auth(Store(db), enabled=True)
     assert a.secret != b"old-secret"
-    with sqlite3.connect(db) as conn:
+    with raw(db) as conn:
         assert not conn.execute("SELECT 1 FROM meta WHERE key='session_secret'").fetchone()
 
 
@@ -224,7 +236,7 @@ def test_huge_ids_are_400_not_500(team):
 
 def test_schema_v3_gets_session_generations(tmp_path):
     path = tmp_path / "old.db"
-    with sqlite3.connect(path) as db:
+    with raw(path) as db:
         db.execute(
             "CREATE TABLE account (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
             "handle TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '', "
