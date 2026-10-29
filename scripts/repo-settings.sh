@@ -28,22 +28,33 @@ try() {  # DESCRIPTION gh-api-args...: run it, explain a refusal instead of stop
     if out=$(gh api "$@" 2>&1); then
         say "ok    $what"
     elif grep -q -e "Upgrade to GitHub Pro" -e "make this repository public" \
-            -e "not available for private" -e "only available for public" <<<"$out"; then
+            -e "not available for private" -e "only available for public" \
+            -e "not available for this repository" -e "not allowed for private" <<<"$out"; then
         say "later $what (needs the repo public, or GitHub Pro)"
     else
         say "FAIL  $what: $out"
-        return 1
+        FAILED=1
+    fi
+}
+FAILED=0
+
+public_only() {  # DESCRIPTION gh-api-args...: on GitHub Free these exist for public repos only
+    if [ "$VISIBILITY" = public ]; then
+        try "$@"
+    else
+        say "later $1 (when the repo is public)"
     fi
 }
 
 ruleset() {  # NAME JSON: create the ruleset, or replace the one with that name
     local name=$1 body=$2 id
+    # (on a refusal gh prints the error body on stdout: treat that as "none yet")
     id=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$name\") | .id" \
-        2>/dev/null || true)
+        2>/dev/null) || id=
     if [ -n "$id" ]; then
-        try "ruleset '$name' (updated)" -X PUT "repos/$REPO/rulesets/$id" --input - <<<"$body"
+        public_only "ruleset '$name' (updated)" -X PUT "repos/$REPO/rulesets/$id" --input - <<<"$body"
     else
-        try "ruleset '$name'" -X POST "repos/$REPO/rulesets" --input - <<<"$body"
+        public_only "ruleset '$name'" -X POST "repos/$REPO/rulesets" --input - <<<"$body"
     fi
 }
 
@@ -55,7 +66,7 @@ EOF
     have=$(gh api "repos/$REPO/environments/$name/deployment-branch-policies" \
         --jq '.branch_policies[] | "\(.type):\(.name)"' 2>/dev/null || true)
     for policy in branch:main tag:v*; do
-        grep -qx "$policy" <<<"$have" && continue
+        grep -qxF "$policy" <<<"$have" && continue
         try "environment $name: deploy from ${policy#*:}" -X POST \
             "repos/$REPO/environments/$name/deployment-branch-policies" \
             -f "name=${policy#*:}" -f "type=${policy%%:*}"
@@ -63,7 +74,8 @@ EOF
 }
 
 apply() {
-    say "== repository"
+    VISIBILITY=$(gh api "repos/$REPO" --jq .visibility)
+    say "== repository ($VISIBILITY)"
     try "merge options, branch cleanup, no wiki/projects" -X PATCH "repos/$REPO" \
         -F allow_merge_commit=true -F allow_squash_merge=true -F allow_rebase_merge=false \
         -F delete_branch_on_merge=true -F allow_auto_merge=true -F allow_update_branch=true \
@@ -81,10 +93,16 @@ EOF
     try "GITHUB_TOKEN read-only, can't approve PRs" -X PUT \
         "repos/$REPO/actions/permissions/workflow" \
         -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
-    # nobody's fork runs a workflow until the owner has looked at it
-    try "fork PRs from anyone outside need approval to run" -X PUT \
-        "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
-        -f approval_policy=all_external_contributors
+    # nobody's fork runs a workflow until the owner has looked at it (while private: not at all)
+    if [ "$VISIBILITY" = public ]; then
+        try "fork PRs from anyone outside need approval to run" -X PUT \
+            "repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
+            -f approval_policy=all_external_contributors
+    else
+        try "fork PRs run no workflows (private repo)" -X PUT \
+            "repos/$REPO/actions/permissions/fork-pr-workflows-private-repos" \
+            -F run_workflows_from_fork_pull_requests=false
+    fi
 
     say "== environments"
     environment production   # the du7 deploy job
@@ -125,12 +143,12 @@ EOF
     try "Dependabot security updates" -X PUT "repos/$REPO/automated-security-fixes"
     # a published release (its wheel and SHA256SUMS, which pauta-deploy checks) never changes
     try "immutable releases" -X PUT "repos/$REPO/immutable-releases"
-    try "secret scanning and push protection" -X PATCH "repos/$REPO" --input - <<'EOF'
+    public_only "secret scanning and push protection" -X PATCH "repos/$REPO" --input - <<'EOF'
 {"security_and_analysis": {"secret_scanning": {"status": "enabled"},
                            "secret_scanning_push_protection": {"status": "enabled"}}}
 EOF
-    try "private vulnerability reporting" -X PUT "repos/$REPO/private-vulnerability-reporting"
-    try "CodeQL (default setup)" -X PATCH "repos/$REPO/code-scanning/default-setup" \
+    public_only "private vulnerability reporting" -X PUT "repos/$REPO/private-vulnerability-reporting"
+    public_only "CodeQL (default setup)" -X PATCH "repos/$REPO/code-scanning/default-setup" \
         -f state=configured
 }
 
@@ -181,7 +199,10 @@ show() {
 }
 
 case "${1:-}" in
-    apply) apply ;;
+    apply)
+        apply
+        [ "$FAILED" = 0 ] || { say "some steps failed (FAIL above)"; exit 1; }
+        ;;
     secrets) secrets ;;
     invite) invite "${2:-}" ;;
     show) show ;;
