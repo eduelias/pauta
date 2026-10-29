@@ -17,7 +17,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 | Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
-| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner`, user `gh-runner`, unit `actions.runner.eduelias-pauta.du7.service` |
+| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner`, user `gh-runner`, unit `actions.runner.eduelias-pauta.du7.service`; every job first passes `/usr/local/lib/pauta/runner-job-guard` (drop-in `job-guard.conf`) |
 
 ## Releasing
 
@@ -39,6 +39,8 @@ starts `.github/workflows/release.yml`:
    (runtime dependencies pinned by hash) and `SHA256SUMS`.
 3. **Deploy** (`deploy.yml`): downloads those assets, checks the sums, and on du7 runs
    `sudo pauta-deploy 1.2.0 <wheel> requirements.lock`, which
+   - fetches the release's `SHA256SUMS` from GitHub itself and refuses a wheel or lockfile
+     that isn't byte for byte the published one (releases are immutable),
    - builds `/opt/pauta/releases/1.2.0` as the service user (binary wheels only, every hash
      checked, PyPI only),
    - backs up the DB with the system Python (the new code never touches it before the switch),
@@ -81,8 +83,32 @@ pauta-X.Y.Z-py3-none-any.whl requirements.lock` with the assets of a GitHub rele
 and `systemctl reload caddy`.
 
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
-shell and no groups, and keeps itself updated. Its jobs run whatever a pushed workflow says
-with that user's rights, so only push workflows you've read.
+shell and no groups, and keeps itself updated. Its job-started hook,
+`/usr/local/lib/pauta/runner-job-guard`, refuses every job except `du7` of `release.yml` on a
+`vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`; refusals are in
+`journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
+the runner's own directory, so no job can switch it off.
+
+## Collaborators
+
+Maintainers work through pull requests (`CONTRIBUTING.md`); what they may and may not do, and
+why, is decision 2. The GitHub side is `scripts/repo-settings.sh`. In this order:
+
+1. Merge the change that brought this section (CODEOWNERS, the guard, the release check).
+2. Make the repository public (Settings → General → Danger Zone), then on the Mac:
+   `scripts/repo-settings.sh apply` (rulesets, Actions, environments, security features) and
+   `scripts/repo-settings.sh secrets` (the WhatsApp secrets into the `alerts` environment;
+   1Password asks for Touch ID). `scripts/repo-settings.sh show` checks it.
+3. On du7, from a fresh copy of `deploy/`: `sudo deploy/provision-du7.sh <runner version>
+   <sha256>` (no token: the runner stays registered). It installs the new `pauta-deploy`, the
+   job guard and its drop-in, and restarts the runner. Check: `systemctl show
+   actions.runner.eduelias-pauta.du7.service -p Environment` names the guard, and Actions →
+   Deploy → Run workflow (the live version, on `main`) still deploys.
+4. Invite: `scripts/repo-settings.sh invite <github login>` (maintain). Ask him to open a
+   small PR that touches `Makefile`: it must wait for the owner's review.
+
+Between 2 and 3 the runner is unguarded: approve no fork runs and invite nobody. Step 3 only
+works after step 2, because `pauta-deploy` downloads `SHA256SUMS` without a token.
 
 ## Monitoring and alarms
 

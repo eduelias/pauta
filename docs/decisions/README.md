@@ -7,3 +7,4 @@ both files.
 | # | Decision | Status |
 |---|---|---|
 | [1](0001-acceptance-environment.md) | An acceptance environment on du7, deployed from `main` | Accepted, not built |
+| [2](0002-collaborators-and-a-public-repo.md) | Maintainers via PRs, owner-only releases, rulesets, a job guard on du7's runner, a public repo | Accepted; du7 part pending |

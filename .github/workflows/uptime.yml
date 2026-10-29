@@ -28,6 +28,8 @@ jobs:
   probe:
     name: pauta.genic.dev/healthz
     runs-on: ubuntu-latest
+    # the WhatsApp secrets live in the `alerts` environment: main and release tags only
+    environment: alerts
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

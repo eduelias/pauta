@@ -59,8 +59,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           (cd dist && sha256sum -c SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          # releases are immutable once published: attach everything to a draft, then publish
+          gh release create "$GITHUB_REF_NAME" dist/* --draft \
             --verify-tag --title "Pauta $VERSION" --notes-file notes.md
+          gh release edit "$GITHUB_REF_NAME" --draft=false
 
   deploy:
     name: Deploy
@@ -74,6 +76,8 @@ jobs:
     needs: [ci, publish, deploy]
     if: failure()
     runs-on: ubuntu-latest
+    # the WhatsApp secrets live in the `alerts` environment: main and release tags only
+    environment: alerts
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

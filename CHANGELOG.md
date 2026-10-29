@@ -7,6 +7,18 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Security
+
+- Ready for collaborators and a public repository (decision 2): CODEOWNERS for CI, deploy,
+  sign-in and dependencies, rulesets and settings as code (`scripts/repo-settings.sh`), the
+  WhatsApp secrets in an `alerts` environment, immutable releases, and on du7 a runner that
+  refuses every job but the deploy and a `pauta-deploy` that only installs the published
+  release's files. `SECURITY.md` and `CONTRIBUTING.md` are new.
+
+### Fixed
+
+- A browser test expected an afternoon greeting and failed every morning ("Bom dia").
+
 ## [1.2.3] - 2026-10-28
 
 ### Fixed

@@ -1,0 +1,20 @@
+# Changes to these need the owner's approval (the main ruleset requires code owner review).
+# Everything else a maintainer may merge once CI is green. Why: docs/decisions/0002.
+
+# CI, releases, the deploy to du7, and the rules themselves
+/.github/                 @eduelias
+/deploy/                  @eduelias
+/scripts/                 @eduelias
+/Makefile                 @eduelias
+# sign-in, sessions and abuse limits
+/src/pauta/auth.py        @eduelias
+/src/pauta/ratelimit.py   @eduelias
+/tests/softpasskey.py     @eduelias
+# dependencies and the coverage gate
+/pyproject.toml           @eduelias
+/uv.lock                  @eduelias
+# what Claude reads before it works here, and the security policy
+/CLAUDE.md                @eduelias
+/CONTRIBUTING.md          @eduelias
+/SECURITY.md              @eduelias
+/docs/decisions/          @eduelias
