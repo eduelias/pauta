@@ -5,7 +5,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const app = $("#app");
 let ME = null;        // /api/me
-let BOOT = null;      // {me, options, members, avatars}
+let BOOT = null;      // {me, options, members, avatars, files}
 let REQS = null;      // last /api/requests, for the nav counter
 
 // ---------- small helpers ---------------------------------------------------------------
@@ -76,6 +76,10 @@ const ICONS = {
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   ext: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   wa: '<path d="M3 21l1.65-3.8a9 9 0 1 1 3.4 2.9L3 21"/><path d="M9 10a.5.5 0 0 0 1 0V9a.5.5 0 0 0-1 0v1a5 5 0 0 0 5 5h1a.5.5 0 0 0 0-1h-1a.5.5 0 0 0 0 1"/>',
+  clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/>',
   sparkle: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
@@ -494,8 +498,122 @@ function timeline(r) {
       ic = "swap";
     }
     if (e.kind === "edited") what = `editou ${esc(e.text)}`;
+    if (e.kind === "file") { what = `anexou <b>${esc(e.text)}</b>`; ic = "clip"; }
+    if (e.kind === "unfile") { what = `removeu o arquivo ${esc(e.text)}`; ic = "trash"; }
     return `<div class="ev"><div class="ic">${icon(ic)}</div><div class="body">${who(e)} ${what}<span class="when">${esc(ago(e.at))}</span></div></div>`;
   }).join("");
+}
+
+// ---------- files (stored in OneDrive) -------------------------------------------------------
+
+function fileSize(n) {
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+  return `${(n / 1048576).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
+}
+
+function filesPanel(r) {
+  const F = BOOT.files || {};
+  if (!F.enabled) return "";
+  const title = `<div class="section-title">${icon("clip")} Arquivos</div>`;
+  if (!F.connected) {
+    return `<div class="panel">${title}<p class="muted small">${ME.is_admin
+      ? `Conecte o OneDrive em <a href="#/equipe">Equipe</a> para anexar arquivos aos pedidos.`
+      : "Os anexos ainda não estão ligados; um administrador conecta o OneDrive."}</p></div>`;
+  }
+  return `<div class="panel" id="files">
+    <div class="panel-head">${title}<div class="row-gap">
+      <button class="btn ghost small" id="share" ${r.files.length ? "" : "hidden"}>${icon("link")}Link para o cliente</button>
+      <label class="btn small" for="pick">${icon("upload")}Enviar arquivos</label><input type="file" id="pick" multiple hidden></div></div>
+    <div id="sharebox"></div>
+    <div id="uploads"></div>
+    <div class="files" id="filelist">${fileList(r)}</div>
+    <p class="muted small mt">Ou arraste para cá. Até ${F.max_mb} MB por arquivo; ficam no OneDrive do time.</p>
+  </div>`;
+}
+
+function fileList(r) {
+  if (!r.files.length) return `<div class="empty small">Nenhum arquivo ainda.</div>`;
+  return r.files.map((f) => {
+    const thumb = /^(image|video)\//.test(f.mime) ? `<img loading="lazy" alt="" src="/api/files/${f.id}/thumb">` : icon("file");
+    const canDel = ME.is_admin || f.account === ME.account;
+    return `<div class="file"><a class="thumb" href="/api/files/${f.id}" target="_blank" rel="noopener" title="Baixar">${thumb}</a>
+      <div class="meta"><a href="/api/files/${f.id}" target="_blank" rel="noopener">${esc(f.name)}</a>
+      <span>${esc(fileSize(f.size))} · ${esc(firstName(f.account_name) || (ME.auth ? "Alguém" : "Você"))} · ${esc(ago(f.created))}</span></div>
+      ${canDel ? `<button class="btn ghost icon-only" data-unfile="${f.id}" data-name="${esc(f.name)}" aria-label="Remover ${esc(f.name)}">${icon("trash")}</button>` : ""}</div>`;
+  }).join("");
+}
+
+// XHR, not fetch: only XHR reports upload progress
+function sendFile(rid, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `/api/requests/${rid}/files`);
+    x.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    x.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+    x.upload.addEventListener("progress", (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); });
+    x.addEventListener("load", () => {
+      let doc = {};
+      try { doc = JSON.parse(x.responseText); } catch { /* not JSON: use the status */ }
+      if (x.status === 401 && ME?.auth) { ME.logged_in = false; showGate(); }
+      if (x.status >= 200 && x.status < 300) resolve(doc);
+      else reject(new Error(doc.error || `erro ${x.status}`));
+    });
+    x.addEventListener("error", () => reject(new Error("a conexão caiu; tente de novo")));
+    x.send(file);
+  });
+}
+
+function bindFiles(get, set) {
+  const panel = $("#files");
+  if (!panel) return;
+  const redraw = () => {
+    const r = get();
+    $("#filelist").innerHTML = fileList(r);
+    $("#tl").innerHTML = timeline(r);
+    $("#share").hidden = !r.files.length;
+    bindFileList();
+  };
+  const bindFileList = () => {
+    $$("#filelist img").forEach((img) => img.addEventListener("error", () => { img.replaceWith(document.createRange().createContextualFragment(icon("file"))); }));
+    $$("[data-unfile]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm(`Remover ${b.dataset.name}? Ele vai para a lixeira do OneDrive.`)) return;
+      try { set(await api("DELETE", `/api/files/${b.dataset.unfile}`)); redraw(); toast("Arquivo removido"); }
+      catch (e) { toast(e.message, true); }
+    }));
+  };
+  const upload = async (files) => {
+    const max = (BOOT.files.max_mb || 200) * 1048576;
+    for (const file of files) {
+      if (!file.size) { toast(`${file.name} está vazio`, true); continue; }
+      if (file.size > max) { toast(`${file.name} passa de ${BOOT.files.max_mb} MB`, true); continue; }
+      const row = document.createElement("div");
+      row.className = "upl";
+      row.innerHTML = `<span>${esc(file.name)}</span><progress max="1" value="0"></progress>`;
+      $("#uploads").append(row);
+      try {
+        set(await sendFile(get().id, file, (f) => { $("progress", row).value = f; }));
+        redraw();
+        toast(`${file.name} enviado`);
+      } catch (e) { toast(`${file.name}: ${e.message}`, true); }
+      row.remove();
+    }
+  };
+  $("#pick").addEventListener("change", (e) => { upload([...e.target.files]); e.target.value = ""; });
+  panel.addEventListener("dragover", (e) => { e.preventDefault(); panel.classList.add("drop"); });
+  panel.addEventListener("dragleave", () => panel.classList.remove("drop"));
+  panel.addEventListener("drop", (e) => { e.preventDefault(); panel.classList.remove("drop"); upload([...e.dataTransfer.files]); });
+  $("#share").addEventListener("click", async () => {
+    try {
+      const { url } = await api("POST", `/api/requests/${get().id}/share`);
+      const msg = `Os arquivos do seu pedido estão aqui: ${url}`;
+      $("#sharebox").innerHTML = `<div class="sharebox"><code class="invlink">${esc(url)}</code>
+        <div class="row-gap"><button class="btn small" data-copy="${esc(url)}">${icon("link")}Copiar link</button>
+        <a class="btn small" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div>
+        <p class="muted small">Quem tiver o link vê (e baixa) os arquivos deste pedido, sem editar.</p></div>`;
+      bindCopy($("#sharebox"));
+    } catch (e) { toast(e.message, true); }
+  });
+  bindFileList();
 }
 
 async function viewRequest(_q, id) {
@@ -538,6 +656,7 @@ async function viewRequest(_q, id) {
             <div class="k">Observações</div><div class="v"><textarea class="input" data-f="notes" rows="2" placeholder="Anotações da execução">${esc(r.notes)}</textarea></div>
           </div>
         </div>
+        ${filesPanel(r)}
         <div class="panel">
           <div class="section-title">${icon("msg")} Conversa e histórico</div>
           <div class="compose"><textarea class="input" id="comment" placeholder="Escreva uma mensagem para o time…" rows="1"></textarea><button class="btn primary icon-only" id="send" aria-label="Enviar">${icon("send")}</button></div>
@@ -611,6 +730,7 @@ async function viewRequest(_q, id) {
     location.hash = "#/pedidos";
   });
   bindCopy(app);
+  bindFiles(() => r, (doc) => { r = doc; });
 }
 
 function clientRows(c) {
@@ -914,6 +1034,8 @@ async function viewTeam() {
       <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
         <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
       <div id="qrbox"></div></section>` : ""}
+    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}OneDrive</h2><span class="muted small">Arquivos dos pedidos</span></div>
+      <div id="drivebody">${spinner()}</div></section>` : ""}
     ${ME.is_admin ? `<section class="panel mt"><div class="panel-head"><h2>Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
         <textarea class="input" data-list="${k}" rows="9">${esc(o[k].join("\n"))}</textarea></div>`).join("")}</div>
@@ -922,6 +1044,7 @@ async function viewTeam() {
   </div>`;
   $("#logout")?.addEventListener("click", logout);
   $("#addkey")?.addEventListener("click", addPasskey);
+  if (ME.is_admin) loadDrive();
   $("#rename")?.addEventListener("click", async () => {
     try {
       ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value, email: $("#myemail").value })) };
@@ -953,6 +1076,64 @@ async function viewTeam() {
     a.click();
     URL.revokeObjectURL(a.href);
   });
+}
+
+// The OneDrive card: connect with a code (device code flow), see the account, disconnect.
+let DRIVE_TIMER;
+async function loadDrive(doc) {
+  clearTimeout(DRIVE_TIMER);
+  if (!$("#drivebody")) return;
+  try { doc = doc || await api("GET", "/api/onedrive"); }
+  catch (e) { if ($("#drivebody")) $("#drivebody").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+  const box = $("#drivebody");
+  if (!box) return;  // left the page while waiting
+  box.innerHTML = driveBody(doc);
+  bindCopy(box);
+  const refreshBoot = async () => { BOOT = await api("GET", "/api/boot"); };
+  $("#driveconnect")?.addEventListener("click", async () => {
+    try { loadDrive(await api("POST", "/api/onedrive/connect")); } catch (e) { toast(e.message, true); }
+  });
+  $("#drivecancel")?.addEventListener("click", async () => {
+    loadDrive(await api("DELETE", "/api/onedrive"));
+    await refreshBoot();
+  });
+  $("#driveoff")?.addEventListener("click", async () => {
+    if (!confirm("Desconectar o OneDrive? Os arquivos continuam lá, mas a Pauta deixa de enviar e abrir arquivos até alguém reconectar.")) return;
+    loadDrive(await api("DELETE", "/api/onedrive"));
+    await refreshBoot();
+    toast("OneDrive desconectado");
+  });
+  if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
+  if (doc.state === "connected") { toast("OneDrive conectado"); await refreshBoot(); }
+  if (doc.state === "expired") toast("O código expirou; gere outro", true);
+  if (doc.state === "denied") toast("A conexão foi recusada na conta Microsoft", true);
+}
+
+function driveBody(d) {
+  if (!d.enabled) {
+    return `<p class="muted">Para anexar arquivos aos pedidos, o servidor precisa de <code>PAUTA_ONEDRIVE_CLIENT_ID</code> (veja <code>deploy/README.md</code>).</p>`;
+  }
+  if (d.pending) {
+    const p = d.pending;
+    const until = new Date(p.expires * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    return `<p>No celular ou no computador, abra <a href="${esc(p.verification_uri)}" target="_blank" rel="noopener"><b>${esc(p.verification_uri.replace(/^https?:\/\//, ""))}</b></a>, entre com a conta Microsoft dona do OneDrive e digite o código:</p>
+      <div class="drivecode"><code id="usercode">${esc(p.user_code)}</code><button class="copy" data-copy="${esc(p.user_code)}">Copiar</button></div>
+      <p class="muted small">Esta página confere sozinha a cada poucos segundos. O código vale até ${esc(until)}.</p>
+      <button class="btn ghost" id="drivecancel">Cancelar</button>`;
+  }
+  if (!d.connected) {
+    return `<p class="muted">Conecte o OneDrive onde os arquivos dos pedidos vão ficar. Quem é dono da conta aprova uma vez, com um código; o time não precisa de acesso a ela.</p>
+      <button class="btn primary" id="driveconnect">${icon("cloud")}Conectar OneDrive</button>`;
+  }
+  const q = d.quota && d.quota.total ? `<div class="quota"><div style="width:${Math.min(100, Math.round(100 * d.quota.used / d.quota.total))}%"></div></div>
+    <span class="muted small">${esc(fileSize(d.quota.used))} usados de ${esc(fileSize(d.quota.total))}</span>`
+    : d.used != null ? `<p class="muted small mt">A Pauta ocupa ${esc(fileSize(d.used))} neste OneDrive.</p>` : "";
+  return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
+    <div class="member">${avatar(d.name || d.account || "OneDrive", "md round")}<div class="who"><b>${esc(d.name || d.account)}</b>
+      <span>${esc(d.account)} · pasta ${esc(d.folder)} · até ${esc(d.max_mb)} MB por arquivo</span></div></div>
+    ${q}
+    <div class="row-gap mt">${d.error ? `<button class="btn primary" id="driveconnect">${icon("cloud")}Reconectar</button>` : ""}
+      <button class="btn ghost danger" id="driveoff">Desconectar</button></div>`;
 }
 
 async function makeInvite() {

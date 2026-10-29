@@ -17,6 +17,11 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 - `src/pauta/auth.py`: passkey-only accounts, modelled on dominion-archive's. One team, no
   sign-up: invites only (`pauta invite --admin` for the first, then the Equipe page). The first
   account is an admin. Without `PAUTA_AUTH=passkeys` the app runs open (local dev).
+- `src/pauta/onedrive.py`: request files live in one OneDrive through Microsoft Graph (stdlib
+  `urllib`, no SDK). Device code sign-in, no client secret; the refresh token is a file next
+  to the DB. Uploads stream through in 5 MiB chunks; downloads are redirects to Graph's
+  short-lived links. The `file` table keeps ids and names only. Tests use the fake Graph in
+  `tests/fakegraph.py`; never call the real one.
 - `src/pauta/obs.py`: JSON request logs (route patterns, never raw paths, bodies or personal
   data) and the numbers behind `GET /metrics` (loopback only, for du7's watchdog).
 - `src/pauta/server.py`: `/api/...` JSON; everything but login/join needs a session (client

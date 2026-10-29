@@ -1,4 +1,4 @@
-"""pauta serve | invite | users | backup | demo"""
+"""pauta serve | invite | users | backup | demo | onedrive"""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__, obs
 from .auth import Auth
 from .db import Store
+from .onedrive import DriveError, OneDrive
 
 
 def db_path() -> Path:
@@ -227,6 +228,40 @@ def cmd_demo(args) -> None:
     print(f"demo data in {store.path}")
 
 
+def cmd_onedrive(args) -> None:
+    """status (account, folder, space), connect (the code flow, in the terminal) or
+    disconnect. Uses the same token file as the service, next to the database."""
+    drive = OneDrive.from_env(Store(db_path()).path)
+    if not drive.enabled:
+        sys.exit("PAUTA_ONEDRIVE_CLIENT_ID is not set; see deploy/README.md")
+    try:
+        if args.action == "disconnect":
+            drive.disconnect()
+            print("disconnected; the files stay in OneDrive")
+            return
+        if args.action == "connect":
+            p = drive.start_connect()
+            print(f"Open {p['verification_uri']} and enter the code {p['user_code']}", flush=True)
+            while (state := drive.poll()) == "pending":
+                time.sleep(args.poll)
+            if state != "connected":
+                sys.exit(f"not connected: {state}")
+        st = drive.status(quota=True)
+    except DriveError as e:
+        sys.exit(f"onedrive: {e}")
+    if not st["connected"]:
+        sys.exit("not connected (pauta onedrive connect, or Equipe → OneDrive)")
+    print(f"connected as {st['name']} <{st['account']}>")
+    print(f"folder {st['folder']}, files up to {st['max_mb']} MB, token renewed {st['refreshed']}")
+    q = st.get("quota") or {}
+    if q.get("total"):
+        print(f"space {q['used'] / 2**30:.1f} of {q['total'] / 2**30:.0f} GB used")
+    elif st.get("used") is not None:
+        print(f"pauta's folder holds {st['used'] / 2**20:.1f} MB")
+    if st["error"]:
+        sys.exit(f"problem: {st['error']}")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="pauta")
     p.add_argument("--version", action="version", version=f"pauta {__version__}")
@@ -251,6 +286,10 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("demo", help="fill an empty database with made-up data")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_demo)
+    s = sub.add_parser("onedrive", help="the OneDrive that holds request files")
+    s.add_argument("action", choices=["status", "connect", "disconnect"])
+    s.add_argument("--poll", type=float, default=5, help=argparse.SUPPRESS)
+    s.set_defaults(fn=cmd_onedrive)
     args = p.parse_args(argv)
     args.fn(args)
 

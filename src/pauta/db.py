@@ -5,8 +5,9 @@ filled in (client, what, goal, audience, budget, due date...) and the execution 
 it fills in (status, what's missing, done date, campaign link). Nothing is linked by row
 position any more, so sorting, filtering and deleting are safe.
 
-Every change to a request leaves an `event` (created, status, edited, comment): that is the
-timeline on the request page.
+Every change to a request leaves an `event` (created, status, edited, comment, file,
+unfile): that is the timeline on the request page. A request's files live in OneDrive
+(`onedrive.py`); the `file` table only keeps their ids and names.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -68,6 +69,14 @@ CREATE TABLE IF NOT EXISTS event (
     kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS event_request ON event(request);
+CREATE TABLE IF NOT EXISTS file (
+    id INTEGER PRIMARY KEY, request INTEGER NOT NULL REFERENCES request(id) ON DELETE CASCADE,
+    item TEXT NOT NULL, folder TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0, mime TEXT NOT NULL DEFAULT '',
+    account INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS file_request ON file(request);
 CREATE TABLE IF NOT EXISTS option (
     list TEXT NOT NULL, value TEXT NOT NULL, pos INTEGER NOT NULL, PRIMARY KEY (list, value)
 );
@@ -490,7 +499,8 @@ class Store:
             "SELECT r.*, c.name AS client_name, c.state AS client_state, "
             "cb.name AS created_by_name, asg.name AS assignee_name, "
             "(SELECT COUNT(*) FROM event e WHERE e.request=r.id AND e.kind='comment') "
-            "  AS comments "
+            "  AS comments, "
+            "(SELECT COUNT(*) FROM file f WHERE f.request=r.id) AS files "
             "FROM request r JOIN client c ON c.id=r.client "
             "LEFT JOIN account cb ON cb.id=r.created_by "
             "LEFT JOIN account asg ON asg.id=r.assignee "
@@ -514,10 +524,17 @@ class Store:
                 "LEFT JOIN account a ON a.id=e.account WHERE e.request=? ORDER BY e.id",
                 (rid,),
             ).fetchall()
+            files = db.execute(
+                "SELECT f.id, f.name, f.size, f.mime, f.account, f.created, "
+                "a.name AS account_name FROM file f LEFT JOIN account a ON a.id=f.account "
+                "WHERE f.request=? ORDER BY f.id DESC",
+                (rid,),
+            ).fetchall()
             return {
                 **reqs[0],
                 "client_info": dict(client.fetchone()),
                 "events": [dict(e) for e in events],
+                "files": [dict(f) for f in files],
             }
 
     def create_request(self, data: dict, by: int | None) -> dict:
@@ -584,6 +601,73 @@ class Store:
             )
             db.execute("UPDATE request SET updated=datetime('now') WHERE id=?", (rid,))
         return self.request(rid)
+
+    # ---- files (the bytes are in OneDrive) ---------------------------------------------------
+
+    def file_folder(self, rid: int) -> list[str]:
+        """Where a request's files go: <client>/Pedido <id>."""
+        with self.db() as db:
+            row = db.execute(
+                "SELECT c.name FROM request r JOIN client c ON c.id=r.client WHERE r.id=?", (rid,)
+            ).fetchone()
+        if not row:
+            raise NotFound("pedido não encontrado")
+        return [row["name"], f"Pedido {rid}"]
+
+    def add_file(self, rid: int, item: dict, by: int | None) -> dict:
+        name = _text(200)(item.get("name"), None) or "arquivo"
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM request WHERE id=?", (rid,)).fetchone():
+                raise NotFound("pedido não encontrado")
+            db.execute(
+                "INSERT INTO file(request, item, folder, name, size, mime, account) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    rid,
+                    str(item["id"]),
+                    str(item.get("folder") or ""),
+                    name,
+                    int(item.get("size") or 0),
+                    _text(100)(item.get("mime"), None),
+                    by,
+                ),
+            )
+            db.execute(
+                "INSERT INTO event(request, account, kind, text) VALUES (?,?,'file',?)",
+                (rid, by, name),
+            )
+            db.execute("UPDATE request SET updated=datetime('now') WHERE id=?", (rid,))
+        return self.request(rid)
+
+    def file(self, fid: int) -> dict:
+        with self.db() as db:
+            row = db.execute("SELECT * FROM file WHERE id=?", (fid,)).fetchone()
+        if not row:
+            raise NotFound("arquivo não encontrado")
+        return dict(row)
+
+    def request_folder(self, rid: int) -> str:
+        """The OneDrive id of the request's folder (from its newest file), or ''."""
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM request WHERE id=?", (rid,)).fetchone():
+                raise NotFound("pedido não encontrado")
+            row = db.execute(
+                "SELECT folder FROM file WHERE request=? AND folder != '' ORDER BY id DESC",
+                (rid,),
+            ).fetchone()
+        return row["folder"] if row else ""
+
+    def remove_file(self, fid: int, by: int | None) -> dict:
+        with self.db() as db:
+            row = db.execute("SELECT request, name FROM file WHERE id=?", (fid,)).fetchone()
+            if not row:
+                raise NotFound("arquivo não encontrado")
+            db.execute("DELETE FROM file WHERE id=?", (fid,))
+            db.execute(
+                "INSERT INTO event(request, account, kind, text) VALUES (?,?,'unfile',?)",
+                (row["request"], by, row["name"]),
+            )
+        return self.request(row["request"])
 
     def delete_request(self, rid: int) -> None:
         with self.db() as db:

@@ -2,9 +2,12 @@
 
 import pytest
 
+from appserver import serve
+from fakegraph import CLIENT, FakeGraph
 from pauta.auth import Auth
 from pauta.db import Store
-from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, start
+from pauta.onedrive import OneDrive
+from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join
 
 
 @pytest.fixture()
@@ -18,9 +21,29 @@ def auth(store):
 
 
 @pytest.fixture()
-def site(store, auth):
-    httpd, base = start(store, auth)
-    yield base, auth, store
+def drive(store):
+    """Files off (no client id). Tests about files override this with one on the fake Graph."""
+    return OneDrive(store.path)
+
+
+@pytest.fixture()
+def fake():
+    """A fake Microsoft login and Graph on localhost (tests/fakegraph.py)."""
+    f = FakeGraph()
+    yield f
+    f.close()
+
+
+@pytest.fixture()
+def drive_on(store, fake):
+    """Files on, against the fake Graph, not connected yet."""
+    return OneDrive(store.path, client_id=CLIENT, graph=fake.graph, login=fake.login)
+
+
+@pytest.fixture()
+def site(store, auth, drive):
+    httpd = serve(store, auth, drive)
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", auth, store
     httpd.shutdown()
     httpd.server_close()
 

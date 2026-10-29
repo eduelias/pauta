@@ -108,3 +108,34 @@ def test_serve_wires_store_auth_and_server(state, monkeypatch, capsys):
     assert "passkeys on pauta.example" in capsys.readouterr().out
     handler = obs.setup_logging()  # serve set it up (to stderr); leave the logger clean
     obs.log.removeHandler(handler)
+
+
+def test_onedrive(state, fake, monkeypatch, capsys):
+    from fakegraph import CLIENT
+    from pauta.onedrive import OneDrive
+
+    def from_env(path):
+        return OneDrive(path, client_id=CLIENT, graph=fake.graph, login=fake.login)
+
+    with pytest.raises(SystemExit, match="PAUTA_ONEDRIVE_CLIENT_ID"):
+        cli.main(["onedrive", "status"])
+    monkeypatch.setattr(cli.OneDrive, "from_env", staticmethod(from_env))
+    with pytest.raises(SystemExit, match="not connected"):
+        cli.main(["onedrive", "status"])
+    fake.approved = True
+    cli.main(["onedrive", "connect", "--poll", "0"])
+    out = capsys.readouterr().out
+    assert "enter the code ABCD-1234" in out and "connected as Piero <piero@example.com>" in out
+    assert "pauta's folder holds 0.0 MB" in out
+    fake.down = True
+    with pytest.raises(SystemExit, match="problem: o OneDrive não respondeu"):
+        cli.main(["onedrive", "status"])
+    fake.down = False
+    cli.main(["onedrive", "disconnect"])
+    assert "the files stay in OneDrive" in capsys.readouterr().out
+    fake.deny = True
+    with pytest.raises(SystemExit, match="not connected: denied"):
+        cli.main(["onedrive", "connect", "--poll", "0"])
+    fake.close()  # Microsoft unreachable
+    with pytest.raises(SystemExit, match="onedrive: o OneDrive não respondeu"):
+        cli.main(["onedrive", "connect"])

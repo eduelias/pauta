@@ -14,8 +14,8 @@ pw = pytest.importorskip("playwright.sync_api")
 
 TRACES = Path("test-results/traces")  # CI uploads these when a browser test fails
 
+from appserver import serve  # noqa: E402
 from pauta.auth import Auth  # noqa: E402
-from softpasskey import start  # noqa: E402
 
 PNG = bytes.fromhex(  # a 1x1 transparent PNG, standing in for gravatar.com
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
@@ -24,10 +24,10 @@ PNG = bytes.fromhex(  # a 1x1 transparent PNG, standing in for gravatar.com
 
 
 @pytest.fixture()
-def live(store):
+def live(store, drive):
     """The app with passkeys on, reached as http://localhost:<port> (the passkey RP ID)."""
     auth = Auth(store, enabled=True, rp_id="localhost", origins=["placeholder"])
-    httpd, _ = start(store, auth)
+    httpd = serve(store, auth, drive)
     base = f"http://localhost:{httpd.server_address[1]}"
     auth.origins = [base]
     yield base, auth, store

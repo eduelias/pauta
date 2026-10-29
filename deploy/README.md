@@ -14,6 +14,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 | Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
 | DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
+| Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
 | Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
@@ -147,6 +148,60 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
   never in the DB or its backups; a missing key file is simply made again.
 - The team always keeps one active admin. If the only admin loses access, make a new admin
   invite with the CLI command above.
+
+## Files and OneDrive
+
+Files attached to requests live in one OneDrive (a personal Microsoft account); Pauta passes
+uploads through to it and hands out short-lived download links. Why and how:
+`docs/decisions/0003-request-files-in-onedrive.md`.
+
+| Setting | Where | Notes |
+|---|---|---|
+| `PAUTA_ONEDRIVE_CLIENT_ID` | `Environment=` in `pauta.service` | The app registration's client id (public). Unset: no Arquivos panel, uploads off |
+| `PAUTA_ONEDRIVE_ROOT` | `Environment=`, optional | A folder in the drive, e.g. `/Clientes/Pauta`. Unset keeps Pauta inside `Apps/Pauta` with `Files.ReadWrite.AppFolder`; set asks for the whole drive (`Files.ReadWrite`) when connecting |
+| `PAUTA_UPLOAD_MAX_MB` | `Environment=`, optional | Largest file, default 200 |
+| The token | `pauta.db.onedrive-token` next to the DB, mode 600 | Written by the app when someone connects, renewed on use (Microsoft rotates it). Never in the DB or its backups. Nobody edits it by hand |
+
+**The app registration** (done 2026-10-29; repeat only to start over): sign in to
+https://entra.microsoft.com as du7@msn.com, in its own "Default Directory"
+(du7msn.onmicrosoft.com), never a work directory.
+
+1. App registrations → New registration: name `Pauta` (it becomes the `Apps/Pauta` folder),
+   supported accounts **Personal Microsoft accounts only**, no redirect URI. Register.
+2. Authentication → Settings: **Allow public client flows** on, Save. There is no client
+   secret: sign-in is the device code flow.
+3. API permissions → Add a permission → Microsoft Graph → Delegated: `offline_access`,
+   `Files.ReadWrite.AppFolder` (`User.Read` is there already). Add `Files.ReadWrite` only if
+   you set `PAUTA_ONEDRIVE_ROOT`.
+4. Copy the Application (client) ID into `pauta.service`, reinstall the unit
+   (`sudo cp deploy/pauta.service /etc/systemd/system/ && sudo systemctl daemon-reload &&
+   sudo systemctl restart pauta`).
+
+**Connecting** (once, and again if the connection breaks): an admin opens Equipe → OneDrive
+→ Conectar OneDrive. The page shows a code; the owner of the OneDrive opens
+microsoft.com/link, signs in, types the code and approves. The page notices within seconds.
+From du7 instead (the same environment as the unit):
+
+```
+export PAUTA_STATE_DIR=~/.local/share/pauta PAUTA_ONEDRIVE_CLIENT_ID=a6a25189-1541-430b-ba90-be78b92a8e30
+/opt/pauta/current/bin/pauta onedrive connect
+```
+
+**Checking**: `pauta onedrive status` (same environment) prints the account, folder, space
+used and when the token was last renewed, and exits non-zero on a problem. `/metrics` has
+`onedrive.{enabled,connected,error}` for the watchdog: alert when `enabled` and (`connected`
+is false or `error` is set). A token unused for 90 days expires; any upload or download
+renews it.
+
+**Disconnecting**: Equipe → OneDrive → Desconectar, or `pauta onedrive disconnect`. The
+files stay in OneDrive; the owner can also revoke Pauta at
+https://account.live.com/consent/Manage.
+
+**What's where**: OneDrive keeps `<cliente>/Pedido <n>/<arquivo>` (a clash gets a numbered
+name). Removing a file in Pauta sends it to OneDrive's recycle bin (30 days). Deleting a
+request or a client in Pauta leaves its files in OneDrive. "Link para o cliente" makes a
+view-only link to the request's folder that anyone with it can open; it lasts until it is
+removed in OneDrive (folder → Compartilhar → Gerenciar acesso).
 
 ## Taking it offline
 

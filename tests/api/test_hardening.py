@@ -13,7 +13,7 @@ import pytest
 
 from pauta import server as server_mod
 from pauta.auth import Auth, AuthError
-from pauta.db import Invalid, Store
+from pauta.db import SCHEMA_VERSION, Invalid, Store
 from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, login, start
 
 
@@ -247,7 +247,9 @@ def test_schema_v3_gets_session_generations(tmp_path):
     store = Store(path)
     with store.db() as db:
         assert db.execute("SELECT session_gen FROM account").fetchone()[0] == 0
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "4"
+        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == str(
+            SCHEMA_VERSION
+        )
 
 
 # ---- HTTP ----------------------------------------------------------------------------------

@@ -11,6 +11,8 @@ Concluído*, and every change lands on the request's timeline. It replaced the s
 
 - Sign-in with **passkeys only** (Face ID, fingerprint, device PIN), by invite.
 - Dashboard, board, list, clients, and a timeline with comments on every request.
+- Files on requests (images, short videos), kept in the team's OneDrive instead of on the
+  server, with a view-only link to send the client.
 - Brazilian Portuguese UI, installable on phones, link previews for WhatsApp and Slack.
 - One Python process and one SQLite file. The only runtime dependency is
   [py_webauthn](https://github.com/duo-labs/py_webauthn).
