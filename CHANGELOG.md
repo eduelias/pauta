@@ -15,6 +15,35 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   refuses every job but the deploy and a `pauta-deploy` that only installs the published
   release's files. `SECURITY.md` and `CONTRIBUTING.md` are new.
 
+Fixes from a security review of 1.2.3. Everyone has to sign in again once after this release
+(the session key moved), which takes a tap with the passkey.
+
+- The key that signs sessions now lives in a file next to the database
+  (`pauta.db.session-key`, readable only by the service) instead of inside it, so the nightly
+  backups on the NAS can no longer be turned into an admin login. The old key is deleted on
+  first start. Deleting the file and restarting signs everyone out.
+- Sessions can be ended: "Sair" ends the person's sessions on every device, and disabling an
+  account ends its sessions for good (re-enabling it doesn't bring old ones back). Before, a
+  copied cookie kept working for 180 days after "Sair".
+- A single-use invite could create several accounts if the join was sent many times at once;
+  joining is now one at a time and an invite can't be used past its limit.
+- Passkeys must verify the person (Face ID, fingerprint or PIN); a touch alone is refused.
+- The team always keeps at least one active admin, and admin changes take only true/false
+  (sending `0` used to get past the "you can't demote yourself" check).
+- Nobody can take a teammate's name (ignoring case, accents and invisible characters) or
+  email, so the timeline can't be made to show someone else as the author. Hidden control and
+  text-direction characters are dropped from all text.
+- "Exportar dados" is for admins only, as documented.
+- The ads page and Instagram fields refuse `javascript:`, `data:` and similar links (the app
+  never made them clickable, but the export and copy button passed them on).
+- Malformed requests get a 400 instead of a 500, so nobody can set off the 5xx alarm from
+  outside; bodies must be exactly `application/json` with a valid length.
+- A connection that stalls for 15 seconds is dropped, and at most 64 are served at once, so
+  slow clients can't pile up threads on the Pi.
+- New headers: `X-Frame-Options`, `Cross-Origin-Opener-Policy` and `Permissions-Policy`.
+- The pauta unit gets `TasksMax` and `MemoryMax` (applied by `provision-du7.sh`).
+- The Equipe page says plainly what the Gravatar hash does and doesn't hide.
+
 ### Fixed
 
 - A browser test expected an afternoon greeting and failed every morning ("Bom dia").

@@ -7,12 +7,14 @@ session cookie is SameSite=Strict.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import mimetypes
 import os
 import re
 import sqlite3
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler
@@ -26,6 +28,11 @@ from .ratelimit import RateLimiter
 
 STATIC = Path(__file__).parent / "static"
 MAX_BODY = 256 * 1024
+# a connection that sends nothing for this long is dropped, and only so many are served at
+# once: slow or stalled clients can't pile up threads on the Pi
+IDLE_SECONDS = 15
+MAX_CONNECTIONS = 64
+BUSY = b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 5\r\n\r\n"
 ROBOTS = b"User-agent: *\nDisallow: /\n"
 CSP = (
     "default-src 'self'; img-src 'self' data: https://gravatar.com; "
@@ -60,6 +67,7 @@ def make_handler(
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
+    slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
     routes: list[tuple[str, re.Pattern, str, str]] = []  # method, path, handler, access
 
     def route(method: str, pattern: str, access: str = "member"):
@@ -72,8 +80,22 @@ def make_handler(
     class Handler(BaseHTTPRequestHandler):
         server_version = "pauta"
         sys_version = ""
+        timeout = IDLE_SECONDS
         # buffered: a response leaves when do_* returns, after its log line and metrics
         wbufsize = -1
+
+        def handle(self):
+            if not slots.acquire(blocking=False):
+                with contextlib.suppress(OSError):  # take the request head first: an unread
+                    self.connection.settimeout(0.5)  # request makes the close a reset
+                    self.connection.recv(16384)
+                self.wfile.write(BUSY)
+                metrics.record("busy", 503, 0)
+                return
+            try:
+                super().handle()
+            finally:
+                slots.release()
 
         def log_request(self, code="-", size="-"):  # _observed logs requests as JSON
             pass
@@ -155,6 +177,9 @@ def make_handler(
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "same-origin")
             self.send_header("Content-Security-Policy", CSP)
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+            self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
             self.send_header("X-Robots-Tag", "noindex, nofollow")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
@@ -174,12 +199,19 @@ def make_handler(
                 self.wfile.write(body)
 
         def _body(self) -> dict:
-            n = int(self.headers.get("Content-Length") or 0)
+            length = (self.headers.get("Content-Length") or "0").strip()
+            if not length.isdigit():
+                raise Reply(400, {"error": "pedido inválido"})
+            n = int(length)
             if n > MAX_BODY:
                 raise Reply(413, {"error": "pedido grande demais"})
-            if n and "application/json" not in (self.headers.get("Content-Type") or ""):
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if n and ctype != "application/json":
                 raise Reply(415, {"error": "envie JSON"})
-            raw = self.rfile.read(n) if n else b"{}"
+            try:
+                raw = self.rfile.read(n) if n else b"{}"
+            except TimeoutError:
+                raise Reply(408, {"error": "o pedido demorou demais"}) from None
             try:
                 doc = json.loads(raw or b"{}")
             except ValueError:
@@ -334,7 +366,7 @@ def make_handler(
                 "version": __version__,
             }
 
-        @route("GET", "/api/export")
+        @route("GET", "/api/export", "admin")
         def export(self, viewer, _body):
             return {
                 "exported": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -421,10 +453,11 @@ def make_handler(
         def invite(self, viewer, body):
             if not auth.enabled:
                 raise Reply(400, {"error": "convites precisam de passkeys (PAUTA_AUTH)"})
+            uses = body.get("uses") or 1
+            if not isinstance(uses, int) or isinstance(uses, bool):
+                raise Reply(400, {"error": "número de usos inválido"})
             token, expires = auth.create_invite(
-                admin=bool(body.get("admin")),
-                uses=int(body.get("uses") or 1),
-                created_by=viewer["account"],
+                admin=body.get("admin") is True, uses=uses, created_by=viewer["account"]
             )
             return {"path": f"/#/entrar/{token}", "expires": expires}
 
@@ -464,6 +497,8 @@ def make_handler(
 
         @route("POST", "/api/logout", "open")
         def logout(self, viewer, _body):
+            if auth.enabled:  # ends this person's sessions on every device, not just this one
+                auth.end_sessions(viewer["account"])
             return {"ok": True}, auth.clear_cookie(self._secure())
 
     return Handler

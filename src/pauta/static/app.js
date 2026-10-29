@@ -769,7 +769,7 @@ function clientForm(c = {}) {
     <div class="field"><label>Segmento</label><select class="input" name="segment" data-f="segment">${selectOpts(o.segment, c.segment || "")}</select></div>
     <div class="field"><label>Cliente desde</label><input class="input" type="date" name="since" data-f="since" value="${esc(c.since || "")}"></div>
     <div class="field"><label>Contato no cliente</label><input class="input" name="contact" data-f="contact" value="${esc(c.contact || "")}" placeholder="Nome de quem fala com a gente"></div>
-    <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" data-f="whatsapp" inputmode="tel" value="${esc(c.whatsapp || "")}" placeholder="(11) 98888-0000"></div>
+    <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" data-f="whatsapp" inputmode="tel" value="${esc(c.whatsapp || "")}" placeholder="(DDD) 9XXXX-XXXX"></div>
     <div class="field"><label>Instagram / página</label><input class="input" name="instagram" data-f="instagram" value="${esc(c.instagram || "")}" placeholder="@perfil"></div>
     <div class="field"><label>ID da conta de anúncios</label><input class="input" name="ad_account" data-f="ad_account" value="${esc(c.ad_account || "")}" placeholder="1234567890"></div>
     <div class="field wide"><label>Link da página de anúncios</label><input class="input" name="ads_page" data-f="ads_page" value="${esc(c.ads_page || "")}" placeholder="https://www.facebook.com/ads/library/…"></div>
@@ -885,7 +885,7 @@ async function viewTeam() {
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
     <div class="head"><div><h1>Equipe</h1><p>Quem usa a Pauta, convites e listas.</p></div>
-      <div class="actions"><button class="btn" id="export">${icon("download")}Exportar dados</button></div></div>
+      ${ME.is_admin ? `<div class="actions"><button class="btn" id="export">${icon("download")}Exportar dados</button></div>` : ""}</div>
     <div class="grid2">
       <section class="panel">
         <div class="panel-head"><h2>Você</h2></div>
@@ -893,9 +893,9 @@ async function viewTeam() {
           <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
         ${ME.auth ? `<div class="field mt"><label>Seu nome</label><input class="input" id="myname" value="${esc(ME.name)}"></div>
         <div class="field mt"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
-          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. Ninguém do time vê o endereço.</span></div>
+          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
         <div class="mt"><button class="btn" id="rename">${icon("check")}Salvar</button></div>
-        <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair</button></div>` : ""}
+        <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></div>` : ""}
       </section>
       <section class="panel">
         <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
@@ -944,7 +944,7 @@ async function viewTeam() {
       toast("Listas salvas");
     } catch (e) { toast(e.message, true); }
   });
-  $("#export").addEventListener("click", async () => {
+  $("#export")?.addEventListener("click", async () => {
     const doc = await api("GET", "/api/export");
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
