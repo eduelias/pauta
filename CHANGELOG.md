@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-29
+
 ### Added
 
 - Arquivos nos pedidos: envie imagens e vídeos direto na página do pedido (botão ou arrastar),
@@ -172,7 +174,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/eduelias/pauta/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/eduelias/pauta/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/eduelias/pauta/compare/v1.2.1...v1.2.2
