@@ -159,7 +159,9 @@ def test_signed_in_opening_an_invite_link_keeps_the_app_working(live, device, to
     page.reload()  # what tapping the link in WhatsApp does: a fresh load on the invite
     expect(page.get_by_role("heading", name="Você já entrou")).to_be_visible()
     page.get_by_role("link", name="Abrir a Pauta").click()
-    expect(page.get_by_role("heading", name=re.compile("^Boa"))).to_be_visible()
+    expect(
+        page.get_by_role("heading", name=re.compile("^(Bom dia|Boa tarde|Boa noite)"))
+    ).to_be_visible()
     expect(page.locator("#mechip")).to_contain_text("Piero Sales")
     for path, heading in [("quadro", "Quadro"), ("clientes", "Clientes"), ("novo", "Novo pedido")]:
         page.goto(f"{base}/#/{path}")

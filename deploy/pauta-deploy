@@ -6,7 +6,9 @@
 #   pauta-deploy --status               what is live and what is installed
 #
 # Lives at /usr/local/sbin/pauta-deploy (root:root 0755). The GitHub runner user may run it
-# with sudo and nothing else, so every argument is checked here; see deploy/README.md.
+# with sudo and nothing else, so every argument is checked here, and a wheel is only
+# installed if it is byte for byte the one in the published GitHub release; see
+# deploy/README.md.
 #
 # Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (owned by the service user)
 #          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
@@ -24,6 +26,8 @@ BACKUPS=/home/esaleh/backups/pauta/pre-deploy
 HEALTH=http://127.0.0.1:8088/healthz
 KEEP=5            # releases kept on disk (current and previous are never pruned)
 PYTHON=/usr/bin/python3
+# where published releases live: the wheel and lockfile must match its SHA256SUMS
+RELEASES_URL=https://github.com/eduelias/pauta/releases/download
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, no piwheels
 
@@ -79,6 +83,30 @@ s, d = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
 s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
     as_user find "$BACKUPS" -name 'pauta-*.db' -mtime +90 -delete
     log "database backed up to $out"
+}
+
+fetch_sums() {  # VERSION -> the published release's SHA256SUMS on stdout
+    curl -fsSL --max-time 30 --proto '=https' --proto-redir '=https' \
+        "$RELEASES_URL/v$1/SHA256SUMS"
+}
+
+check_sum() {  # SUMS NAME FILE: FILE's sha256 is the one SUMS lists for NAME
+    local want got
+    want=$(awk -v n="$2" '$2 == n || $2 == "*" n { print $1 }' <<<"$1")
+    [[ $want =~ ^[0-9a-f]{64}$ ]] || die "the release's SHA256SUMS lists no $2"
+    got=$(sha256sum "$3" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || die "$2 is not the published one (sha256 $got, release says $want)"
+}
+
+verify_release() {  # VERSION WHEEL LOCK
+    # Whoever runs this through sudo hands us the files, so trust only what GitHub publishes:
+    # releases are immutable and only the owner can push release tags (deploy/README.md).
+    local sums
+    sums=$(fetch_sums "$1") ||
+        die "can't fetch SHA256SUMS of v$1 from GitHub (is the release published?)"
+    check_sum "$sums" "$(basename -- "$2")" "$2"
+    check_sum "$sums" requirements.lock "$3"
+    log "$(basename -- "$2") and requirements.lock match the published v$1"
 }
 
 install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
@@ -169,6 +197,7 @@ main() {
             [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
             [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
             [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
+            verify_release "$version" "$wheel" "$lock"
             log "installing $version"
             install_release "$version" "$wheel" "$lock"
             backup_db "$version"
@@ -178,4 +207,7 @@ main() {
     esac
 }
 
-main "$@"
+# sourced by the tests (tests/unit/test_deploy_scripts.py), run otherwise
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi
