@@ -74,4 +74,22 @@ if [ -n "$TOKEN_FILE" ] && [ ! -f "$dir/.runner" ]; then
         --work _work)
     (cd "$dir" && ./svc.sh install "$RUNNER_USER" && ./svc.sh start)
 fi
-echo "provisioned: pauta-deploy, units, sudo rule, runner $(cd "$dir" && runuser -u "$RUNNER_USER" -- ./config.sh --version)"
+
+# --- the job guard: the runner refuses every job but the deploy ----------------------------
+# Root-owned, outside the runner's own (gh-runner-writable) directory, and set through a
+# systemd drop-in, so no job can switch it off for the jobs after it.
+install -d -o root -g root -m 0755 /usr/local/lib/pauta
+install -o root -g root -m 0755 "$HERE/runner-job-guard" /usr/local/lib/pauta/runner-job-guard
+unit=actions.runner.eduelias-pauta.du7.service
+if [ -f "/etc/systemd/system/$unit" ]; then
+    install -d -o root -g root -m 0755 "/etc/systemd/system/$unit.d"
+    cat > "/etc/systemd/system/$unit.d/job-guard.conf" <<EOF
+# Every job on du7 first passes /usr/local/lib/pauta/runner-job-guard (deploy/README.md).
+[Service]
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard
+EOF
+    systemctl daemon-reload
+    systemctl restart "$unit"
+fi
+
+echo "provisioned: pauta-deploy, units, sudo rule, job guard, runner $(cd "$dir" && runuser -u "$RUNNER_USER" -- ./config.sh --version)"

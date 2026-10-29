@@ -9,6 +9,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Security
 
+- Ready for collaborators and a public repository (decision 2): CODEOWNERS for CI, deploy,
+  sign-in and dependencies, rulesets and settings as code (`scripts/repo-settings.sh`), the
+  WhatsApp secrets in an `alerts` environment, immutable releases, and on du7 a runner that
+  refuses every job but the deploy and a `pauta-deploy` that only installs the published
+  release's files. `SECURITY.md` and `CONTRIBUTING.md` are new.
+
 Fixes from a security review of 1.2.3. Everyone has to sign in again once after this release
 (the session key moved), which takes a tap with the passkey.
 
@@ -37,6 +43,12 @@ Fixes from a security review of 1.2.3. Everyone has to sign in again once after 
 - New headers: `X-Frame-Options`, `Cross-Origin-Opener-Policy` and `Permissions-Policy`.
 - The pauta unit gets `TasksMax` and `MemoryMax` (applied by `provision-du7.sh`).
 - The Equipe page says plainly what the Gravatar hash does and doesn't hide.
+
+### Fixed
+
+- A browser test expected an afternoon greeting and failed every morning ("Bom dia").
+- A browser test waited by evaluating a string in the page, which the Content Security Policy
+  sometimes refused, so CI failed at random.
 
 ## [1.2.3] - 2026-10-28
 

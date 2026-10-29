@@ -54,3 +54,15 @@ version, or `sudo pauta-deploy --rollback` on du7. Details: `deploy/README.md`. 
 a newer database.
 
 Decisions (what was decided and why, including things not built yet) are in `docs/decisions/`.
+
+## Working here as a collaborator
+
+Maintainers (and their Claude) follow `CONTRIBUTING.md`: a branch and a pull request per
+change, never a push to `main` (the ruleset refuses it), `make check` before pushing, a line
+under Unreleased in `CHANGELOG.md`. Merge your own PR once CI is green. Paths in
+`.github/CODEOWNERS` (CI, `deploy/`, `scripts/`, `Makefile`, `auth.py`, `ratelimit.py`,
+`tests/softpasskey.py`, `pyproject.toml`, `uv.lock`, this file, the decisions) need the
+owner's review: don't change them to get a feature through; say what you need in the PR.
+Never create or move `v*` tags, never touch du7, https://pauta.genic.dev or real data, and
+never put secrets or real phone numbers anywhere in the repo. Security model:
+`docs/decisions/0002-collaborators-and-a-public-repo.md`.
