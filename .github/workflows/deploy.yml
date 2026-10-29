@@ -3,7 +3,7 @@
 # else, never files from the release page. Run by hand (Actions → Deploy → Run workflow), it
 # only switches du7 to a release that is already installed there: a redeploy or a rollback.
 #
-# The du7 job runs on the self-hosted runner as `gh-runner`, which may run exactly one
+# The du7 job runs on the self-hosted runner as `pauta-runner`, which may run exactly one
 # command as root: /usr/local/sbin/pauta-deploy (deploy/pauta-deploy in this repo). Before any
 # step, the runner's job guard (deploy/runner-job-guard) checks that the owner started this
 # from a release tag or from main. pauta-deploy checks the hashes, installs into its own
@@ -76,7 +76,7 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           # Caddy listens on du7's LAN address only: ask it there, not through the internet
-          lan=$(hostname -I | cut -d' ' -f1)
+          lan=$(ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2)
           live=$(curl -fsS --resolve "pauta.genic.dev:443:$lan" https://pauta.genic.dev/healthz \
             | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["version"])')
           [ "$live" = "$VERSION" ] || { echo "Caddy serves ${live:-nothing}, expected $VERSION"; exit 1; }

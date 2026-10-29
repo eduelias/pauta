@@ -15,10 +15,10 @@ phone ──https──▶ home router :443 ──▶ du7 :443 on its LAN addres
 | Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release, owned by `pauta`), `/opt/pauta/current` → the live one |
 | DB of record | `/var/lib/pauta/pauta.db` (`PAUTA_STATE_DIR`, `pauta` only): accounts, passkeys, invites, clients, requests |
-| Backups | nightly 03:40 (`pauta-backup.timer`) → `/var/backups/pauta` + the NAS (`/media/nas/backups/pauta`), 30 days; before every deploy → `/var/backups/pauta/pre-deploy`, 90 days. The `pauta` group (the owner is in it) sees their ages, not their contents |
+| Backups | nightly 03:40 (`pauta-backup.timer`) → `/var/backups/pauta`, then the newest copied to the NAS (`/media/nas/backups/pauta`, exFAT, so as root), 30 days each; before every deploy → `/var/backups/pauta/pre-deploy`, 90 days. The `pauta` group (the owner is in it) sees their ages, not their contents |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: its own user, read-only system, no `/home` at all, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
-| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner` (root's; user `gh-runner` writes only `_work` and `_diag`), unit `actions.runner.eduelias-pauta.du7.service`; every job first passes `/usr/local/lib/pauta/runner-job-guard` (drop-in `job-guard.conf`) |
+| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/pauta-runner/actions-runner` (root's; its own user `pauta-runner` writes only `_work` and `_diag`), unit `actions.runner.eduelias-pauta.du7.service`. No other repository's runner may run as `pauta-runner` (it may `sudo pauta-deploy`); dominion-archive's runs as `gh-runner`; every job first passes `/usr/local/lib/pauta/runner-job-guard` (drop-in `job-guard.conf`) |
 
 ## Releasing
 
@@ -85,8 +85,9 @@ sudo deploy/provision-du7.sh 2.338.2 <sha256 of actions-runner-linux-arm64-2.338
 
 It creates the `pauta` user (and, once, moves the DB and backups from the owner's home to
 `/var/lib/pauta` and `/var/backups/pauta`, keeping the old copy as `*.moved-DATE`), installs
-`pauta-deploy`, the units, a sudo rule letting `gh-runner` run `/usr/local/sbin/pauta-deploy`
-(and nothing else) as root, installs or updates the runner, registers it (with self-update
+`pauta-deploy`, the units, a sudo rule letting `pauta-runner` run
+`/usr/local/sbin/pauta-deploy` (and nothing else) as root, retires pauta's old runner that
+ran as the shared `gh-runner` (once), installs or updates the runner, registers it (with self-update
 off) when needed, gives its files to root, and installs the job guard. Run it again after
 any change to `deploy/` and to update the runner: it doesn't update itself, and GitHub stops
 sending jobs to a runner more than 30 days behind its latest release. The token is only
@@ -106,8 +107,8 @@ when the owner started (and re-ran) it; refusals are in `journalctl -t pauta-run
 ### If the runner won't start
 
 `provision-du7.sh` stops with the runner's last log lines. If a runner release wants to write
-somewhere new in its own directory, give that path to `gh-runner` and add it to the script;
-as a stopgap, `sudo chown -R gh-runner: /opt/gh-runner/actions-runner && sudo systemctl
+somewhere new in its own directory, give that path to `pauta-runner` and add it to the script;
+as a stopgap, `sudo chown -R pauta-runner: /opt/pauta-runner/actions-runner && sudo systemctl
 restart actions.runner.eduelias-pauta.du7.service` brings it back (and undoes the lock-down
 until the next run of the script).
 
@@ -121,7 +122,9 @@ nobody before step 4; in this order:
    at the du7 step (du7's old pauta-deploy takes no hashes), saying so.
 2. At home, on du7, from a fresh copy of `deploy/` and with a runner registration token
    (see "Setting up du7"): `sudo deploy/provision-du7.sh <runner version> <sha256> token`.
-   Then update `~/du7-watchdog.py`'s `pauta-backup` check to `/var/backups/pauta`.
+   It needs the token because the runner moves to its own user. Then update
+   `~/du7-watchdog.py`'s `pauta-backup` check to `/var/backups/pauta` (the owner can list
+   it: they are in the `pauta` group).
 3. Check it: `systemctl show actions.runner.eduelias-pauta.du7.service -p Environment` names
    the guard; `sudo -u pauta ls /home` fails; Actions → Deploy → Run workflow on `main` with
    the live version deploys, and its du7 job log shows `runner-job-guard: … may deploy`.
@@ -179,5 +182,5 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 
 `sudo systemctl stop pauta` takes it offline; remove the Caddy block and the `pauta` DNS
 record to undo it completely. The DB stays in `/var/lib/pauta`. To retire the runner:
-`cd /opt/gh-runner/actions-runner && sudo ./svc.sh uninstall`, remove it under the repo's
-Settings → Actions → Runners, and delete `/etc/sudoers.d/gh-runner-pauta`.
+`cd /opt/pauta-runner/actions-runner && sudo ./svc.sh uninstall`, remove it under the repo's
+Settings → Actions → Runners, and delete `/etc/sudoers.d/pauta-runner`.

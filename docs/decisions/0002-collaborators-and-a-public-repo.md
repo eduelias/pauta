@@ -69,14 +69,17 @@ On du7 (`deploy/provision-du7.sh`):
 - **Job guard** (`deploy/runner-job-guard`, root-owned, set by a root-owned systemd drop-in):
   only job `du7` of `release.yml` on a `vX.Y.Z` tag, or of `deploy.yml` started by hand on
   `main`, and only when `GITHUB_ACTOR` and `GITHUB_TRIGGERING_ACTOR` are the owner.
-- **The runner is root's**: its code, home and registration belong to root; `gh-runner` can
-  write only `_work` and `_diag`. It no longer updates itself; `provision-du7.sh` does.
+- **The runner is root's and has a user of its own**: `pauta-runner` (until now it shared
+  `gh-runner` with dominion-archive's runner, so either repo's jobs could `sudo` the other's
+  deploy script). Its code, home and registration belong to root; `pauta-runner` can write
+  only `_work` and `_diag`. It no longer updates itself; `provision-du7.sh` does.
 - **pauta-deploy** works from `/`, runs Python isolated (`-I`), copies its inputs into a
   root-owned directory before hashing them and installs from there, reads the version from
   the wheel's metadata, and requires the build's sha256s; `--activate` only switches to an
   installed release.
 - **A `pauta` user** runs the app and its backups (`/var/lib/pauta`, `/var/backups/pauta`),
-  with `ProtectHome=tmpfs`. This is the production half of decision 1's "own user".
+  with `ProtectHome=tmpfs`; the nightly copy to the NAS (exFAT, writable only by the owner's
+  uid) runs as root after the backup. This is the production half of decision 1's "own user".
 
 ## Consequences
 

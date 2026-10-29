@@ -9,17 +9,31 @@ User=pauta
 Group=pauta
 Environment=PAUTA_STATE_DIR=/var/lib/pauta
 WorkingDirectory=/var/lib/pauta
-# 30 days in /var/backups/pauta, plus a second copy on the NAS drive mounted on du7
-ExecStart=/opt/pauta/current/bin/pauta backup --dir /var/backups/pauta --keep-days 30 --copy-to /media/nas/backups/pauta
+# 30 days in /var/backups/pauta, then the newest copied to the NAS drive mounted on du7. The
+# NAS is exFAT, writable by esaleh only, so that copy runs as root ("+"), outside the
+# sandbox, and a missing NAS doesn't fail the backup ("-"); the watchdog checks it.
+ExecStart=/opt/pauta/current/bin/pauta backup --dir /var/backups/pauta --keep-days 30
+ExecStartPost=-+/bin/sh -c 'mountpoint -q /media/nas && cp -p "$$(ls -1t /var/backups/pauta/pauta-*.db | head -n 1)" /media/nas/backups/pauta/ && find /media/nas/backups/pauta -name "pauta-*.db" -mtime +30 -delete'
 
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=tmpfs
-# the "-" keeps the backup running when the NAS isn't mounted (the local copy still counts)
-ReadWritePaths=/var/lib/pauta /var/backups/pauta -/media/nas/backups/pauta
+ReadWritePaths=/var/lib/pauta /var/backups/pauta
 PrivateTmp=yes
 PrivateDevices=yes
+PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 # the DB holds the session-signing secret: copies are for the service user only
 UMask=0077

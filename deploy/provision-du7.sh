@@ -23,8 +23,11 @@ RUNNER_SHA256=${2:?sha256 of actions-runner-linux-arm64-<version>.tar.gz}
 TOKEN_FILE=${3:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO_URL=https://github.com/eduelias/pauta
-RUNNER_USER=gh-runner
-RUNNER_HOME=/opt/gh-runner
+# pauta's runner has a user of its own: anything running as it may `sudo pauta-deploy`, so no
+# other repository's runner may share it (gh-runner is dominion-archive's)
+RUNNER_USER=pauta-runner
+RUNNER_HOME=/opt/pauta-runner
+OLD_RUNNER_DIR=/opt/gh-runner/actions-runner   # pauta's runner until 2026-10, as gh-runner
 RUNNER_UNIT=actions.runner.eduelias-pauta.du7.service
 SERVICE_USER=pauta
 STATE_DIR=/var/lib/pauta
@@ -49,10 +52,9 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$STATE_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$BACKUP_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$BACKUP_DIR/pre-deploy"
 usermod -a -G "$SERVICE_USER" "$OLD_USER"
+# the NAS is exFAT mounted for esaleh: pauta-backup copies to it as root (ExecStartPost=+)
 if mountpoint -q /media/nas; then
-    install -d /media/nas/backups
-    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$NAS_DIR" ||
-        say "WARNING: can't give $NAS_DIR to $SERVICE_USER (a fixed-owner mount?); nightly NAS copies will fail until it can write there"
+    install -d "$NAS_DIR"
 fi
 
 # --- once: move the DB and backups from /home/esaleh to the pauta user ----------------------
@@ -91,7 +93,16 @@ if ! id "$RUNNER_USER" >/dev/null 2>&1; then
     useradd --system --home-dir "$RUNNER_HOME" --create-home --shell /usr/sbin/nologin \
         --comment "GitHub Actions runner (eduelias/pauta deploys)" "$RUNNER_USER"
 fi
-rule=/etc/sudoers.d/gh-runner-pauta
+# once: retire the runner that ran as the shared gh-runner (same name: registering the new
+# one with --replace takes its place on GitHub)
+if [ -f "$OLD_RUNNER_DIR/.runner" ] && grep -q '"gitHubUrl": *"https://github.com/eduelias/pauta"' "$OLD_RUNNER_DIR/.runner"; then
+    [ -n "$TOKEN_FILE" ] || { echo "moving the runner to $RUNNER_USER needs a TOKEN_FILE" >&2; exit 1; }
+    say "retiring $OLD_RUNNER_DIR (gh-runner)"
+    (cd "$OLD_RUNNER_DIR" && ./svc.sh stop && ./svc.sh uninstall) || true
+    rm -f /etc/sudoers.d/gh-runner-pauta
+    rm -rf "$OLD_RUNNER_DIR"   # its credentials, invalid once the new one registers
+fi
+rule=/etc/sudoers.d/pauta-runner
 cat > "$rule.tmp" <<EOF
 # The GitHub Actions runner may deploy Pauta releases, and nothing else, as root.
 Defaults:$RUNNER_USER !requiretty
