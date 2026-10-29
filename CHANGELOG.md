@@ -18,6 +18,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 ### Fixed
 
 - A browser test expected an afternoon greeting and failed every morning ("Bom dia").
+- A browser test waited by evaluating a string in the page, which the Content Security Policy
+  sometimes refused, so CI failed at random.
 
 ## [1.2.3] - 2026-10-28
 

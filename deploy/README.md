@@ -95,7 +95,9 @@ Maintainers work through pull requests (`CONTRIBUTING.md`); what they may and ma
 why, is decision 2. The GitHub side is `scripts/repo-settings.sh`. In this order:
 
 1. Merge the change that brought this section (CODEOWNERS, the guard, the release check).
-2. Make the repository public (Settings → General → Danger Zone), then on the Mac:
+2. While the repo is private, `apply` already sets what it can (forks run no workflows at all)
+   and lists the rest as `later`; it was run on 2026-10-29. Make the repository public
+   (Settings → General → Danger Zone), then on the Mac:
    `scripts/repo-settings.sh apply` (rulesets, Actions, environments, security features) and
    `scripts/repo-settings.sh secrets` (the WhatsApp secrets into the `alerts` environment;
    1Password asks for Touch ID). `scripts/repo-settings.sh show` checks it.
