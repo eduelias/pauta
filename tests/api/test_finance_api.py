@@ -116,6 +116,19 @@ def test_switched_off(team):
     assert call(f"{base}/api/finance/settings", cookie=nato)[0] == 200  # admins still reach them
 
 
+def test_the_panel_by_month(team):
+    base, nato, _, _ = team
+    c = client(base, nato)
+    call(f"{base}/api/clients/{c['id']}/payments", {"paid_on": AGO_40, "amount": 100}, nato)
+    status, panel, _ = call(f"{base}/api/finance?month={AGO_40[:7]}", cookie=nato)
+    assert status == 200 and panel["month"] == AGO_40[:7]
+    assert [p["name"] for p in panel["payments"]] == [c["name"]]
+    assert panel["received_month"] == 100
+    assert {m["month"] for m in panel["months"]} >= {AGO_40[:7], TODAY[:7]}
+    assert call(f"{base}/api/finance?month=2001-01", cookie=nato)[1]["payments"] == []
+    assert call(f"{base}/api/finance?month=nope", cookie=nato)[0] == 400
+
+
 def test_export_carries_the_ledger(team):
     base, nato, _, _ = team
     c = client(base, nato)

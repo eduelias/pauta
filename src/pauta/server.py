@@ -528,7 +528,8 @@ def make_handler(
         @route("GET", "/api/finance")
         def finance_panel(self, viewer, _body):
             self._finance(viewer)
-            return store.finance()
+            month = parse_qs(urlparse(self.path).query).get("month", [None])[0]
+            return store.finance(month=month)
 
         @route("GET", "/api/finance/settings", "admin")
         def finance_settings(self, viewer, _body):

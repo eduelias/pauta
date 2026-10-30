@@ -1034,12 +1034,19 @@ function dueLine(b) {
   return `<span class="due ${b.status === "late" ? "late" : b.status === "due" || b.status === "due_soon" ? "soon" : "faint"}">${icon("cal")}${verb} ${esc(when)}</span>`;
 }
 
+// The tiles are filters: one at a time, click again to clear. "received" shows the month's
+// payments with a month picker instead of the client groups.
+const FIN_FILTER = { late: ["late"], week: ["due", "due_soon"], awaiting_first: ["awaiting_first"], paid: ["paid"] };
+const finState = { filter: null, month: null };
+const monthName = (m, year = false) => new Date(m + "-15T12:00:00").toLocaleDateString("pt-BR", year ? { month: "long", year: "numeric" } : { month: "long" });
+
 async function viewFinance() {
   if (!finVisible()) { location.hash = "#/"; return; }
-  const f = await api("GET", "/api/finance");
+  const f = await api("GET", `/api/finance${finState.month ? `?month=${finState.month}` : ""}`);
+  finState.month = f.month;
   const cur = f.currency;
-  const month = new Date(f.month + "-15T12:00:00").toLocaleDateString("pt-BR", { month: "long" });
-  const stat = (n, t, c, hot) => `<div class="stat ${hot ? "hot" : ""}" style="--c:${c}"><div class="n">${n}</div><div class="t">${t}</div></div>`;
+  const on = finState.filter;
+  const stat = (key, n, t, c, hot) => `<button type="button" class="stat ${hot ? "hot" : ""} ${on === key ? "on" : ""}" data-filter="${key}" style="--c:${c}" aria-pressed="${on === key}"><div class="n">${n}</div><div class="t">${t}</div></button>`;
   const week = f.counts.due + f.counts.due_soon;
   const group = (st) => {
     const rows = f.clients.filter((c) => c.status === st);
@@ -1052,17 +1059,43 @@ async function viewFinance() {
         <button class="btn small" data-pay="${c.id}" data-name="${esc(c.name)}" data-amount="${c.amount}">${icon("plus")}Registrar</button>
       </div>`).join("")}</div></section>`;
   };
+  const clear = `<button type="button" class="btn ghost small" id="finclear">Mostrar todos</button>`;
+  let body;
+  if (on === "received") {
+    body = `<section class="panel" id="finmonthpanel"><div class="panel-head"><h2>Recebimentos</h2>
+        <select class="input" id="finmonth" aria-label="Mês">${f.months.map((m) => `<option value="${m.month}" ${m.month === f.month ? "selected" : ""}>${esc(monthName(m.month, true))}${m.payments ? ` · ${esc(money(m.received, cur))}` : ""}</option>`).join("")}</select></div>
+      ${f.payments.length ? `<div class="paylist">${f.payments.map((p) => `<div class="pay">
+          <span class="d">${esc(fmtDate(p.paid_on, { day: "2-digit", month: "2-digit", year: "2-digit" }))}</span>
+          <span class="v">${esc(money(p.amount, cur))}</span>
+          <span class="m"><a href="#/cliente/${p.client}">${esc(p.name)}</a><span class="muted small"> · ${esc(p.method || "")}${p.note ? ` · ${esc(p.note)}` : ""}</span></span>
+        </div>`).join("")}</div>
+        <div class="paytotal"><span class="muted small">${f.payments.length} ${f.payments.length === 1 ? "pagamento" : "pagamentos"} em ${esc(monthName(f.month))}</span><b>${esc(money(f.received_month, cur))}</b></div>`
+        : `<p class="muted small mt">Nenhum pagamento em ${esc(monthName(f.month, true))}.</p>`}
+    </section>`;
+  } else if (!f.clients.length) {
+    body = `<div class="panel empty"><span class="big">💸</span>Nenhum cliente ativo cobrado. Os clientes <b>Ativos</b> aparecem aqui; pausados e encerrados não.</div>`;
+  } else {
+    const shown = on ? FIN_ORDER.filter((st) => FIN_FILTER[on].includes(st)) : FIN_ORDER;
+    body = shown.map(group).join("") || `<div class="panel empty"><span class="big">✨</span>Nenhum cliente aqui. ${clear}</div>`;
+  }
   app.innerHTML = `<div>
-    <div class="head"><div><h1>Financeiro</h1><p>${f.clients.length} ${f.clients.length === 1 ? "cliente cobrado" : "clientes cobrados"} · ${esc(money(f.received_total, cur))} recebidos no total.</p></div></div>
+    <div class="head"><div><h1>Financeiro</h1><p>${f.clients.length} ${f.clients.length === 1 ? "cliente cobrado" : "clientes cobrados"} · ${esc(money(f.received_total, cur))} recebidos no total.</p></div>${on ? clear : ""}</div>
     <div class="stats fin">
-      ${stat(esc(money(f.received_month, cur)), `Recebido em ${esc(month)}`, "var(--s-done)")}
-      ${stat(f.counts.late, `Em atraso${f.owed ? ` · ${esc(money(f.owed, cur))}` : ""}`, "var(--danger)", f.counts.late > 0)}
-      ${stat(week, "Vencem esta semana", "var(--s-waiting)")}
-      ${stat(f.counts.awaiting_first, "Aguardando 1º pagamento", "var(--s-todo)")}
-      ${stat(f.counts.paid, "Em dia", "var(--accent)")}
+      ${stat("received", esc(money(f.received_month, cur)), `Recebido em ${esc(monthName(f.month))}`, "var(--s-done)")}
+      ${stat("late", f.counts.late, `Em atraso${f.owed ? ` · ${esc(money(f.owed, cur))}` : ""}`, "var(--danger)", f.counts.late > 0)}
+      ${stat("week", week, "Vencem esta semana", "var(--s-waiting)")}
+      ${stat("awaiting_first", f.counts.awaiting_first, "Aguardando 1º pagamento", "var(--s-todo)")}
+      ${stat("paid", f.counts.paid, "Em dia", "var(--accent)")}
     </div>
-    ${f.clients.length ? FIN_ORDER.map(group).join("") : `<div class="panel empty"><span class="big">💸</span>Nenhum cliente ativo cobrado. Os clientes <b>Ativos</b> aparecem aqui; pausados e encerrados não.</div>`}
+    ${body}
   </div>`;
+  $$("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+    finState.filter = finState.filter === b.dataset.filter ? null : b.dataset.filter;
+    viewFinance();
+  }));
+  $$("#finclear").forEach((b) => b.addEventListener("click", () => { finState.filter = null; viewFinance(); }));
+  const sel = $("#finmonth");
+  if (sel) sel.addEventListener("change", () => { finState.month = sel.value; viewFinance(); });
   $$("[data-pay]").forEach((b) => b.addEventListener("click", () => payModal(
     { id: Number(b.dataset.pay), name: b.dataset.name }, Number(b.dataset.amount), cur, viewFinance)));
 }

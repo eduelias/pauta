@@ -18,7 +18,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   Pagamentos com o valor, a situação, a lista e o botão para registrar. Pagamentos nunca são
   apagados, só anulados (por quem registrou ou um administrador). Equipe → Financeiro guarda
   as regras do time: moeda, valor padrão, periodicidade, tolerância, aviso de vencimento e
-  quem pode ver. Decisão 7.
+  quem pode ver. Os cartões do topo filtram a lista (toque em "Em atraso" e só eles
+  aparecem; toque de novo para ver todos) e "Recebido no mês" abre os pagamentos do mês,
+  com um seletor para ver quanto entrou em cada mês. Decisão 7.
 
 ## [1.4.0] - 2026-10-29
 

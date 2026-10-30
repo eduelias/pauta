@@ -1,5 +1,6 @@
 """Financeiro in the browser: the panel, registering a Pix, the client card, the settings."""
 
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -131,3 +132,44 @@ def test_phone_tab_bar_shows_financeiro_instead_of_quadro(admin):
     tab.click()
     expect(page.get_by_role("heading", name="Financeiro", exact=True)).to_be_visible()
     expect(page.locator("#tabbar")).to_be_in_viewport(ratio=1)
+
+
+def test_tiles_filter_and_the_month_picker(admin):
+    base, store, open_device = admin
+    paid = store.save_client({"name": "Em Dia Ltda"})
+    late = store.save_client({"name": "Atrasados SA"})
+    store.save_client({"name": "Esperando ME"})
+    today = date.today()
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    store.add_payment(paid["id"], {"paid_on": ago(2), "amount": 100}, None)
+    store.add_payment(late["id"], {"paid_on": ago(70), "amount": 100, "method": "Pix"}, None)
+    page = open_device().page
+    page.goto(f"{base}/#/financeiro")
+    expect(page.locator(".finrow")).to_have_count(3)
+    tiles = page.locator(".stats.fin .stat")
+
+    # a tile narrows the panel to its group; clicking it again shows everyone
+    tiles.filter(has_text="Em atraso").click()
+    expect(page.locator(".finrow")).to_have_count(1)
+    expect(page.locator(".finrow")).to_contain_text("Atrasados")
+    expect(tiles.filter(has_text="Em atraso")).to_have_class(re.compile(r"\bon\b"))
+    tiles.filter(has_text="Em dia").click()
+    expect(page.locator(".finrow")).to_have_count(1)
+    expect(page.locator(".finrow")).to_contain_text("Em Dia")
+    page.get_by_role("button", name="Mostrar todos").click()
+    expect(page.locator(".finrow")).to_have_count(3)
+
+    # the received tile opens the month's payments, with a picker for the other months
+    tiles.filter(has_text="Recebido em").click()
+    panel = page.locator("#finmonthpanel")
+    expect(panel).to_be_visible()
+    expect(page.locator(".finrow")).to_have_count(0)
+    expect(panel.locator(".pay")).to_have_count(1)
+    expect(panel).to_contain_text("Em Dia Ltda")
+    expect(panel.locator(".paytotal")).to_contain_text("R$ 100")
+    old = ago(70)[:7]
+    panel.locator("#finmonth").select_option(old)
+    expect(panel.locator(".pay")).to_have_count(1)
+    expect(panel).to_contain_text("Atrasados SA")
+    expect(panel).to_contain_text("Pix")
+    expect(tiles.first).to_contain_text("R$ 100")  # the tile follows the picked month

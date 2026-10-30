@@ -345,6 +345,26 @@ def test_the_panel(store):
     assert late["last_payment"] == {"paid_on": ago(40), "amount": 100}
     assert panel["clients"][2]["last_payment"]["paid_on"] == ago(10)
     assert c["billing"]["status"] == "awaiting_first"
+    # what came in each month, newest first, this month always listed
+    assert panel["month"] == today.strftime("%Y-%m")
+    assert panel["months"][0]["month"] == panel["month"]
+    assert sum(m["received"] for m in panel["months"]) == 300
+    assert [m["month"] for m in panel["months"]] == sorted(
+        {m["month"] for m in panel["months"]}, reverse=True
+    )
+    # ...and the payments of one month on request
+    old = ago(70)[:7]
+    older = store.finance(month=old)
+    assert older["month"] == old and older["received_month"] >= 100
+    assert any(p["name"] == "Atrasado" and p["paid_on"] == ago(70) for p in older["payments"])
+    assert "cents" not in older["payments"][0] and older["payments"][0]["amount"] == 100
+    empty = store.finance(month="2001-01")
+    assert empty["payments"] == [] and empty["received_month"] == 0
+    assert any(m["month"] == "2001-01" for m in empty["months"])  # the picker can land on it
+    with pytest.raises(Invalid):
+        store.finance(month="2026-13")
+    with pytest.raises(Invalid):
+        store.finance(month="outubro")
 
 
 def test_deleting_a_client_takes_its_ledger(store, client):

@@ -744,10 +744,14 @@ class Store:
             cid = row["client"]
         return self.client(cid)
 
-    def finance(self, today: date | None = None) -> dict:
-        """The panel: every Ativo, billed client and where it stands, plus the month's totals."""
+    def finance(self, today: date | None = None, month: str | None = None) -> dict:
+        """The panel: every Ativo, billed client and where it stands, plus what came in each
+        month and the payments of `month` (default: this one)."""
         today = today or date.today()
-        month = today.strftime("%Y-%m")
+        if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+            raise Invalid("mês inválido, use AAAA-MM")
+        this_month = today.strftime("%Y-%m")
+        month = month or this_month
         with self.db() as db:
             clients = db.execute(
                 "SELECT * FROM client WHERE state='Ativo' AND billed ORDER BY name COLLATE NOCASE"
@@ -776,11 +780,29 @@ class Store:
                         **b,
                     }
                 )
-            received_month = db.execute(
-                "SELECT COALESCE(SUM(cents), 0) FROM payment "
-                "WHERE voided_at IS NULL AND substr(paid_on, 1, 7)=?",
-                (month,),
-            ).fetchone()[0]
+            # every month with a live payment, newest first; this month and the asked one
+            # are always there so the picker has something to land on
+            months = {
+                r["m"]: {"month": r["m"], "received": r["cents"] / 100, "payments": r["n"]}
+                for r in db.execute(
+                    "SELECT substr(paid_on, 1, 7) AS m, SUM(cents) AS cents, COUNT(*) AS n "
+                    "FROM payment WHERE voided_at IS NULL GROUP BY m"
+                ).fetchall()
+            }
+            for m in (this_month, month):
+                months.setdefault(m, {"month": m, "received": 0, "payments": 0})
+            payments = [
+                {**dict(r), "amount": r["cents"] / 100}
+                for r in db.execute(
+                    "SELECT p.id, p.client, c.name, p.paid_on, p.cents, p.method, p.note "
+                    "FROM payment p JOIN client c ON c.id=p.client "
+                    "WHERE p.voided_at IS NULL AND substr(p.paid_on, 1, 7)=? "
+                    "ORDER BY p.paid_on DESC, p.id DESC",
+                    (month,),
+                ).fetchall()
+            ]
+            for p in payments:
+                del p["cents"]
             received_total = db.execute(
                 "SELECT COALESCE(SUM(cents), 0) FROM payment WHERE voided_at IS NULL"
             ).fetchone()[0]
@@ -792,8 +814,10 @@ class Store:
             "month": month,
             "currency": settings["currency"],
             "cadence": settings["cadence"],
-            "received_month": received_month / 100,
+            "received_month": months[month]["received"],
             "received_total": received_total / 100,
+            "months": sorted(months.values(), key=lambda m: m["month"], reverse=True),
+            "payments": payments,
             "owed": sum(r["owed"] for r in rows),
             "counts": {s: sum(1 for r in rows if r["status"] == s) for s in finance.STATUSES},
             "clients": rows,
