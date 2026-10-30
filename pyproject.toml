@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pauta"
-version = "1.4.0"
+version = "1.5.0"
 description = "Pauta: the request queue between whoever sells the campaign and whoever runs it."
 readme = "README.md"
 requires-python = ">=3.11"
