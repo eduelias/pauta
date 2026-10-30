@@ -6,6 +6,8 @@ from datetime import date, timedelta
 import pytest
 from playwright.sync_api import expect
 
+from ledger import drift_cycles
+
 pytestmark = pytest.mark.e2e
 
 PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
@@ -19,6 +21,7 @@ def admin(live, device):
             "INSERT INTO account(name, handle, is_admin) VALUES ('Piero Sales', 'h', 1)"
         ).lastrowid
     value = auth.make_cookie(aid, secure=False).split(";")[0].split("=", 1)[1]
+    drift_cycles(store)  # every test here runs with cycle ids != client ids (1.5.1)
 
     def open_device(**args):
         d = device(**args)
@@ -173,3 +176,22 @@ def test_tiles_filter_and_the_month_picker(admin):
     expect(panel).to_contain_text("Atrasados SA")
     expect(panel).to_contain_text("Pix")
     expect(tiles.first).to_contain_text("R$ 100")  # the tile follows the picked month
+
+
+def test_registrar_on_the_panel_lands_on_that_client(admin):
+    """1.5.0 regression: with cycle ids drifted (the fixture does that), Registrar on the
+    panel posted to the cycle's id — "cliente não encontrado", or another client's ledger."""
+    base, store, open_device = admin
+    delta = store.save_client({"name": "Delta"})
+    isabel = store.save_client({"name": "Isabel"})
+    assert isabel["billing"]["id"] != isabel["id"]
+    page = open_device().page
+    page.goto(f"{base}/#/financeiro")
+    row = page.locator(".finrow", has_text="Isabel")
+    expect(row.locator("a")).to_have_attribute("href", f"#/cliente/{isabel['id']}")
+    row.get_by_role("button", name="Registrar").click()
+    page.locator("#payf").get_by_role("button", name="Registrar").click()
+    expect(page.locator(".toast")).to_contain_text("Pagamento registrado")
+    expect(page.locator(".finrow", has_text="Isabel")).to_contain_text("1º mês")
+    assert [p["amount"] for p in store.client(isabel["id"])["payments"]] == [100]
+    assert store.client(delta["id"])["payments"] == []

@@ -129,6 +129,33 @@ def test_the_panel_by_month(team):
     assert call(f"{base}/api/finance?month=nope", cookie=nato)[0] == 400
 
 
+def test_panel_rows_point_at_the_client_even_when_cycles_drift(team):
+    """1.5.0 regression: the panel's row id was the billing cycle's, so Registrar posted to
+    the wrong client once someone had been paused and brought back."""
+    base, nato, piero, _ = team
+    old = client(base, nato, "Cliente antigo")
+    for state in ("Pausado", "Ativo", "Pausado"):  # cycles 1 and 2, both closed
+        assert call(f"{base}/api/clients/{old['id']}", {"state": state}, nato, "PATCH")[0] == 200
+    delta = client(base, nato, "Delta")  # client 2, cycle 3
+    isabel = client(base, nato, "Isabel")  # client 3, cycle 4
+    assert isabel["billing"]["id"] != isabel["id"]
+    rows = {r["name"]: r for r in call(f"{base}/api/finance", cookie=piero)[1]["clients"]}
+    assert rows == {"Delta": rows["Delta"], "Isabel": rows["Isabel"]}
+    assert (
+        rows["Isabel"]["id"] == isabel["id"]
+        and rows["Isabel"]["billing"] == isabel["billing"]["id"]
+    )
+    assert rows["Delta"]["id"] == delta["id"]
+    # the id the panel hands out is the one Registrar posts to
+    status, c, _ = call(
+        f"{base}/api/clients/{rows['Isabel']['id']}/payments",
+        {"paid_on": TODAY, "amount": 100},
+        piero,
+    )
+    assert status == 200 and c["id"] == isabel["id"] and c["payments"][0]["amount"] == 100
+    assert call(f"{base}/api/clients/{delta['id']}", cookie=piero)[1]["payments"] == []
+
+
 def test_export_carries_the_ledger(team):
     base, nato, _, _ = team
     c = client(base, nato)
