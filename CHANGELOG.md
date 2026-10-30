@@ -7,6 +7,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Financeiro: o botão Registrar do painel registrava o pagamento no cliente errado (ou dava
+  "cliente não encontrado") quando o número do ciclo de cobrança não coincidia com o do
+  cliente, o que acontece assim que alguém é pausado e volta. O painel agora leva o número
+  do cliente; confira os pagamentos registrados pelo painel na 1.5.0.
+
 ## [1.5.0] - 2026-10-30
 
 ### Added

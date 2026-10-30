@@ -367,6 +367,22 @@ def test_the_panel(store):
         store.finance(month="outubro")
 
 
+def test_panel_rows_carry_the_client_id_not_the_cycle_id(store):
+    # 1.5.0 regression: cycle ids drift from client ids as soon as a client is paused and
+    # brought back (or one is deleted), and the panel's Registrar posted to the cycle's id
+    first = store.save_client({"name": "Delta"})
+    store.save_client({"name": "Delta", "state": "Pausado"}, first["id"])  # closes cycle 1
+    store.save_client({"name": "Delta", "state": "Ativo"}, first["id"])  # opens cycle 2
+    isabel = store.save_client({"name": "Isabel"})  # client 2, cycle 3
+    rows = {r["name"]: r for r in store.finance()["clients"]}
+    assert rows["Delta"]["id"] == first["id"] and rows["Delta"]["billing"] == 2
+    assert rows["Isabel"]["id"] == isabel["id"] and rows["Isabel"]["billing"] == 3
+    store.add_payment(
+        rows["Isabel"]["id"], {"paid_on": date.today().isoformat(), "amount": 100}, None
+    )
+    assert store.client(isabel["id"])["payments"][0]["amount"] == 100
+
+
 def test_deleting_a_client_takes_its_ledger(store, client):
     store.add_payment(client["id"], {"paid_on": "2026-10-29", "amount": 100}, None)
     store.delete_client(client["id"])

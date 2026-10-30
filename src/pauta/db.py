@@ -766,8 +766,12 @@ class Store:
                     "ORDER BY paid_on DESC, id DESC LIMIT 1",
                     (c["id"],),
                 ).fetchone()
+                # the row's `id` is the client's; the cycle's goes under `billing` (1.5.1: the
+                # cycle's id used to win the merge, so Registrar posted to the wrong client)
                 rows.append(
                     {
+                        **b,
+                        "billing": b["id"],
                         "id": c["id"],
                         "name": c["name"],
                         "segment": c["segment"],
@@ -777,7 +781,6 @@ class Store:
                             if last
                             else None
                         ),
-                        **b,
                     }
                 )
             # every month with a live payment, newest first; this month and the asked one
