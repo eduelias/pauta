@@ -225,6 +225,17 @@ def cmd_demo(args) -> None:
                 extra["missing"] = "Falta a liberação da conta de anúncios pelo cliente."
             store.update_request(r["id"], extra, None)
     store.comment(1, "Criativos aprovados pela Ana, subindo hoje à tarde.", None)
+    # the ledger (decision 7): one client in each state of the Financeiro panel
+    pays = {
+        "Clínica Bem Estar": [-75, -45, -14],  # paid, the fourth month starts in ~16 days
+        "Padaria Trigo de Ouro": [-66, -36],  # third month started 6 days ago: late
+        "Studio Lume Pilates": [-25],  # the second month starts in 5 days: due soon
+        "Ótica Visão Clara": [],  # awaiting the first payment
+    }
+    for name, days in pays.items():
+        for n in days:
+            store.add_payment(ids[name], {"paid_on": d(n), "amount": 100, "method": "Pix"}, None)
+    store.save_client({"state": "Pausado"}, ids["Colégio Horizonte"])
     print(f"demo data in {store.path}")
 
 

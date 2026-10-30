@@ -7,6 +7,19 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Financeiro: uma aba nova (depois de Clientes; no celular ela entra no lugar do Quadro) com
+  quem está em dia, em atraso, vencendo na semana e esperando o primeiro pagamento, e o
+  recebido no mês. Cada cliente Ativo tem um valor por mês; o mês dele começa no primeiro
+  pagamento registrado (ou na data "cliente desde", ou num dia fixo: escolha em Equipe →
+  Financeiro), e o painel mostra em que mês de vida ele está ("4º mês"). Pausar ou encerrar
+  tira o cliente do painel; ao voltar, a contagem recomeça. Na página do cliente, um card
+  Pagamentos com o valor, a situação, a lista e o botão para registrar. Pagamentos nunca são
+  apagados, só anulados (por quem registrou ou um administrador). Equipe → Financeiro guarda
+  as regras do time: moeda, valor padrão, periodicidade, tolerância, aviso de vencimento e
+  quem pode ver. Decisão 7.
+
 ## [1.4.0] - 2026-10-29
 
 ### Added

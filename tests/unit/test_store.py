@@ -1,11 +1,12 @@
 """The Store: clients, requests, their timeline, lists, people and backups."""
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store
+from pauta.finance import add_months
 
 
 @pytest.fixture()
@@ -223,3 +224,155 @@ def test_schema_v2_gets_the_ads_page_column(tmp_path):
     store = Store(tmp_path / "old.db")
     assert store.clients()[0]["ads_page"] == ""
     assert store.save_client({"ads_page": "x"}, 1)["ads_page"] == "x"
+
+
+# ---- finance: settings, cycles and the ledger (decision 7) ------------------------------
+
+
+def test_finance_settings_defaults_and_validation(store):
+    s = store.finance_settings()
+    assert s["enabled"] and s["currency"] == "BRL" and s["amount"] == 100 and s["anchor"]
+    s = store.set_finance_settings(
+        {"amount": "R$ 150,00", "grace_days": "3", "visibility": "admins"}
+    )
+    assert s["amount"] == 150 and s["grace_days"] == 3 and s["visibility"] == "admins"
+    assert store.finance_settings() == s  # persisted
+    with pytest.raises(Invalid):
+        store.set_finance_settings({"anchor": "lunar"})
+    with pytest.raises(Invalid):
+        store.set_finance_settings({"grace_days": 99})
+    with pytest.raises(Invalid):
+        store.set_finance_settings({"amount": ""})
+    assert store.set_finance_settings({"enabled": "false"})["enabled"] is False
+
+
+def test_a_new_active_client_gets_an_open_cycle(store):
+    c = store.save_client({"name": "Nova"})
+    assert c["billed"] == 1
+    assert c["billing"]["status"] == "awaiting_first" and c["billing"]["amount"] == 100
+    paused = store.save_client({"name": "Parada", "state": "Pausado"})
+    assert paused["billing"] is None
+    store.set_finance_settings({"bill_new_clients": False})
+    assert store.save_client({"name": "Cortesia"})["billing"] is None
+
+
+def test_pausing_closes_the_cycle_and_coming_back_restarts_it(store, client):
+    cid = client["id"]
+    first = store.add_payment(cid, {"paid_on": "2026-10-29", "amount": 100}, None)
+    assert first["billing"]["anchor"] == "2026-10-29" and first["billing"]["months_active"] >= 1
+    store.save_client({"state": "Pausado"}, cid)
+    assert store.client(cid)["billing"] is None
+    back = store.save_client({"state": "Ativo"}, cid)
+    # a new cycle: the old payment stays in the ledger but no longer anchors anything
+    assert back["billing"]["status"] == "awaiting_first" and len(back["payments"]) == 1
+    with store.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM billing WHERE client=?", (cid,)).fetchone()[0] == 2
+
+
+def test_not_billed_means_no_cycle_and_no_panel_row(store, client):
+    cid = client["id"]
+    off = store.set_billing(cid, {"billed": False}, None)
+    assert off["billed"] == 0 and off["billing"] is None
+    assert store.finance()["clients"] == []
+    on = store.set_billing(cid, {"billed": True, "amount": "250"}, None)
+    assert on["billing"]["amount"] == 250
+    with pytest.raises(Invalid):
+        store.set_billing(cid, {"amount": 0}, None)
+    with pytest.raises(NotFound):
+        store.set_billing(999, {"amount": 1}, None)
+
+
+def test_payments_are_voided_never_deleted(store, client):
+    cid = client["id"]
+    with store.db() as conn:  # 7 records, 8 is someone else
+        conn.execute("INSERT INTO account(id, name, handle) VALUES (7, 'Piero', 'h7')")
+        conn.execute("INSERT INTO account(id, name, handle) VALUES (8, 'Renato', 'h8')")
+    c = store.add_payment(cid, {"paid_on": "2026-10-29", "amount": "100", "method": "Pix"}, 7)
+    pid = c["payments"][0]["id"]
+    assert c["payments"][0] == {
+        **c["payments"][0],
+        "amount": 100,
+        "method": "Pix",
+        "recorded_by": 7,
+    }
+    with pytest.raises(Invalid):  # not the recorder, not an admin
+        store.void_payment(pid, 8, admin=False)
+    c = store.void_payment(pid, 8, admin=True)
+    assert c["payments"][0]["voided_by"] == 8 and c["payments"][0]["voided_at"]
+    assert c["billing"]["status"] == "awaiting_first"  # the anchor went with it
+    with pytest.raises(Invalid):
+        store.void_payment(pid, 8, admin=True)
+    with pytest.raises(NotFound):
+        store.void_payment(999, 8, admin=True)
+    c = store.add_payment(cid, {"paid_on": "2026-10-30", "amount": 100}, 7)
+    assert store.void_payment(c["payments"][0]["id"], 7, admin=False)["billing"]["anchor"] is None
+
+
+def test_payment_validation(store, client):
+    cid = client["id"]
+    for bad in (
+        {"paid_on": "", "amount": 1},
+        {"paid_on": "2026-10-29"},
+        {"paid_on": "2026-10-29", "amount": 0},
+        {"paid_on": "2026-10-29", "amount": "abc"},
+        {"paid_on": "2999-01-01", "amount": 1},
+    ):
+        with pytest.raises(Invalid):
+            store.add_payment(cid, bad, None)
+    with pytest.raises(NotFound):
+        store.add_payment(999, {"paid_on": "2026-10-29", "amount": 1}, None)
+
+
+def test_the_panel(store):
+    # dates relative to today: the ledger refuses payments in the future
+    today = date.today()
+    ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    a = store.save_client({"name": "Em dia"})
+    b = store.save_client({"name": "Atrasado"})
+    c = store.save_client({"name": "Esperando"})
+    store.save_client({"name": "Pausado", "state": "Pausado"})
+    store.add_payment(a["id"], {"paid_on": ago(10), "amount": 100}, None)
+    store.add_payment(b["id"], {"paid_on": ago(70), "amount": 100}, None)
+    store.add_payment(b["id"], {"paid_on": ago(40), "amount": 100}, None)
+    panel = store.finance()
+    assert [r["name"] for r in panel["clients"]] == ["Atrasado", "Esperando", "Em dia"]
+    assert panel["counts"] == {"late": 1, "due": 0, "due_soon": 0, "awaiting_first": 1, "paid": 1}
+    assert panel["received_total"] == 300 and panel["today"] == today.isoformat()
+    assert panel["owed"] == 100 and panel["currency"] == "BRL"
+    late = panel["clients"][0]
+    assert late["next_due"] == add_months(today - timedelta(days=70), 2).isoformat()
+    assert late["months_active"] == 3
+    assert late["last_payment"] == {"paid_on": ago(40), "amount": 100}
+    assert panel["clients"][2]["last_payment"]["paid_on"] == ago(10)
+    assert c["billing"]["status"] == "awaiting_first"
+
+
+def test_deleting_a_client_takes_its_ledger(store, client):
+    store.add_payment(client["id"], {"paid_on": "2026-10-29", "amount": 100}, None)
+    store.delete_client(client["id"])
+    with store.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM payment").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM billing").fetchone()[0] == 0
+
+
+def test_schema_v6_opens_a_cycle_for_every_active_client(tmp_path):
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript(
+        "CREATE TABLE client (id INTEGER PRIMARY KEY, name TEXT NOT NULL, segment TEXT NOT NULL "
+        "DEFAULT '', contact TEXT NOT NULL DEFAULT '', whatsapp TEXT NOT NULL DEFAULT '', "
+        "instagram TEXT NOT NULL DEFAULT '', ad_account TEXT NOT NULL DEFAULT '', access TEXT NOT "
+        "NULL DEFAULT 'Pendente', drive_url TEXT NOT NULL DEFAULT '', ads_page TEXT NOT NULL "
+        "DEFAULT '', since TEXT, state TEXT NOT NULL DEFAULT 'Ativo', notes TEXT NOT NULL DEFAULT "
+        "'', created TEXT NOT NULL DEFAULT (datetime('now')), updated TEXT NOT NULL DEFAULT "
+        "(datetime('now')));"
+        "INSERT INTO client(name) VALUES ('Ativo antigo');"
+        "INSERT INTO client(name, state) VALUES ('Encerrado antigo', 'Encerrado');"
+    )
+    conn.commit()
+    conn.close()
+    store = Store(tmp_path / "old.db")
+    assert store.client(1)["billing"]["status"] == "awaiting_first"
+    assert store.client(2)["billing"] is None
+    Store(tmp_path / "old.db")  # opening again doesn't double the cycles
+    with store.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM billing").fetchone()[0] == 1

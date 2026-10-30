@@ -61,6 +61,13 @@ class Reply(Exception):
         self.status, self.doc = status, doc
 
 
+def finance_visible(viewer: dict, settings: dict) -> bool:
+    """Who sees money: everyone, or admins only, per the team's setting; nobody when off."""
+    if not settings.get("enabled"):
+        return False
+    return settings.get("visibility") == "all" or bool(viewer.get("is_admin"))
+
+
 def make_handler(
     store: Store,
     auth: Auth,
@@ -382,6 +389,7 @@ def make_handler(
         @route("GET", "/api/boot")
         def boot(self, viewer, _body):
             everyone = store.members()
+            fin = store.finance_settings()
             members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["disabled"]]
             # Gravatar ids by account, for avatars on requests and the timeline
             avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
@@ -396,6 +404,7 @@ def make_handler(
                     "connected": drive.connected,
                     "max_mb": drive.max_bytes // (1024 * 1024),
                 },
+                "finance": {**fin, "visible": finance_visible(viewer, fin)},
             }
 
         @route("GET", "/api/export", "admin")
@@ -404,6 +413,8 @@ def make_handler(
                 "exported": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "clients": store.clients(),
                 "requests": [store.request(r["id"]) for r in store.requests()],
+                "finance": store.finance_settings(),
+                "payments": [p for c in store.clients() for p in store.client(c["id"])["payments"]],
             }
 
         # ---- requests ---------------------------------------------------------------------
@@ -487,15 +498,60 @@ def make_handler(
 
         @route("POST", "/api/clients")
         def new_client(self, viewer, body):
-            return store.save_client(body)
+            body.pop("billed", None)
+            return self._client_for(viewer, store.save_client(body, by=viewer["account"]))
 
         @route("GET", f"/api/clients/{ID}")
         def get_client(self, viewer, _body, cid):
-            return store.client(int(cid))
+            return self._client_for(viewer, store.client(int(cid)))
 
         @route("PATCH", f"/api/clients/{ID}")
         def edit_client(self, viewer, body, cid):
-            return store.save_client(body, int(cid))
+            body.pop("billed", None)  # that one goes through /billing, with the finance check
+            return self._client_for(viewer, store.save_client(body, int(cid), viewer["account"]))
+
+        def _client_for(self, viewer, client: dict) -> dict:
+            if not finance_visible(viewer, store.finance_settings()):
+                client = {**client, "billing": None, "payments": []}
+            return client
+
+        # ---- finance (decision 7) ---------------------------------------------------------
+
+        def _finance(self, viewer):
+            """Every finance route: 404 when the module is off, 403 when this person may not."""
+            fin = store.finance_settings()
+            if not fin["enabled"]:
+                raise Reply(404, {"error": "o financeiro está desligado"})
+            if not finance_visible(viewer, fin):
+                raise Reply(403, {"error": "só administradores veem o financeiro"})
+
+        @route("GET", "/api/finance")
+        def finance_panel(self, viewer, _body):
+            self._finance(viewer)
+            return store.finance()
+
+        @route("GET", "/api/finance/settings", "admin")
+        def finance_settings(self, viewer, _body):
+            return store.finance_settings()
+
+        @route("PATCH", "/api/finance/settings", "admin")
+        def edit_finance_settings(self, viewer, body):
+            return store.set_finance_settings(body)
+
+        @route("PATCH", f"/api/clients/{ID}/billing")
+        def edit_billing(self, viewer, body, cid):
+            self._finance(viewer)
+            return store.set_billing(int(cid), body, viewer["account"])
+
+        @route("POST", f"/api/clients/{ID}/payments")
+        def add_payment(self, viewer, body, cid):
+            self._finance(viewer)
+            return store.add_payment(int(cid), body, viewer["account"])
+
+        @route("DELETE", f"/api/payments/{ID}")
+        def void_payment(self, viewer, _body, pid):
+            self._finance(viewer)
+            return store.void_payment(int(pid), viewer["account"], viewer["is_admin"])
 
         @route("DELETE", f"/api/clients/{ID}", "admin")
         def delete_client(self, viewer, _body, cid):
