@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import re
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+from . import finance
+
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -80,6 +83,25 @@ CREATE INDEX IF NOT EXISTS file_request ON file(request);
 CREATE TABLE IF NOT EXISTS option (
     list TEXT NOT NULL, value TEXT NOT NULL, pos INTEGER NOT NULL, PRIMARY KEY (list, value)
 );
+CREATE TABLE IF NOT EXISTS setting (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS billing (
+    id INTEGER PRIMARY KEY, client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    cents INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'BRL',
+    started TEXT, ended TEXT,
+    created_by INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS billing_client ON billing(client, ended);
+CREATE TABLE IF NOT EXISTS payment (
+    id INTEGER PRIMARY KEY, client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    billing INTEGER REFERENCES billing(id) ON DELETE SET NULL,
+    paid_on TEXT NOT NULL, cents INTEGER NOT NULL,
+    method TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
+    recorded_by INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now')),
+    voided_by INTEGER REFERENCES account(id), voided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS payment_client ON payment(client, paid_on);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -226,6 +248,33 @@ def _money(v, _db):
     return n
 
 
+def _cents(v, db):
+    """Money for the ledger: the same input as `_money`, stored as integer cents."""
+    n = _money(v, db)
+    if n is None:
+        raise Invalid("informe o valor")
+    return round(n * 100)
+
+
+def _int_range(lo, hi, label):
+    def check(v, _db):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            raise Invalid(f"{label} precisa ser um número") from None
+        if not lo <= n <= hi:
+            raise Invalid(f"{label} fora do intervalo ({lo} a {hi})")
+        return n
+
+    return check
+
+
+def _bool(v, _db):
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "sim", "yes", "on")
+    return bool(v)
+
+
 def _choice(options, blank=False):
     def check(v, _db):
         v = str(v or "").strip()
@@ -271,6 +320,28 @@ CLIENT_FIELDS = {
     "since": _date,
     "state": _choice(CLIENT_STATES),
     "notes": _long(4000),
+    "billed": _bool,
+}
+
+# Equipe → Financeiro (decision 7); the defaults are in finance.DEFAULTS
+FINANCE_FIELDS = {
+    "enabled": _bool,
+    "currency": _choice(finance.CURRENCIES),
+    "amount": _money,
+    "cadence": _choice(finance.CADENCES),
+    "anchor": _choice(finance.ANCHORS),
+    "fixed_day": _int_range(1, 28, "o dia fixo"),
+    "due_soon_days": _int_range(0, 60, "o aviso de vencimento"),
+    "grace_days": _int_range(0, 60, "a tolerância"),
+    "visibility": _choice(finance.VISIBILITIES),
+    "bill_new_clients": _bool,
+}
+
+PAYMENT_FIELDS = {
+    "paid_on": _date,
+    "amount": _cents,
+    "method": _text(30),
+    "note": _text(200),
 }
 
 REQUEST_FIELDS = {
@@ -352,6 +423,11 @@ class Store:
             cols = {r[1] for r in db.execute("PRAGMA table_info(client)")}
             if "ads_page" not in cols:
                 db.execute("ALTER TABLE client ADD COLUMN ads_page TEXT NOT NULL DEFAULT ''")
+            # v6: the ledger (decision 7); every Ativo client starts billed, with an open cycle
+            if "billed" not in cols:
+                db.execute("ALTER TABLE client ADD COLUMN billed INTEGER NOT NULL DEFAULT 1")
+            for row in db.execute("SELECT id FROM client WHERE state='Ativo' AND billed"):
+                self._open_cycle(db, row[0], None)
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -447,10 +523,13 @@ class Store:
             if not row:
                 raise NotFound("cliente não encontrado")
             reqs = self._requests(db, "WHERE r.client=?", (cid,))
-        return {**dict(row), "requests": reqs}
+            billing = self._billing(db, dict(row))
+            payments = self._payments(db, cid)
+        return {**dict(row), "requests": reqs, "billing": billing, "payments": payments}
 
-    def save_client(self, data: dict, cid: int | None = None) -> dict:
+    def save_client(self, data: dict, cid: int | None = None, by: int | None = None) -> dict:
         with self.db() as db:
+            cid_was_new = cid is None
             vals = clean(CLIENT_FIELDS, data, db, partial=cid is not None)
             if cid is None or "name" in vals:
                 if not vals.get("name"):
@@ -462,6 +541,7 @@ class Store:
                 if clash:
                     raise Invalid("já existe um cliente com esse nome")
             if cid is None:
+                vals.setdefault("billed", self._settings(db)["bill_new_clients"])
                 cols = ", ".join(vals)
                 marks = ", ".join("?" for _ in vals)
                 cid = db.execute(
@@ -476,6 +556,8 @@ class Store:
                         f"UPDATE client SET {sets}, updated=datetime('now') WHERE id=?",
                         (*vals.values(), cid),
                     )
+            if cid_was_new or "state" in vals or "billed" in vals:
+                self._sync_cycle(db, cid, by)
         return self.client(cid)
 
     def delete_client(self, cid: int, with_requests: bool = False) -> int:
@@ -490,6 +572,256 @@ class Store:
             db.execute("DELETE FROM request WHERE client=?", (cid,))  # events cascade
             db.execute("DELETE FROM client WHERE id=?", (cid,))
         return n
+
+    # ---- finance (decision 7) ---------------------------------------------------------------
+
+    @staticmethod
+    def _settings(db) -> dict:
+        row = db.execute("SELECT value FROM setting WHERE key='finance'").fetchone()
+        saved = json.loads(row[0]) if row else {}
+        return {**finance.DEFAULTS, **{k: v for k, v in saved.items() if k in finance.DEFAULTS}}
+
+    def finance_settings(self) -> dict:
+        with self.db() as db:
+            return self._settings(db)
+
+    def set_finance_settings(self, data: dict) -> dict:
+        with self.db() as db:
+            vals = clean(FINANCE_FIELDS, data, db, partial=True)
+            if "amount" in vals and vals["amount"] is None:
+                raise Invalid("informe o valor padrão")
+            merged = {**self._settings(db), **vals}
+            db.execute(
+                "INSERT OR REPLACE INTO setting(key, value) VALUES ('finance', ?)",
+                (json.dumps(merged),),
+            )
+            return merged
+
+    @staticmethod
+    def _open_cycle(db, cid: int, by: int | None) -> None:
+        """One open cycle per client: a no-op when there is one already."""
+        if db.execute("SELECT 1 FROM billing WHERE client=? AND ended IS NULL", (cid,)).fetchone():
+            return
+        settings = Store._settings(db)
+        db.execute(
+            "INSERT INTO billing(client, cents, currency, created_by) VALUES (?,?,?,?)",
+            (cid, round(float(settings["amount"]) * 100), settings["currency"], by),
+        )
+
+    @staticmethod
+    def _close_cycle(db, cid: int) -> None:
+        db.execute("UPDATE billing SET ended=date('now') WHERE client=? AND ended IS NULL", (cid,))
+
+    def _sync_cycle(self, db, cid: int, by: int | None) -> None:
+        """Ativo and billed means an open cycle; anything else closes it. Coming back opens a
+        new one, so the month count and the day restart (decision 7)."""
+        row = db.execute("SELECT state, billed FROM client WHERE id=?", (cid,)).fetchone()
+        if row["state"] == "Ativo" and row["billed"]:
+            self._open_cycle(db, cid, by)
+        else:
+            self._close_cycle(db, cid)
+
+    @staticmethod
+    def _cycle_payments(db, bid: int) -> list[tuple[date, int]]:
+        rows = db.execute(
+            "SELECT paid_on, cents FROM payment WHERE billing=? AND voided_at IS NULL "
+            "ORDER BY paid_on, id",
+            (bid,),
+        ).fetchall()
+        return [(date.fromisoformat(r["paid_on"]), r["cents"]) for r in rows]
+
+    def _billing(self, db, client: dict, today: date | None = None) -> dict | None:
+        """The client's open cycle and where it stands, or None when not billed/not Ativo."""
+        cycle = db.execute(
+            "SELECT * FROM billing WHERE client=? AND ended IS NULL", (client["id"],)
+        ).fetchone()
+        if not cycle:
+            return None
+        settings = self._settings(db)
+        payments = self._cycle_payments(db, cycle["id"])
+        anchor = finance.resolve_anchor(
+            settings,
+            first_payment=payments[0][0] if payments else None,
+            since=date.fromisoformat(client["since"]) if client.get("since") else None,
+            opened=date.fromisoformat(cycle["created"][:10]),
+            started=date.fromisoformat(cycle["started"]) if cycle["started"] else None,
+        )
+        st = finance.standing(
+            settings,
+            cents=cycle["cents"],
+            anchor=anchor,
+            payments=payments,
+            today=today or date.today(),
+        )
+        return {
+            "id": cycle["id"],
+            "amount": cycle["cents"] / 100,
+            "currency": cycle["currency"],
+            "opened": cycle["created"][:10],
+            **st.as_dict(),
+        }
+
+    @staticmethod
+    def _payments(db, cid: int) -> list[dict]:
+        rows = db.execute(
+            "SELECT p.id, p.billing, p.paid_on, p.cents, p.method, p.note, p.recorded_by, "
+            "p.created, p.voided_by, p.voided_at, a.name AS recorded_by_name, "
+            "v.name AS voided_by_name FROM payment p "
+            "LEFT JOIN account a ON a.id=p.recorded_by LEFT JOIN account v ON v.id=p.voided_by "
+            "WHERE p.client=? ORDER BY p.paid_on DESC, p.id DESC",
+            (cid,),
+        ).fetchall()
+        out = []
+        for r in map(dict, rows):
+            r["amount"] = r.pop("cents") / 100
+            out.append(r)
+        return out
+
+    def set_billing(self, cid: int, data: dict, by: int | None) -> dict:
+        """The client's fee (on its open cycle) and whether it is billed at all."""
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM client WHERE id=?", (cid,)).fetchone():
+                raise NotFound("cliente não encontrado")
+            if "billed" in data:
+                db.execute(
+                    "UPDATE client SET billed=?, updated=datetime('now') WHERE id=?",
+                    (_bool(data["billed"], db), cid),
+                )
+                self._sync_cycle(db, cid, by)
+            if "amount" in data:
+                cents = _cents(data["amount"], db)
+                if cents <= 0:
+                    raise Invalid("o valor precisa ser maior que zero")
+                db.execute(
+                    "UPDATE billing SET cents=? WHERE client=? AND ended IS NULL", (cents, cid)
+                )
+        return self.client(cid)
+
+    def add_payment(self, cid: int, data: dict, by: int | None) -> dict:
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM client WHERE id=?", (cid,)).fetchone():
+                raise NotFound("cliente não encontrado")
+            vals = clean(PAYMENT_FIELDS, data, db, partial=False)
+            if not vals.get("paid_on"):
+                raise Invalid("informe a data do pagamento")
+            if "amount" not in vals:
+                raise Invalid("informe o valor")
+            if vals["amount"] <= 0:
+                raise Invalid("o valor precisa ser maior que zero")
+            if vals["paid_on"] > (date.today() + timedelta(days=1)).isoformat():
+                raise Invalid("a data do pagamento não pode estar no futuro")
+            cycle = db.execute(
+                "SELECT id FROM billing WHERE client=? AND ended IS NULL", (cid,)
+            ).fetchone()
+            db.execute(
+                "INSERT INTO payment(client, billing, paid_on, cents, method, note, recorded_by) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    cid,
+                    cycle["id"] if cycle else None,
+                    vals["paid_on"],
+                    vals["amount"],
+                    vals.get("method", ""),
+                    vals.get("note", ""),
+                    by,
+                ),
+            )
+        return self.client(cid)
+
+    def void_payment(self, pid: int, by: int | None, admin: bool) -> dict:
+        """Payments are never deleted: whoever recorded one, or an admin, voids it."""
+        with self.db() as db:
+            row = db.execute("SELECT * FROM payment WHERE id=?", (pid,)).fetchone()
+            if not row:
+                raise NotFound("pagamento não encontrado")
+            if row["voided_at"]:
+                raise Invalid("esse pagamento já foi anulado")
+            if not admin and (by is None or row["recorded_by"] != by):
+                raise Invalid("só quem registrou o pagamento, ou um administrador, pode anular")
+            db.execute(
+                "UPDATE payment SET voided_by=?, voided_at=datetime('now') WHERE id=?", (by, pid)
+            )
+            cid = row["client"]
+        return self.client(cid)
+
+    def finance(self, today: date | None = None, month: str | None = None) -> dict:
+        """The panel: every Ativo, billed client and where it stands, plus what came in each
+        month and the payments of `month` (default: this one)."""
+        today = today or date.today()
+        if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+            raise Invalid("mês inválido, use AAAA-MM")
+        this_month = today.strftime("%Y-%m")
+        month = month or this_month
+        with self.db() as db:
+            clients = db.execute(
+                "SELECT * FROM client WHERE state='Ativo' AND billed ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+            rows = []
+            for c in map(dict, clients):
+                b = self._billing(db, c, today)
+                if not b:
+                    continue
+                last = db.execute(
+                    "SELECT paid_on, cents FROM payment WHERE client=? AND voided_at IS NULL "
+                    "ORDER BY paid_on DESC, id DESC LIMIT 1",
+                    (c["id"],),
+                ).fetchone()
+                rows.append(
+                    {
+                        "id": c["id"],
+                        "name": c["name"],
+                        "segment": c["segment"],
+                        "since": c["since"],
+                        "last_payment": (
+                            {"paid_on": last["paid_on"], "amount": last["cents"] / 100}
+                            if last
+                            else None
+                        ),
+                        **b,
+                    }
+                )
+            # every month with a live payment, newest first; this month and the asked one
+            # are always there so the picker has something to land on
+            months = {
+                r["m"]: {"month": r["m"], "received": r["cents"] / 100, "payments": r["n"]}
+                for r in db.execute(
+                    "SELECT substr(paid_on, 1, 7) AS m, SUM(cents) AS cents, COUNT(*) AS n "
+                    "FROM payment WHERE voided_at IS NULL GROUP BY m"
+                ).fetchall()
+            }
+            for m in (this_month, month):
+                months.setdefault(m, {"month": m, "received": 0, "payments": 0})
+            payments = [
+                {**dict(r), "amount": r["cents"] / 100}
+                for r in db.execute(
+                    "SELECT p.id, p.client, c.name, p.paid_on, p.cents, p.method, p.note "
+                    "FROM payment p JOIN client c ON c.id=p.client "
+                    "WHERE p.voided_at IS NULL AND substr(p.paid_on, 1, 7)=? "
+                    "ORDER BY p.paid_on DESC, p.id DESC",
+                    (month,),
+                ).fetchall()
+            ]
+            for p in payments:
+                del p["cents"]
+            received_total = db.execute(
+                "SELECT COALESCE(SUM(cents), 0) FROM payment WHERE voided_at IS NULL"
+            ).fetchone()[0]
+            settings = self._settings(db)
+        order = {s: i for i, s in enumerate(finance.STATUSES)}
+        rows.sort(key=lambda r: (order[r["status"]], r["next_due"] or "", r["name"].casefold()))
+        return {
+            "today": today.isoformat(),
+            "month": month,
+            "currency": settings["currency"],
+            "cadence": settings["cadence"],
+            "received_month": months[month]["received"],
+            "received_total": received_total / 100,
+            "months": sorted(months.values(), key=lambda m: m["month"], reverse=True),
+            "payments": payments,
+            "owed": sum(r["owed"] for r in rows),
+            "counts": {s: sum(1 for r in rows if r["status"] == s) for s in finance.STATUSES},
+            "clients": rows,
+        }
 
     # ---- requests ---------------------------------------------------------------------------
 

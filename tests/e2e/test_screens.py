@@ -18,6 +18,7 @@ SCREENS = {
     "#/clientes": "Clientes",
     "#/cliente/1": "Clínica Bem Estar",
     "#/cliente/novo": "Novo cliente",
+    "#/financeiro": "Financeiro",
     "#/equipe": "Equipe",
 }
 
