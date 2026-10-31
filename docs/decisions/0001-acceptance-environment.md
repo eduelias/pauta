@@ -3,6 +3,8 @@
 - **Status:** accepted, not built yet (decided 2026-10-28; build it when needed)
 - **Depends on:** the domain choice. If Pauta moves off `genic.dev`, build acceptance on the
   new domain directly.
+- **Amended by:** decision 8 (proposed): one real client's ad account, unnamed and with no
+  contacts, may live on acceptance for testing the Meta integration.
 
 ## Context
 
