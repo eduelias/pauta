@@ -253,6 +253,16 @@ spike decides.
   https://developers.facebook.com/blog/post/2025/08/15/page-insights-api-updates/
 - mLabs prices: https://www.mlabs.com.br/blog/mlabs-planos/; Windsor.ai: https://windsor.ai/pricing/
 
+## Spike result (2026-10-31, on acceptance)
+
+Piero connected through Pauta's own "Conectar Meta" (eduelias/pauta#19, not curl), in
+development mode, on the Limited tier, as a Tester of Du7's app. Pauta read his one chosen
+ad account: active, with this month's spend, impressions, reach, link clicks and cost per
+click. So **development mode reads it; App Review is not needed to go on.** The balance was
+refused with ANALYZE, as expected: it needs the wider task (see "Saldo"). One field also
+needs more than `ads_read`: `business{name}` on ad accounts asks for `business_management`,
+so Pauta doesn't request it (the portfolio's name comes from `client_business_id`).
+
 ## Open questions
 
 Answered by Piero on 2026-10-31, in two rounds: portfolio = the client's Meta business
