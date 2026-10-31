@@ -7,6 +7,32 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-30
+
+### Fixed
+
+- Financeiro: o botão Registrar do painel registrava o pagamento no cliente errado (ou dava
+  "cliente não encontrado") quando o número do ciclo de cobrança não coincidia com o do
+  cliente, o que acontece assim que alguém é pausado e volta. O painel agora leva o número
+  do cliente; confira os pagamentos registrados pelo painel na 1.5.0.
+
+## [1.5.0] - 2026-10-30
+
+### Added
+
+- Financeiro: uma aba nova (depois de Clientes; no celular ela entra no lugar do Quadro) com
+  quem está em dia, em atraso, vencendo na semana e esperando o primeiro pagamento, e o
+  recebido no mês. Cada cliente Ativo tem um valor por mês; o mês dele começa no primeiro
+  pagamento registrado (ou na data "cliente desde", ou num dia fixo: escolha em Equipe →
+  Financeiro), e o painel mostra em que mês de vida ele está ("4º mês"). Pausar ou encerrar
+  tira o cliente do painel; ao voltar, a contagem recomeça. Na página do cliente, um card
+  Pagamentos com o valor, a situação, a lista e o botão para registrar. Pagamentos nunca são
+  apagados, só anulados (por quem registrou ou um administrador). Equipe → Financeiro guarda
+  as regras do time: moeda, valor padrão, periodicidade, tolerância, aviso de vencimento e
+  quem pode ver. Os cartões do topo filtram a lista (toque em "Em atraso" e só eles
+  aparecem; toque de novo para ver todos) e "Recebido no mês" abre os pagamentos do mês,
+  com um seletor para ver quanto entrou em cada mês. Decisão 7.
+
 ## [1.4.0] - 2026-10-29
 
 ### Added
@@ -174,7 +200,9 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/eduelias/pauta/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/eduelias/pauta/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/eduelias/pauta/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/eduelias/pauta/compare/v1.2.2...v1.2.3

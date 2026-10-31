@@ -528,3 +528,56 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .quota div { height: 100%; background: var(--accent); }
 .warnbox { border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius-sm);
   padding: 8px 12px; font-size: 14px; }
+
+/* ---- financeiro (decision 7) ----------------------------------------------------------- */
+.stats.fin .stat .n { font-size: 26px; }
+/* the tiles are filters */
+.stats.fin .stat { cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+.stats.fin .stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.stats.fin .stat.on { border-color: var(--c, var(--accent)); box-shadow: 0 0 0 2px var(--c, var(--accent)), var(--shadow); }
+.stats.fin .stat.on .t { color: var(--ink); }
+.stats.fin .stat.on::after { opacity: .18; }
+#finmonthpanel .panel-head .input { width: auto; padding: 6px 10px; font-size: 14px; }
+#finmonthpanel .pay { grid-template-columns: auto auto 1fr; }
+#finmonthpanel .pay .m a { color: var(--ink); font-weight: 600; }
+#finmonthpanel .pay .m a:hover { color: var(--accent); }
+.head .btn.small { height: 34px; padding: 0 12px; font-size: 13px; }
+.fstatus { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px;
+  border-radius: 99px; font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.fstatus::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.fstatus.late { color: var(--danger); background: var(--danger-soft); }
+.fstatus.due, .fstatus.due_soon { color: var(--s-waiting); background: var(--s-waiting-bg); }
+.fstatus.awaiting_first { color: var(--s-todo); background: var(--s-todo-bg); }
+.fstatus.paid { color: var(--s-done); background: var(--s-done-bg); }
+.panel-head h2 .fstatus { font-size: 14px; height: 28px; }
+.finrows { display: flex; flex-direction: column; }
+.finrow { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.finrow:last-child { border-bottom: 0; }
+.finrow .who { flex: 1; min-width: 0; }
+.finrow .who a { color: var(--ink); }
+.finrow .who a:hover { color: var(--accent); }
+.finrow .who b, .finrow .who span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finrow .who span { font-size: 13px; color: var(--muted); }
+.finrow .when { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 13px; white-space: nowrap; }
+.finrow .btn.small { height: 32px; padding: 0 10px; font-size: 13px; }
+@media (max-width: 600px) {
+  .finrow { flex-wrap: wrap; }
+  .finrow .when { flex-direction: row; align-items: center; gap: 10px; width: 100%; padding-left: 48px; }
+  .finrow .btn.small { margin-left: auto; }
+  .head #finclear { display: none; }  /* tapping the lit tile again clears it */
+  #finmonthpanel .panel-head { flex-wrap: wrap; }
+  #finmonthpanel .panel-head .input { max-width: 100%; }
+}
+.paybox .panel-head h3 { display: flex; align-items: center; gap: 8px; }
+.paystand { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+.payfee { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.payfee label { font-size: 12.5px; font-weight: 650; color: var(--muted); white-space: nowrap; }
+.payfee .input { width: 110px; }
+.toggle.small { font-size: 13px; }
+.paylist { margin-top: 12px; border-top: 1px solid var(--line-2); }
+.pay { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.pay .v { font-weight: 650; }
+.pay .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pay.void .d, .pay.void .v, .pay.void .m { text-decoration: line-through; color: var(--faint); }
+.paytotal { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; }
