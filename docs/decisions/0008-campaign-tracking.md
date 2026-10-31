@@ -263,6 +263,24 @@ refused with ANALYZE, as expected: it needs the wider task (see "Saldo"). One fi
 needs more than `ads_read`: `business{name}` on ad accounts asks for `business_management`,
 so Pauta doesn't request it (the portfolio's name comes from `client_business_id`).
 
+### More than one ad account (Piero, 2026-10-31)
+
+Piero's next remark: "só tá aceitando uma conta"; the ideal is to connect each new client's
+account when he starts its campaign. The limit was ours, not Meta's: the token covers every
+account ticked in Meta's login and Pauta already listed them all, but once connected the
+panel offered only Atualizar and Desconectar (and the spike asked him to tick only one).
+**Adicionar contas** (eduelias/pauta#19) runs the login again; he ticks the old and the new
+accounts, since Meta's docs don't say whether a second login adds to the earlier choice or
+replaces it. The other way in needs no Pauta at all: Business Settings → Integrations →
+Connected apps → Pauta → add the account, then Atualizar. One connection per team stays
+the model: one system user in the agency's portfolio, reading every client account it is
+given; `meta_account` (above) ties each one to its Pauta client.
+
+Adding his other clients **on acceptance** goes past the one-client exception to decision 1
+("Tested on acceptance"). That is the owner's call: either acceptance becomes Piero's working
+place for the Meta numbers until phase 2 is released (and is treated like production for
+data: backups, access), or the next accounts wait for production.
+
 ## Open questions
 
 Answered by Piero on 2026-10-31, in two rounds: portfolio = the client's Meta business
