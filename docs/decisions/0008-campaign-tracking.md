@@ -103,18 +103,18 @@ daily spend, impressions, reach, frequency, clicks, CTR, CPC, CPM and "actions" 
 started, leads, purchases...) with their cost, plus breakdowns by age, gender, region,
 platform and placement, for 37 months back (13 for reach with breakdowns). It is free; the
 cost is setup and keeping up with Meta's yearly API versions. Piero's business portfolio
-already has the clients as partners and he is its admin, which is exactly the setup Meta
-expects: his portfolio gets a **system user** (a robot account, not his personal profile)
-with access to the clients' ad accounts, and Pauta reads with that system user's token.
-System user tokens don't expire like personal ones (about 60 days), and Pauta never sees
-Piero's own login.
+already has the clients as partners and he is its admin. Pauta's Meta app belongs to Du7,
+whose business is verified; Piero connects his portfolio to it with one login, Meta creates a
+**system user** (a robot account, not his personal profile) in his portfolio with read
+access to the clients' ad accounts, and Pauta reads with that system user's token. The token
+doesn't expire like personal ones (about 60 days), and Pauta never sees Piero's own login.
 
 | Topic | Decision |
 |---|---|
-| Step 0: the spike | Before any code, with Piero (the admin) and the owner together, signed in with Piero's profile: on developers.facebook.com, register as a developer and create a **Business**-type app linked to Piero's business portfolio, and add the Marketing API product (it starts on the **Limited** tier). In business.facebook.com → Configurações da empresa → Usuários → **Usuários do sistema**, create one regular system user, add the app to it, assign it one client's ad account with "Ver desempenho", and **Gerar token** with `ads_read` and expiry "Nunca". That token is the "key" Piero expected. Then read that account's current month with one `curl` to `/act_<id>/insights?level=campaign&time_increment=1` on v26.0. In the same hour: check the token's real expiry with Meta's token debugger; try the balance with "Ver desempenho", then with "Gerenciar campanhas" (see "Saldo"); check whether Ads Insights has a "views" field or still only `impressions`; check that link clicks to WhatsApp destinations are counted (see "Lead"). Pass = numbers come back on Limited, unverified. If they don't, phase 2 needs business verification first (Meta asks for the company's documents, CNPJ, a matching domain or phone) and then App Review, or the team buys a tool (Alternatives) |
-| Whose Meta app | Phase 2 is for **this** team: the app and the system user belong to Piero's business portfolio, so Pauta reads accounts that portfolio has been given. A Pauta-owned app that every customer team connects with "Login do Facebook para empresas" is the decision-6 version: it needs Full access, App Review and business verification of Du7, so it is a decision of its own, taken when a second team asks |
-| Access tier | Start on **Limited**; Piero's portfolio isn't business-verified, so Limited is the only tier open to it for now (Full needs App Review, which needs verification). Meta calls Limited "for development", its wording says apps reading "other people's ad accounts" need advanced access, and its app settings say an unverified business "can't access data you don't own"; whether partner-shared client accounts read by the agency's own system user count is not settled in Meta's docs. That is the spike's main question, and the most likely reason for it to fail. A sync every hour over tens of accounts is far inside Limited's quota (600 + 400 × active ads per hour per account). Moving to **Full** needs App Review, 500 successful calls in 15 days and under 15% errors; plan for it if Meta pushes back, and add the privacy policy, terms and data-deletion instructions URLs Meta wants for Live mode or review anyway (decision 5's legal texts on the public site cover them) |
-| Token | A file next to the team's DB, `pauta.db.meta-token`, mode 600, like the OneDrive token (decision 3): never in the DB, its backups, the export or the logs. An admin pastes it on Equipe → Meta; the field is write-only, and Pauta only shows "conectado", the portfolio it belongs to and its expiry (from `debug_token`). One token per team under decision 5 |
+| Step 0: the spike | Before any code, Piero and the owner together. Piero gets a role on the Pauta app (Testers or Developers: in development mode Meta only shows the login to people with a role), then signs in through the login configuration with a throwaway local page or a `curl`-built URL, picks his portfolio and one client's ad account, and the owner exchanges the code for the token by hand and reads that account's current month with one `curl` to `/act_<id>/insights?level=campaign&time_increment=1` on v26.0. In the same hour: check the token with Meta's token debugger; try the balance with ANALYZE, and if it is refused note it (see "Saldo"); check whether Ads Insights has a "views" field or still only `impressions`; check that link clicks to WhatsApp destinations are counted (see "Lead"). Pass = numbers for a partner-shared client account come back in development mode. If not: App Review for Advanced `ads_read` under Du7 (verified), which needs the Tech Provider step, a screencast and the pauta.cc privacy, terms and data-deletion pages; or buy a tool (Alternatives) |
+| Whose Meta app | **Du7's.** Registered 2026-10-31: app **Pauta**, App ID `1767206382079558`, owned by Du7 Technology Services (business-verified), use case "Measure ad performance data with Marketing API", development mode, contact du7@msn.com. A verified owner is what lets an app reach data from other businesses' portfolios and go through App Review, which Piero's unverified portfolio couldn't. Each team connects its **own** portfolio to this one app with **Facebook Login for Business** (configuration "Pauta - leitura de anuncios", ID `1649862390172470`: system-user token, no expiry, ad accounts required, task ANALYZE only, permission `ads_read` only; redirect `https://pauta.cc/api/meta/callback`, strict, HTTPS). Meta then creates a system user inside the team's portfolio and hands Pauta its token. This is also decision 6's model, so it is built once. The App Secret stays in Meta and the owner's 1Password; it reaches the server as a file next to the DB like the token, never the repo |
+| Access tier | Start on **Limited** (what the app has now), with `ads_read` at standard access: "ready for testing", for people with a role on the app. Meta calls Limited "for development", and its wording says apps reading "other people's ad accounts" need advanced access; whether a partner-shared client account read through the team's own portfolio counts is not settled in Meta's docs, and the spike decides it. With Du7 verified, the way up is open: App Review for Advanced `ads_read` (Meta's dashboard asks the app to become a Tech Provider first), and Full tier later if the rate limits ever bite (500 calls in 15 days, under 15% errors). A sync every hour over tens of accounts is far inside Limited's quota (600 + 400 × active ads per hour per account) |
+| Token | Piero clicks **Conectar Meta** on Equipe → Meta; Facebook Login for Business sends him back to `/api/meta/callback` with a code; Pauta exchanges it (with the App Secret) for the system-user token and keeps it in a file next to the team's DB, `pauta.db.meta-token`, mode 600, like the OneDrive token (decision 3): never in the DB, its backups, the export or the logs. Pauta shows only "conectado", the portfolio and the token's state (from `debug_token`). The token doesn't expire; Piero revokes it under his Business Settings' connected apps, and Pauta reports that on Equipe and `/metrics`. One token per team under decision 5. The `state` parameter is bound to the admin's session, so a callback nobody started is refused |
 | Portfolios and ad accounts | **One client is one portfolio** (Piero), with one or more ad accounts. Additive: `client.meta_business` (the portfolio id, unique when set) and a table `meta_account`: `account_id`, `name`, `client`, `currency`, `timezone`, `status`, `seen`. Filled by listing every ad account the system user can read, with the portfolio that owns it. Each new portfolio is matched once to a Pauta client (suggested by name, confirmed by Piero); every ad account under it, now and later, follows. The client's existing `ad_account` field seeds the match and stays for clients without Meta. A client with no readable account shows "Meta: sem acesso", which turns the manual `access` field into something checked |
 | Live campaigns come from Meta | Each sync lists the campaigns of every account (`effective_status`). A campaign that is `ACTIVE` in Meta and has no Pauta campaign gets one automatically, under its client, linked by `campaign_meta(campaign, meta_id)`; when Meta stops delivering it (paused, ended, out of budget) the Pauta campaign follows. This is "via API ele trará todos os clientes conectados": the daily list fills itself. A done "Criar/Reativar campanha" request is linked to its Meta campaign when its `campaign_url` (an Ads Manager link) carries the id, or picked from a list |
 | Sync | `pauta meta sync`, on two timers (`pauta-meta-sync.timer`, a `deploy/` change next to the backup timer, owner-reviewed): **hourly**, today and yesterday for every live campaign, plus campaign statuses and account balances, so the numbers Piero checks in the morning are current; **nightly**, the last 28 days again, because conversions keep arriving for up to 28 days after a click. Older days are frozen. On first link, the campaign's history back to its start (Meta keeps 37 months). An **Atualizar agora** button, limited to once per 15 minutes. Backoff on Meta's throttle headers and error codes; nothing retries in a loop. `/metrics` gains `meta.{enabled,connected,error,last_sync}` for du7's watchdog |
@@ -144,19 +144,23 @@ this decision; it gets its own once phase 2 is in use and someone asks.
   unit tests, the routes, the Acompanhamento screen, the client card, browser tests. It is
   useful on its own and doesn't wait for anything at Meta.
 - Phase 2 is about 6–7 days of code after a spike that passes (the metric picker, the AI text,
-  the auto-created campaigns made it bigger than the first draft's 3–4),
-  plus Meta-side setup outside the code: the app and the system user in Piero's portfolio.
+  the auto-created campaigns and the login flow made it bigger than the first draft's 3–4).
+  The Meta app itself already exists (Du7's, see "Whose Meta app").
   The clients are already partners. Business verification, if Meta asks for it, can take
   days to weeks. It can ship in two releases: numbers, filters and cards first; analysis
   text and suggested metrics second.
 - Phase 2 depends on Meta's rules for the Limited tier, which Meta describes as for
-  development, and Piero's portfolio is not business-verified. If the spike fails, or Meta
-  tightens Limited later, the integration waits for business verification (company
-  documents, days to weeks) and App Review; the phase-1 list keeps working, since the
-  numbers are an addition to it, not its basis.
+  development. If the spike fails, or Meta tightens Limited later, the integration waits
+  for App Review under Du7 (verified already; the review itself takes days to weeks and
+  needs the pauta.cc legal pages); the phase-1 list keeps working, since the numbers are an
+  addition to it, not its basis.
+- The Meta app is Du7's: Du7 answers to Meta for it (data use checkups, policy mail to
+  du7@msn.com), and a problem with the app affects every team connected to it.
 - Reading the balance may need the system user to hold "Gerenciar campanhas" on each
-  client's account. The token's `ads_read` scope keeps Pauta read-only either way, but the
-  role would be wider than reading; if that is unwelcome, the balance stays manual.
+  client's account. The login configuration asks for ANALYZE only today; the wider task
+  would be a second configuration (ADVERTISE) and Piero reconnecting. The token's
+  `ads_read` scope keeps Pauta read-only either way, but the role would be wider than
+  reading; if that is unwelcome, the balance stays manual.
 - Counting every link click as a lead makes "Custo por lead" the same number as Meta's
   CPC (link), and lower than a cost per conversation or per form. That is the team's
   definition and the labels say so; the text for the client says "cliques" and Meta's
@@ -205,6 +209,10 @@ this decision; it gets its own once phase 2 is in use and someone asks.
 - **A local model for the text** (the house runs Ollama on a gaming PC): free and nothing
   leaves the house, but that machine is often busy or off, it is weaker at Portuguese
   writing, and decision 5 moves production off du7 to a server that can't reach it.
+- **The app in Piero's portfolio, with a system user he makes by hand** (this record's
+  first plan): no login flow to build, but his portfolio isn't verified, so App Review was
+  closed to it, and every future team would repeat the manual setup. Du7's verified app
+  with Facebook Login for Business does both jobs.
 - **Piero's personal token via Facebook Login:** no system user needed, but it expires in
   about 60 days, carries everything his profile can do, and dies when his access changes;
   the system user is the pattern Meta recommends for server-to-server reading.
@@ -251,15 +259,18 @@ portfolio, one per client, with one or more ad accounts; period filter defaultin
 current month; both "Criar" and "Reativar campanha"; a daily "seen" mark per client; the
 metrics above; a lead is any click to the ad's destination; the balance only to read; the
 text for the client written by an AI; his portfolio is not business-verified and the clients
-are partners in it.
+are partners in it. The owner then registered Pauta's Meta app under Du7's verified business
+(see "Whose Meta app").
 
 Still open:
 
-1. **The spike** (Piero and the owner, one hour, one client's account): does Limited work
-   for partner-shared accounts on an unverified portfolio, is the balance readable and with
-   which role, and does a WhatsApp click count as a link click.
-2. **If the spike fails** (owner and Piero): verify the business (does the agency have a
-   CNPJ and a domain or phone in its name?) or buy a tool for the numbers and keep phase 1.
+1. **The spike** (Piero and the owner, one hour, one client's account): Piero gets a role
+   on the Pauta app first. Does the login reach a partner-shared client account in
+   development mode, is the balance readable with ANALYZE, and does a WhatsApp click count
+   as a link click.
+2. **If the spike fails** (owner): App Review for Advanced `ads_read` under Du7 (Tech
+   Provider step, screencast, pauta.cc legal pages), or buy a tool for the numbers and keep
+   phase 1.
 3. **If the balance needs "Gerenciar campanhas"** (owner and Piero): accept the wider role
    for the system user, or keep the balance manual.
 4. **The AI key** (owner): whose Anthropic account pays, and the monthly cap on it.
