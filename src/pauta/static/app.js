@@ -1227,9 +1227,10 @@ async function viewTeam() {
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
+            ${ME.move && !m.disabled && !m.domains.includes(ME.move.to) ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>` : ""}
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
-        </div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
+        </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
       </section>
     </div>
     ${ME.is_admin && ME.auth ? `<section class="panel mt">
@@ -1264,6 +1265,7 @@ async function viewTeam() {
     try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
+  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name)));
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
@@ -1389,6 +1391,22 @@ function addMoveBar() {
   });
 }
 
+// An admin's link for someone who hasn't moved: sent on WhatsApp, it's one tap and Face ID
+async function makeMoveLink(id, name) {
+  const box = $(`#mv-${id}`);
+  try {
+    const mv = await api("POST", `/api/members/${id}/move`, {});
+    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    const msg = `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
+    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>Link de ${esc(firstName(name))} para ${esc(mv.to)}</b>
+      <div class="muted small">Só para ${esc(firstName(name))}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+      <code class="invlink">${esc(mv.url)}</code>
+      <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
+      <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
+    bindCopy(box);
+  } catch (e) { toast(e.message, true); }
+}
+
 // On the new address: make a passkey for the same account, then in
 async function showMove(token) {
   const to = ME.move?.to || location.hostname;
@@ -1399,7 +1417,7 @@ async function showMove(token) {
   let info;
   try { info = await api("GET", `/api/move/${encodeURIComponent(token)}`); }
   catch (e) {
-    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
+    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
     return;
   }
   const g = gate(`<h1>Olá, ${esc(firstName(info.name))}!</h1>

@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__, obs
-from .auth import Auth, AuthError
+from .auth import MOVE_LINK_DAYS, Auth, AuthError
 from .db import Invalid, NotFound, Store
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
@@ -668,8 +668,19 @@ def make_handler(
                 raise Reply(400, {"error": "a Pauta não está mudando de endereço"})
             if hint["here"]:
                 raise Reply(400, {"error": f"você já está em {hint['to']}"})
-            token = auth.create_move(viewer["account"])
+            token, _ = auth.create_move(viewer["account"])
             return {"url": f"{hint['url']}/#/mudar/{token}"}
+
+        @route("POST", f"/api/members/{ID}/move", "admin")
+        def move_link(self, viewer, _body, mid):
+            """An admin's link for someone else: sent on WhatsApp, one tap and Face ID on the
+            home domain. Also the way back in after a lost phone."""
+            if not auth.enabled or not auth.home:
+                raise Reply(400, {"error": "links de mudança precisam de passkeys (PAUTA_AUTH)"})
+            token, expires = auth.create_move(
+                int(mid), MOVE_LINK_DAYS * 86400, created_by=viewer["account"]
+            )
+            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.rp_id}
 
         @route("GET", "/api/move/([A-Za-z0-9_-]{20,64})", "open")
         def move_info(self, viewer, _body, token):

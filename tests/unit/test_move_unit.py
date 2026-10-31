@@ -1,11 +1,13 @@
 """Moving to a new domain (decision 4): passkey domains per page, and the one-time link that
-lets a signed-in person make a passkey for the same account on the new domain."""
+lets a signed-in person (or an admin, for them) make a passkey for the same account on the new
+domain."""
 
 import sqlite3
+import time
 
 import pytest
 
-from pauta.auth import Auth, AuthError
+from pauta.auth import MOVE_LINK_DAYS, Auth, AuthError
 from pauta.db import Store
 from softpasskey import SoftPasskey
 
@@ -63,7 +65,7 @@ def test_moving_an_account(store, moving):
     hint = moving.move_hint(OLD, acc["id"])
     assert hint == {"to": "pauta.cc", "url": NEW, "here": False, "done": False}
 
-    token = moving.create_move(acc["id"])
+    token, _ = moving.create_move(acc["id"])
     assert moving.move_info(token) == {"name": "Renato", "to": "pauta.cc"}
     moved = move(moving, token, SoftPasskey("pauta.cc", NEW))
     assert moved["id"] == acc["id"]  # the same account, now with a passkey on both domains
@@ -87,7 +89,7 @@ def test_a_passkey_only_works_on_its_own_domain(moving):
     with pytest.raises(AuthError, match="não aceita"):
         moving.login_verify(opts["flow"], old_key.get(opts["options"], ""))
     # nor can a page on one domain register for the other
-    token = moving.create_move(1)
+    token, _ = moving.create_move(1)
     opts = moving.register_options(move=token, rp_id="pauta.cc")
     with pytest.raises(AuthError, match="não aceita"):
         moving.register_verify(opts["flow"], SoftPasskey("pauta.cc", OLD).create(opts["options"]))
@@ -95,19 +97,45 @@ def test_a_passkey_only_works_on_its_own_domain(moving):
 
 def test_move_links_expire_and_die_with_the_account(store, moving):
     acc, _ = join_old(moving)
-    token = moving.create_move(acc["id"])
+    token, _ = moving.create_move(acc["id"])
     opts = moving.register_options(move=token, rp_id="pauta.cc")
-    for m in moving._moves.values():
-        m["expires"] = 0
+    with store.db() as db:
+        db.execute("UPDATE invite SET expires=0")
     assert moving.move_info(token) is None
     with pytest.raises(AuthError, match="expirou"):  # expired between options and verify
         moving.register_verify(opts["flow"], SoftPasskey("pauta.cc", NEW).create(opts["options"]))
 
-    token = moving.create_move(acc["id"])
+    token, _ = moving.create_move(acc["id"])
     with store.db() as db:
         db.execute("UPDATE account SET disabled=1 WHERE id=?", (acc["id"],))
     assert moving.move_info(token) is None
     assert moving.move_info("not-a-token") is None
+    with pytest.raises(AuthError, match="desativada"):  # nor can a new one be made
+        moving.create_move(acc["id"])
+    with pytest.raises(AuthError, match="não existe"):
+        moving.create_move(99)
+
+
+def test_an_admin_link_lasts_days_and_survives_a_restart(store, moving):
+    acc, _ = join_old(moving)
+    token, expires = moving.create_move(acc["id"], MOVE_LINK_DAYS * 86400, created_by=acc["id"])
+    assert expires > time.time() + 2 * 86400
+    restarted = Auth(store, enabled=True, rp_id="pauta.cc,pauta.example", origins=[NEW, OLD])
+    assert restarted.move_info(token) == {"name": "Renato", "to": "pauta.cc"}
+    assert move(restarted, token, SoftPasskey("pauta.cc", NEW))["id"] == acc["id"]
+    assert restarted.move_info(token) is None
+
+
+def test_a_move_link_is_not_an_invite_and_an_invite_is_not_a_move_link(store, moving):
+    acc, _ = join_old(moving)
+    mtoken, _ = moving.create_move(acc["id"])
+    assert moving.invite_info(mtoken) is None
+    with pytest.raises(AuthError, match="convite"):  # it can't make a new account
+        moving.register_options(invite=mtoken, name="Intruso", rp_id="pauta.cc")
+    itoken, _ = moving.create_invite()
+    assert moving.move_info(itoken) is None
+    with pytest.raises(AuthError, match="expirou"):  # nor take over an existing one
+        moving.register_options(move=itoken, rp_id="pauta.cc")
 
 
 def test_old_passkeys_learn_their_domain_when_used(store, moving):
@@ -132,9 +160,13 @@ def test_a_database_from_before_the_move_gets_the_column(tmp_path):
             "created TEXT, last_used TEXT);"
             "INSERT INTO account(id, name, handle) VALUES (1, 'Ana', 'h');"
             "INSERT INTO passkey(id, account, public_key) VALUES ('k', 1, x'00');"
+            "CREATE TABLE invite (token_hash TEXT PRIMARY KEY, admin INTEGER NOT NULL DEFAULT 0, "
+            "max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, expires REAL NOT NULL, "
+            "created_by INTEGER, created TEXT);"
         )
     db.close()
     store = Store(path)
     with store.db() as conn:
         assert conn.execute("SELECT rp_id FROM passkey").fetchone()[0] == ""
+        assert "account" in {r[1] for r in conn.execute("PRAGMA table_info(invite)")}
     assert store.members()[0]["domains"] == []

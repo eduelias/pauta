@@ -72,10 +72,13 @@ passkey on `pauta.cc`, from inside their account on the old address. In order:
    daemon-reload`.
 4. **Release** the version with the move (`make release`). The deploy checks `pauta.cc`, so
    steps 2 and 3 come first.
-5. **Tell the team** on WhatsApp: open Pauta at the old address, tap *Mudar para pauta.cc*,
-   confirm with Face ID or the fingerprint, then add `pauta.cc` to the phone's home screen
-   (the old icon keeps opening the old address). `pauta users` and the Equipe page show who
-   has moved.
+5. **Move the team**: send each person their own link, which is one tap and Face ID. From
+   the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   A link works once, for 3 days, for that account only: send it to that person only.
+   Without a link, the bar on the old address does the same (*Mudar para pauta.cc*). Either
+   way, afterwards add `pauta.cc` to the phone's home screen (the old icon keeps opening the
+   old address). `pauta users` and the Equipe page show who has moved.
 6. **Close the old address** when everyone shows `pauta.cc`: in the unit, `PAUTA_RP_ID=pauta.cc`
    and `PAUTA_ORIGIN=https://pauta.cc`; in Caddy, the `pauta.genic.dev` block becomes
    `redir https://pauta.cc{uri} 301`. Keep the redirect (and the Squarespace record) for at
@@ -174,7 +177,8 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
-  ask an admin for a fresh invite and disable the old account. Disabling ends every session
+  an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
+  or `pauta move-link <name>` on du7). Disabling ends every session
   the account had; "Sair em todos os aparelhos" does the same for your own account.
 - Sign everyone out (a leaked cookie, a suspicion): delete
   `~/.local/share/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is

@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS passkey (
 CREATE TABLE IF NOT EXISTS invite (
     token_hash TEXT PRIMARY KEY, admin INTEGER NOT NULL DEFAULT 0,
     max_uses INTEGER NOT NULL, uses INTEGER NOT NULL DEFAULT 0, expires REAL NOT NULL,
-    created_by INTEGER, created TEXT NOT NULL DEFAULT (datetime('now'))
+    created_by INTEGER, created TEXT NOT NULL DEFAULT (datetime('now')),
+    account INTEGER REFERENCES account(id)
 );
 CREATE TABLE IF NOT EXISTS client (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, segment TEXT NOT NULL DEFAULT '',
@@ -424,6 +425,10 @@ class Store:
             cols = {r[1] for r in db.execute("PRAGMA table_info(passkey)")}
             if "rp_id" not in cols:
                 db.execute("ALTER TABLE passkey ADD COLUMN rp_id TEXT NOT NULL DEFAULT ''")
+            # v7: an invite with an account is a move link: a passkey for that existing account
+            cols = {r[1] for r in db.execute("PRAGMA table_info(invite)")}
+            if "account" not in cols:
+                db.execute("ALTER TABLE invite ADD COLUMN account INTEGER REFERENCES account(id)")
             # v3: the client's ads page (free text: usually a Meta Ad Library or page link)
             cols = {r[1] for r in db.execute("PRAGMA table_info(client)")}
             if "ads_page" not in cols:

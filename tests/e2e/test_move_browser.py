@@ -60,3 +60,45 @@ def test_moving_to_the_new_address(two_addresses, device):
     other.expected.add((404, "/api/move/"))
     other.page.goto(f"{new}/#/mudar/{'x' * 32}")
     expect(other.page.get_by_role("heading", name="Link expirado")).to_be_visible()
+
+
+def test_an_admin_sends_a_link_and_it_is_one_tap(two_addresses, device):
+    new, old, auth = two_addresses
+    admin = device()
+    token, _ = auth.create_invite(admin=True)
+    admin.page.goto(f"{old}/#/entrar/{token}")
+    admin.page.fill("#join input[name=name]", "Edu Saleh")
+    admin.page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(admin.page.locator("#movebar")).to_be_visible()
+
+    # Piero joined on the old address and hasn't moved
+    piero = device()
+    token, _ = auth.create_invite()
+    piero.page.goto(f"{old}/#/entrar/{token}")
+    piero.page.fill("#join input[name=name]", "Piero Sales")
+    piero.page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(piero.page.locator("#movebar")).to_be_visible()
+
+    admin.page.goto(f"{old}/#/equipe")
+    row = admin.page.locator(".member", has_text="Piero Sales")
+    expect(row).to_contain_text("ainda não mudou")
+    row.get_by_role("button", name="Link para mudar").click()
+    box = admin.page.locator(".qrbox", has_text="Link de Piero")
+    expect(box).to_contain_text("Vale uma vez")
+    url = box.locator("code.invlink").inner_text()
+    assert url.startswith(f"{new}/#/mudar/")
+    wa = box.get_by_role("link", name="Enviar no WhatsApp").get_attribute("href")
+    assert wa.startswith("https://wa.me/?text=") and "Oi%2C%20Piero!" in wa
+
+    # Piero taps it in WhatsApp: a browser with nothing for the new address, one button
+    piero.page.goto(url)
+    expect(piero.page.get_by_role("heading", name="Olá, Piero!")).to_be_visible()
+    piero.page.get_by_role("button", name="Criar passkey em new.localhost").click()
+    expect(piero.page.locator(".hello h1")).to_contain_text("Piero")
+    assert sorted(c["rpId"] for c in piero.passkeys()) == ["new.localhost", "old.localhost"]
+
+    admin.page.reload()
+    expect(admin.page.locator(".member", has_text="Piero Sales")).to_contain_text(
+        "já em new.localhost"
+    )
+    expect(admin.page.get_by_role("button", name="Link para mudar")).to_have_count(0)

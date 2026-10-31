@@ -1,10 +1,11 @@
 """The move to a new domain over HTTP (decision 4): the old address offers a one-time link,
-the new one turns it into a passkey for the same account."""
+the new one turns it into a passkey for the same account. An admin can make the link for
+someone else."""
 
 import pytest
 
 from pauta.auth import Auth
-from softpasskey import SoftPasskey, call, start
+from softpasskey import ORIGIN, SoftPasskey, call, start
 
 NEW, OLD = "https://pauta.cc", "https://pauta.example"
 
@@ -86,3 +87,48 @@ def test_no_move_without_a_second_domain(team):
     status, err, _ = call(f"{base}/api/move", {}, cookie=nato)
     assert status == 400 and "não está mudando" in err["error"]
     assert call(f"{base}/api/move/{'x' * 32}")[0] == 404
+
+
+def test_an_admin_sends_someone_their_link(moving):
+    base, auth = moving
+    token, _ = auth.create_invite(admin=True)
+    _, _, admin = ceremony(
+        base, "register", {"invite": token, "name": "Edu"}, SoftPasskey("pauta.example", OLD), OLD
+    )
+    token, _ = auth.create_invite()
+    _, piero, piero_cookie = ceremony(
+        base, "register", {"invite": token, "name": "Piero"}, SoftPasskey("pauta.example", OLD), OLD
+    )
+
+    # admins only, for a real, active person
+    assert (
+        call(f"{base}/api/members/{piero['account']}/move", {}, **on(OLD, piero_cookie))[0] == 403
+    )
+    assert call(f"{base}/api/members/99/move", {}, **on(OLD, admin))[0] == 400
+
+    # made on either address, it always points at the new one
+    status, link, _ = call(f"{base}/api/members/{piero['account']}/move", {}, **on(OLD, admin))
+    assert status == 200 and link["to"] == "pauta.cc" and link["url"].startswith(f"{NEW}/#/mudar/")
+    mtoken = link["url"].rsplit("/", 1)[1]
+    assert call(f"{base}/api/move/{mtoken}")[1] == {"name": "Piero", "to": "pauta.cc"}
+
+    # Piero taps it in WhatsApp: no cookie on the new address, just a passkey
+    status, me, cookie = ceremony(
+        base, "register", {"move": mtoken}, SoftPasskey("pauta.cc", NEW), NEW
+    )
+    assert status == 200 and me["account"] == piero["account"] and not me["is_admin"] and cookie
+    assert call(f"{base}/api/move/{mtoken}")[0] == 404
+
+
+def test_admin_links_outlive_the_move(team, store):
+    """With one domain the same link is the way back in after a lost phone."""
+    base, nato, _piero, _key = team
+    status, link, _ = call(f"{base}/api/members/2/move", {}, cookie=nato)
+    assert status == 200 and link["url"].startswith(f"{ORIGIN}/#/mudar/")
+    off = Auth(store, enabled=False)
+    httpd, open_base = start(store, off)
+    try:
+        assert call(f"{open_base}/api/members/2/move", {})[0] == 400
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

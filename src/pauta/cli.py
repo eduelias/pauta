@@ -1,4 +1,4 @@
-"""pauta serve | invite | users | backup | demo | onedrive"""
+"""pauta serve | invite | move-link | users | backup | demo | onedrive"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, obs
-from .auth import Auth
+from .auth import MOVE_LINK_DAYS, Auth
 from .db import Store
 from .onedrive import DriveError, OneDrive
 
@@ -45,6 +45,25 @@ def cmd_invite(args) -> None:
     who = "admin" if args.admin else "member"
     print(f"{args.base_url.rstrip('/')}/#/entrar/{token}")
     print(f"({who}, {args.uses} use(s), valid until {until})", file=sys.stderr)
+
+
+def cmd_move_link(args) -> None:
+    """A one-time link that gives an existing person a passkey on the home domain (the move
+    in decision 4, or a lost phone). Send it to that person only."""
+    store = Store(db_path())
+    who = str(args.who)
+    found = [
+        m for m in store.members() if str(m["id"]) == who or m["name"].casefold() == who.casefold()
+    ]
+    if len(found) != 1:
+        sys.exit(f"no single account matches {who!r}; see `pauta users`")
+    m = found[0]
+    if m["disabled"]:
+        sys.exit(f"{m['name']} is disabled; enable them on the Equipe page first")
+    token, expires = Auth(store, enabled=True).create_move(m["id"], args.days * 86400)
+    until = time.strftime("%Y-%m-%d %H:%M", time.localtime(expires))
+    print(f"{args.base_url.rstrip('/')}/#/mudar/{token}")
+    print(f"(for {m['name']}, 1 use, valid until {until})", file=sys.stderr)
 
 
 def cmd_users(args) -> None:
@@ -288,6 +307,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--days", type=float, default=7)
     s.add_argument("--base-url", default="https://pauta.cc")
     s.set_defaults(fn=cmd_invite)
+    s = sub.add_parser("move-link", help="a one-time passkey link for an existing account")
+    s.add_argument("who", help="account id or name (see `pauta users`)")
+    s.add_argument("--days", type=float, default=MOVE_LINK_DAYS)
+    s.add_argument("--base-url", default="https://pauta.cc")
+    s.set_defaults(fn=cmd_move_link)
     s = sub.add_parser("users", help="list accounts")
     s.set_defaults(fn=cmd_users)
     s = sub.add_parser("backup", help="online SQLite backup into a directory")

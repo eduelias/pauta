@@ -8,7 +8,8 @@ one anonymous admin, no login screen.
 Moving to a new domain (decision 4): a passkey only works on the domain it was made on, so
 during a move both domains are configured, the new one first. Each ceremony uses the domain
 its page is on, and on the old one a signed-in person gets a one-time link that lets them make
-a passkey for the same account on the new one.
+a passkey for the same account on the new one. An admin can make the same link for someone
+else (Equipe, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
 
 Configuration (environment):
   PAUTA_AUTH=passkeys     turn accounts on
@@ -54,7 +55,8 @@ SESSION_DAYS = 180
 FLOW_SECONDS = 300
 RP_NAME = "Pauta"
 INVITE_DAYS = 7
-MOVE_SECONDS = 600
+MOVE_SECONDS = 600  # the link a signed-in person makes for themselves
+MOVE_LINK_DAYS = 3  # the link an admin makes and sends
 DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localhost"]
 
 
@@ -136,7 +138,6 @@ class Auth:
         ]
         self.origins = origins or env_origins or DEV_ORIGINS
         self._flows: dict[str, dict] = {}
-        self._moves: dict[str, dict] = {}  # hashed token -> account, expires
         self._lock = threading.Lock()
         self.secret = load_secret(store)
 
@@ -247,24 +248,32 @@ class Auth:
             "done": done,
         }
 
-    def create_move(self, account_id: int) -> str:
-        """A one-time link to make a passkey for this account on the home domain. Short-lived
-        and kept in memory only: a restart just means tapping the button again."""
+    def create_move(
+        self, account_id: int, seconds: float = MOVE_SECONDS, created_by: int | None = None
+    ) -> tuple[str, float]:
+        """A one-time link to make a passkey for this account on the home domain: an invite
+        bound to the account, so it survives a restart and the CLI can make one too."""
         token = secrets.token_urlsafe(24)
-        with self._lock:
-            now = time.time()
-            self._moves = {k: v for k, v in self._moves.items() if v["expires"] > now}
-            self._moves[_h(token)] = {"account": account_id, "expires": now + MOVE_SECONDS}
-        return token
+        expires = time.time() + seconds
+        with self.store.db() as db:
+            if not db.execute(
+                "SELECT 1 FROM account WHERE id=? AND NOT disabled", (account_id,)
+            ).fetchone():
+                raise AuthError("essa pessoa não existe ou está desativada")
+            db.execute(
+                "INSERT INTO invite(token_hash, admin, max_uses, expires, created_by, account) "
+                "VALUES (?,0,1,?,?,?)",
+                (_h(token), expires, created_by, account_id),
+            )
+        return token, expires
 
     def _move_account(self, token: str) -> dict | None:
-        with self._lock:
-            m = self._moves.get(_h(str(token or "")))
-        if not m or m["expires"] < time.time():
-            return None
         with self.store.db() as db:
             row = db.execute(
-                "SELECT * FROM account WHERE id=? AND NOT disabled", (m["account"],)
+                "SELECT a.* FROM invite i JOIN account a ON a.id = i.account "
+                "WHERE i.token_hash=? AND i.uses < i.max_uses AND i.expires >= ? "
+                "AND NOT a.disabled",
+                (_h(str(token or "")), time.time()),
             ).fetchone()
         return dict(row) if row else None
 
@@ -293,7 +302,9 @@ class Auth:
 
     @staticmethod
     def _invite_row(db, token: str):
-        row = db.execute("SELECT * FROM invite WHERE token_hash=?", (_h(token or ""),)).fetchone()
+        row = db.execute(
+            "SELECT * FROM invite WHERE token_hash=? AND account IS NULL", (_h(token or ""),)
+        ).fetchone()
         if not row or row["uses"] >= row["max_uses"] or row["expires"] < time.time():
             return None
         return row
@@ -343,7 +354,7 @@ class Auth:
         if move is not None:
             account = self._move_account(move)
             if not account:
-                raise AuthError("este link de mudança expirou; toque em Mudar de novo")
+                raise AuthError("este link de mudança expirou; peça um novo")
         if account:
             display = account["name"]
             with self.store.db() as db:
@@ -408,10 +419,13 @@ class Auth:
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")  # one join at a time: an invite's uses can't race
             if flow["move"] is not None:
-                with self._lock:  # the link works once
-                    m = self._moves.pop(_h(flow["move"]), None)
-                if not m or m["expires"] < time.time() or m["account"] != flow["account"]:
-                    raise AuthError("este link de mudança expirou; toque em Mudar de novo")
+                used = db.execute(  # the link works once
+                    "UPDATE invite SET uses = uses + 1 WHERE token_hash=? AND account=? "
+                    "AND uses < max_uses AND expires >= ?",
+                    (_h(flow["move"]), flow["account"], time.time()),
+                ).rowcount
+                if used != 1:
+                    raise AuthError("este link de mudança expirou; peça um novo")
             if flow["account"]:
                 account_id = flow["account"]
             else:

@@ -14,6 +14,10 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   com Face ID ou digital. A conta, os pedidos e o histórico continuam os mesmos. Depois,
   adicione pauta.cc à tela de início do celular. A página Equipe mostra quem já mudou, e
   `pauta users` também. pauta.team leva para pauta.cc.
+- Quem administra pode mandar a cada pessoa o link dela: Equipe → "Link para mudar" →
+  Enviar no WhatsApp. A pessoa toca no link, confirma com Face ID e já está em pauta.cc.
+  O link vale uma vez, por 3 dias, e só para aquela pessoa; serve também para quem perdeu o
+  celular. No du7: `pauta move-link <nome>`.
 
 ## [1.5.1] - 2026-10-30
 
