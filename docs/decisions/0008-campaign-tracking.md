@@ -1,7 +1,7 @@
 # 8. Acompanhamento: a daily check of every live campaign, then its numbers from Meta
 
-- **Status:** proposed (2026-10-31), nothing built. Revised the same day with Piero's
-  answers to the first draft's open questions.
+- **Status:** proposed (2026-10-31), nothing built. Revised twice the same day with Piero's
+  answers to the open questions.
 - **Asked by:** Piero, who runs the campaigns (WhatsApp, 2026-10-31)
 - **Depends on:** nothing for phase 1. **Fits:** decision 5 (one database per team: the
   tables are in the team's file, the Meta token is a file next to it) and decision 7 (same
@@ -42,7 +42,17 @@ His answers to the first draft's questions (2026-10-31) changed it:
   client on WhatsApp**.
 - **His Meta access:** he signs in with his personal profile; his business portfolio has the
   clients as partners; he is its admin; the profile has two-step verification. (That is
-  login security, not Meta's *business verification*, which is still unknown.)
+  login security, not Meta's *business verification*.)
+
+And to the second round:
+
+- **No business verification** on his portfolio. He expects to sign in to Meta's site and
+  generate "a key" there.
+- **Balance:** only to read how much is left on the ad account, if the API gives it.
+- **Lead = a click that takes someone to the destination** the ad is set up for (site,
+  WhatsApp, whatever it is). It varies per campaign; this definition covers all of them.
+- **One client is one portfolio**; a client may have several ad accounts.
+- **The text for the client should be written by an AI.**
 
 What Pauta has today: a request's type is `request.kind`, from the editable `kind` list
 whose defaults include **"Criar campanha"** (Piero's "fazer campanha") and **"Reativar
@@ -101,20 +111,21 @@ Piero's own login.
 
 | Topic | Decision |
 |---|---|
-| Step 0: the spike | Before any code, with Piero (the admin) and the owner together: create a Business-type app owned by Piero's business portfolio, add the Marketing API product (it starts on the **Limited** tier), create one regular system user, assign it one client's ad account, generate a token with `ads_read`, and read that account's current month with one `curl` to `/act_<id>/insights?level=campaign&time_increment=1` on v26.0. In the same hour: check the token's real expiry with Meta's token debugger; check whether the account's balance is readable (see "Saldo"); check whether Meta's Ads Insights now has a "views" field or still only `impressions`; and see in Business Settings whether the portfolio is **business-verified**. Pass = numbers come back without App Review. If they don't, phase 2 waits for business verification and App Review, or the team buys a tool (Alternatives) |
+| Step 0: the spike | Before any code, with Piero (the admin) and the owner together, signed in with Piero's profile: on developers.facebook.com, register as a developer and create a **Business**-type app linked to Piero's business portfolio, and add the Marketing API product (it starts on the **Limited** tier). In business.facebook.com → Configurações da empresa → Usuários → **Usuários do sistema**, create one regular system user, add the app to it, assign it one client's ad account with "Ver desempenho", and **Gerar token** with `ads_read` and expiry "Nunca". That token is the "key" Piero expected. Then read that account's current month with one `curl` to `/act_<id>/insights?level=campaign&time_increment=1` on v26.0. In the same hour: check the token's real expiry with Meta's token debugger; try the balance with "Ver desempenho", then with "Gerenciar campanhas" (see "Saldo"); check whether Ads Insights has a "views" field or still only `impressions`; check that link clicks to WhatsApp destinations are counted (see "Lead"). Pass = numbers come back on Limited, unverified. If they don't, phase 2 needs business verification first (Meta asks for the company's documents, CNPJ, a matching domain or phone) and then App Review, or the team buys a tool (Alternatives) |
 | Whose Meta app | Phase 2 is for **this** team: the app and the system user belong to Piero's business portfolio, so Pauta reads accounts that portfolio has been given. A Pauta-owned app that every customer team connects with "Login do Facebook para empresas" is the decision-6 version: it needs Full access, App Review and business verification of Du7, so it is a decision of its own, taken when a second team asks |
-| Access tier | Start on **Limited**. Meta calls it "for development", and its wording says apps reading "other people's ad accounts" need advanced access; whether partner-shared client accounts read by the agency's own system user count is not settled in Meta's docs. A sync every hour over tens of accounts is far inside Limited's quota (600 + 400 × active ads per hour per account). Moving to **Full** needs App Review, 500 successful calls in 15 days and under 15% errors; plan for it if Meta pushes back, and add the privacy policy, terms and data-deletion instructions URLs Meta wants for Live mode or review anyway (decision 5's legal texts on the public site cover them) |
+| Access tier | Start on **Limited**; Piero's portfolio isn't business-verified, so Limited is the only tier open to it for now (Full needs App Review, which needs verification). Meta calls Limited "for development", its wording says apps reading "other people's ad accounts" need advanced access, and its app settings say an unverified business "can't access data you don't own"; whether partner-shared client accounts read by the agency's own system user count is not settled in Meta's docs. That is the spike's main question, and the most likely reason for it to fail. A sync every hour over tens of accounts is far inside Limited's quota (600 + 400 × active ads per hour per account). Moving to **Full** needs App Review, 500 successful calls in 15 days and under 15% errors; plan for it if Meta pushes back, and add the privacy policy, terms and data-deletion instructions URLs Meta wants for Live mode or review anyway (decision 5's legal texts on the public site cover them) |
 | Token | A file next to the team's DB, `pauta.db.meta-token`, mode 600, like the OneDrive token (decision 3): never in the DB, its backups, the export or the logs. An admin pastes it on Equipe → Meta; the field is write-only, and Pauta only shows "conectado", the portfolio it belongs to and its expiry (from `debug_token`). One token per team under decision 5 |
-| Portfolios and ad accounts | New additive table `meta_account`: `account_id`, `name`, `business_id` and `business_name` (the **client's** portfolio that owns the account), `client` (the Pauta client it belongs to), `currency`, `timezone`, `status`, `seen`. Filled by listing every ad account the system user can read, with its owning portfolio. Each new portfolio is matched once to a Pauta client (suggested by name, confirmed by Piero); every ad account under it follows. The client's existing `ad_account` field seeds the match and stays for clients without Meta. A client with no readable account shows "Meta: sem acesso", which turns the manual `access` field into something checked |
+| Portfolios and ad accounts | **One client is one portfolio** (Piero), with one or more ad accounts. Additive: `client.meta_business` (the portfolio id, unique when set) and a table `meta_account`: `account_id`, `name`, `client`, `currency`, `timezone`, `status`, `seen`. Filled by listing every ad account the system user can read, with the portfolio that owns it. Each new portfolio is matched once to a Pauta client (suggested by name, confirmed by Piero); every ad account under it, now and later, follows. The client's existing `ad_account` field seeds the match and stays for clients without Meta. A client with no readable account shows "Meta: sem acesso", which turns the manual `access` field into something checked |
 | Live campaigns come from Meta | Each sync lists the campaigns of every account (`effective_status`). A campaign that is `ACTIVE` in Meta and has no Pauta campaign gets one automatically, under its client, linked by `campaign_meta(campaign, meta_id)`; when Meta stops delivering it (paused, ended, out of budget) the Pauta campaign follows. This is "via API ele trará todos os clientes conectados": the daily list fills itself. A done "Criar/Reativar campanha" request is linked to its Meta campaign when its `campaign_url` (an Ads Manager link) carries the id, or picked from a list |
 | Sync | `pauta meta sync`, on two timers (`pauta-meta-sync.timer`, a `deploy/` change next to the backup timer, owner-reviewed): **hourly**, today and yesterday for every live campaign, plus campaign statuses and account balances, so the numbers Piero checks in the morning are current; **nightly**, the last 28 days again, because conversions keep arriving for up to 28 days after a click. Older days are frozen. On first link, the campaign's history back to its start (Meta keeps 37 months). An **Atualizar agora** button, limited to once per 15 minutes. Backoff on Meta's throttle headers and error codes; nothing retries in a loop. `/metrics` gains `meta.{enabled,connected,error,last_sync}` for du7's watchdog |
 | Data | `insight` (additive): `meta_id`, `day`, `spend_cents`, `currency`, `impressions`, `reach`, `clicks`, `link_clicks`, `leads`, `results`, `result_type`, plus the extra metrics below, `fetched`; key (`meta_id`, `day`). Money in integer cents in the account's currency, as in decision 7. Raw Meta JSON is not stored. **Reach and frequency don't add up over days** (the same person counts once in a month), so for the chosen period Pauta asks Meta for the period total and caches it for an hour |
 | Period | A period picker on every view, defaulting to **the current month** (in the ad account's time zone), with quick choices (hoje, ontem, 7 dias, 30 dias, mês passado) and custom dates. Every card compares against the previous period of the same length |
-| "Lead" and "Resultado" | What a lead is depends on the campaign: a form lead, a WhatsApp or Direct conversation started, a site sign-up. A team setting maps each `goal` to a Meta action type (Cadastros → `lead`; Mensagens no WhatsApp/Direct → conversations started; Vendas no site → purchases and ROAS; Tráfego → link clicks); a campaign can override it. **Leads** and **Custo por lead** use that mapping. The defaults are checked against the team's real accounts in the spike |
-| Saldo (balance left) | For a prepaid account (Pix or boleto, common in Brazil) the balance left is on the ad account (`funding_source_details`, `is_prepay_account`), which Meta only shows to a user with **Gerenciar campanhas** (MANAGE/ADVERTISE task) on the account, not just "Ver desempenho". The token stays `ads_read`, so it still can't change anything, but the system user needs the wider task on each account. If the spike shows that or the field doesn't work, the fallback is campaign `budget_remaining` and spend against the account's spend cap. A low balance turns the client's row orange (threshold per team), which retires the manual `balance` field for Meta clients |
-| Metrics on offer | Piero's: **Custo por lead, Leads, Alcance, Visualizações** (`impressions` until Meta's Ads API offers "views"; the spike checks), **Valor investido, Saldo**. Suggested for a traffic analysis: **Frequência** (above ~3 the audience is tiring), **CTR (link)** and **CPC (link)** (is the creative pulling clicks), **CPM** (cost of the audience), **Conversas iniciadas / custo por conversa**, **Taxa de conversão** (leads ÷ link clicks: the landing page or the WhatsApp script), **Ritmo de gasto** (spend against budget for the period), for video **ThruPlays and hook rate** (3-second views ÷ impressions), for sales **Compras, ROAS**; and on the campaign page the **best and worst ads** by cost per lead |
-| Screens | **Acompanhamento** keeps the daily list; each client row gains its headline numbers for the period (investido, leads, custo por lead, saldo) and opens the client's **campaign panel**. The panel's filters: **Portfólio**, then **Conta de anúncios** (only the selected portfolio's), then campaign and period. On the left the list of metrics with checkboxes; each one picked adds its **card** (value, change against the previous period) and, if Piero switches it on, its daily **chart**. Picks are remembered per person. Breakdowns (age/gender, region, platform/placement) on demand. Charts are plain SVG drawn by `app.js`: no chart library, CSP stays `'self'`, no new dependency |
-| Text for the client | **Gerar análise** on the panel writes a short Portuguese summary of the selected period and metrics from a template: what was invested, how many leads at what cost, how that compares with the previous period, reach and frequency, balance left, and one or two remarks the rules can state safely ("o custo por lead caiu 18%", "a frequência passou de 3: vale renovar o criativo"). It opens in an editable box; **Copiar** and **Abrir no WhatsApp** (the client's `whatsapp`, through a `wa.me` link, so Piero sends it from his own phone). Pauta never sends it. Checking the client records the text as the check's note. An AI-written analysis is a later option (see Consequences) |
+| "Lead" | Piero's definition, one for every campaign: **a lead is a click on the ad that takes the person to its destination** (site, WhatsApp, Direct, form...). In Meta's terms that is **link clicks** (`inline_link_clicks`), and **Custo por lead** is `cost_per_inline_link_click`. One team setting, `lead_metric`, holds it (default `link_clicks`; other values `landing_page_views` or a Meta action type), so another team, or Piero later, can count something stricter. Because a click isn't yet a conversation or a sale, the picker also offers Meta's own **Resultados** for the campaign (conversations started, forms sent, purchases), so the two can be compared when a client asks why many leads brought few messages. Labels in the UI say "Leads (cliques)" so a client reading the text isn't misled |
+| Saldo (balance left) | Piero only wants to read how much is left on the ad account. For a prepaid account (Pix or boleto, common in Brazil) that is on the ad account (`funding_source_details`, `is_prepay_account`), which Meta's reference says it shows only to a user with **Gerenciar campanhas** (MANAGE/ADVERTISE task) on the account, not just "Ver desempenho". The spike tries both. If it needs the wider task: the token stays `ads_read`, so Pauta still can't change anything, but the system user holds a wider role than reading; the owner and Piero decide then. If the balance can't be read, the fallback is the campaigns' `budget_remaining` and spend against the account's spend cap, and the manual `balance` field stays. When read, a low balance turns the client's row orange (threshold per team) |
+| Metrics on offer | Piero's: **Custo por lead, Leads** (as defined above), **Alcance, Visualizações** (`impressions` until Meta's Ads API offers "views"; the spike checks), **Valor investido, Saldo**. Suggested for a traffic analysis: **Frequência** (above ~3 the audience is tiring), **CTR (link)** (is the creative pulling clicks; CPC (link) is already Custo por lead), **CPM** (cost of the audience), **Conversas iniciadas / custo por conversa**, **Taxa de conversão** (leads ÷ link clicks: the landing page or the WhatsApp script), **Ritmo de gasto** (spend against budget for the period), for video **ThruPlays and hook rate** (3-second views ÷ impressions), for sales **Compras, ROAS**; and on the campaign page the **best and worst ads** by cost per lead |
+| Screens | **Acompanhamento** keeps the daily list; each client row gains its headline numbers for the period (investido, leads, custo por lead, saldo) and opens the client's **campaign panel**. The panel's filters: **Portfólio** (one per client, so it is the client filter by its Meta name), then **Conta de anúncios** (only that portfolio's; "todas" by default), then campaign and period. On the left the list of metrics with checkboxes; each one picked adds its **card** (value, change against the previous period) and, if Piero switches it on, its daily **chart**. Picks are remembered per person. Breakdowns (age/gender, region, platform/placement) on demand. Charts are plain SVG drawn by `app.js`: no chart library, CSP stays `'self'`, no new dependency |
+| Text for the client | **Gerar análise** on the panel asks an **AI** for a short Portuguese analysis of the selected period, as Piero asked. Pauta computes every number itself (totals, cost per lead, change against the previous period, frequency, balance, best and worst campaign) and sends the model only those **facts**, as JSON, with a fixed prompt: write for a small-business owner, warm and short, WhatsApp-sized, say what went well, what to watch and one suggestion, use only the numbers given. **No names, phones or ad texts leave Pauta**: the client is "{cliente}" and campaigns are "Campanha 1, 2...", replaced back after the answer. Every number in the answer is checked against the facts; a text with a number that isn't there is thrown away and the **template text** (the same facts in fixed sentences) is shown instead, as it is when the AI is off or unreachable. It opens in an editable box; **Copiar** and **Abrir no WhatsApp** (the client's `whatsapp`, through a `wa.me` link, so Piero sends it from his own phone). Pauta never sends it. Checking the client records the sent text as the check's note |
+| Which AI | The **Claude API** (a small, fast model such as Claude Haiku), called with stdlib `urllib` like the Graph calls: no SDK, no new dependency. The API key is a file next to the team's DB (`pauta.db.ai-key`, mode 600), set by an admin on Equipe, like the Meta token; for other teams (decision 6) it is Du7's key and part of the plan's cost. A team setting `ai_text` turns it off. At a few analyses a day the cost is small (measured in the first month and noted here). Anthropic becomes a sub-processor of aggregated, nameless numbers: the privacy texts of decision 5 say so |
 | Checks get numbers | A check stores a snapshot of the client's headline numbers at that moment (an additive `snapshot` JSON column on `review`), so a note is next to the numbers it was about |
 | No new dependency | Graph calls with stdlib `urllib`, like `onedrive.py`; tests use a fake Meta Graph like `tests/fakegraph.py`, never the real one |
 | Version | Pinned to one Graph API version (v26.0 today). Meta retires Marketing API versions in about a year; bumping it is a release-note line and a test run against the fake |
@@ -132,18 +143,28 @@ this decision; it gets its own once phase 2 is in use and someone asks.
 - Phase 1 is about 1.5 days: two tables and the settings block, the derived statuses with
   unit tests, the routes, the Acompanhamento screen, the client card, browser tests. It is
   useful on its own and doesn't wait for anything at Meta.
-- Phase 2 is about 5–6 days of code after a spike that passes (the metric picker, the
-  analysis text and the auto-created campaigns made it bigger than the first draft's 3–4),
+- Phase 2 is about 6–7 days of code after a spike that passes (the metric picker, the AI text,
+  the auto-created campaigns made it bigger than the first draft's 3–4),
   plus Meta-side setup outside the code: the app and the system user in Piero's portfolio.
   The clients are already partners. Business verification, if Meta asks for it, can take
   days to weeks. It can ship in two releases: numbers, filters and cards first; analysis
   text and suggested metrics second.
 - Phase 2 depends on Meta's rules for the Limited tier, which Meta describes as for
-  development. If Meta tightens it, the integration stops until App Review is done; the
-  phase-1 list keeps working, since the numbers are an addition to it, not its basis.
-- Reading the balance needs the system user to hold "Gerenciar campanhas" on each client's
-  account. The token's `ads_read` scope keeps Pauta read-only, but the system user's role is
-  wider than strictly needed; if that is unwelcome, the balance stays manual.
+  development, and Piero's portfolio is not business-verified. If the spike fails, or Meta
+  tightens Limited later, the integration waits for business verification (company
+  documents, days to weeks) and App Review; the phase-1 list keeps working, since the
+  numbers are an addition to it, not its basis.
+- Reading the balance may need the system user to hold "Gerenciar campanhas" on each
+  client's account. The token's `ads_read` scope keeps Pauta read-only either way, but the
+  role would be wider than reading; if that is unwelcome, the balance stays manual.
+- Counting every link click as a lead makes "Custo por lead" the same number as Meta's
+  CPC (link), and lower than a cost per conversation or per form. That is the team's
+  definition and the labels say so; the text for the client says "cliques" and Meta's
+  Resultados sit next to it in the picker.
+- The AI text adds a second outside service after Meta, an API key to keep, and a small
+  monthly cost. Nothing personal goes to it, every number it writes is checked against
+  Pauta's own, and the template text is always there when it's off or wrong. The model can
+  still phrase something Piero wouldn't say: the box is editable and he sends it himself.
 - Meta changes metrics and retires API versions every year: expect a small maintenance
   release per year, and a goal → lead mapping that needs a look when Meta renames actions.
 - The token can read every ad account assigned to the system user. Anyone with du7 root
@@ -153,10 +174,6 @@ this decision; it gets its own once phase 2 is in use and someone asks.
   LGPD exposure is low; they are still the client's data, in the team's file, covered by
   decision 5's processor terms when other teams arrive. The Meta data is never shown outside
   the team or passed to anyone; the analysis text leaves only when Piero sends it himself.
-- An AI-written analysis would read better than a template, but it means sending clients'
-  numbers to a language model and checking what it claims. If wanted later: a local model
-  (the house already runs Ollama), numbers only, no names, and the text always editable
-  before sending. Its own small decision.
 - The tracking kinds are matched by name. Renaming "Criar campanha" in Equipe takes it out
   of the inbox until the setting is updated; the settings panel warns about it.
 - Later, in this order: a WhatsApp reminder at the end of the day "2 clientes ainda não
@@ -182,6 +199,12 @@ this decision; it gets its own once phase 2 is in use and someone asks.
   puts the numbers in another place than the daily list, and doesn't know who checked what.
 - **Ads Manager's scheduled email reports or CSV export:** free and already there, but
   per account, by email, and nothing records whether someone looked.
+- **Template text only, no AI:** no outside service and no cost, and it is what Pauta
+  falls back to. Piero asked for the AI: the template reads the same every day, and clients
+  notice.
+- **A local model for the text** (the house runs Ollama on a gaming PC): free and nothing
+  leaves the house, but that machine is often busy or off, it is weaker at Portuguese
+  writing, and decision 5 moves production off du7 to a server that can't reach it.
 - **Piero's personal token via Facebook Login:** no system user needed, but it expires in
   about 60 days, carries everything his profile can do, and dies when his access changes;
   the system user is the pattern Meta recommends for server-to-server reading.
@@ -223,22 +246,20 @@ spike decides.
 
 ## Open questions
 
-Answered by Piero on 2026-10-31: portfolio = the client's Meta business portfolio, with ad
-accounts under it; period filter defaulting to the current month; both "Criar" and
-"Reativar campanha"; a daily "seen" mark per client; the metrics above and a text for the
-client; he administers the agency's portfolio and the clients are partners in it.
+Answered by Piero on 2026-10-31, in two rounds: portfolio = the client's Meta business
+portfolio, one per client, with one or more ad accounts; period filter defaulting to the
+current month; both "Criar" and "Reativar campanha"; a daily "seen" mark per client; the
+metrics above; a lead is any click to the ad's destination; the balance only to read; the
+text for the client written by an AI; his portfolio is not business-verified and the clients
+are partners in it.
 
-Still open, for Piero:
+Still open:
 
-1. Is your business portfolio **business-verified** in Meta (Configurações da empresa →
-   Central de segurança → Verificação da empresa)? Two-step login is something else.
-2. **Saldo restante:** the prepaid balance of the ad account (Pix/boleto), or what's left of
-   the campaign's budget? And may the system user get "Gerenciar campanhas" on the clients'
-   accounts so Pauta can read the balance (it still can't change anything)?
-3. **Lead:** in your campaigns, is a lead a form filled, a WhatsApp conversation started, or
-   both depending on the campaign?
-4. Is one client always one portfolio, or does a client sometimes have more than one
-   portfolio (or a portfolio more than one client)?
-5. The text for the client: is a fixed, well-written template with the numbers enough, or do
-   you want it written by an AI (see Consequences)?
-6. One hour together with Eduardo to run the spike, with one client's account.
+1. **The spike** (Piero and the owner, one hour, one client's account): does Limited work
+   for partner-shared accounts on an unverified portfolio, is the balance readable and with
+   which role, and does a WhatsApp click count as a link click.
+2. **If the spike fails** (owner and Piero): verify the business (does the agency have a
+   CNPJ and a domain or phone in its name?) or buy a tool for the numbers and keep phase 1.
+3. **If the balance needs "Gerenciar campanhas"** (owner and Piero): accept the wider role
+   for the system user, or keep the balance manual.
+4. **The AI key** (owner): whose Anthropic account pays, and the monthly cap on it.
