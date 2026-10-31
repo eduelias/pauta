@@ -90,7 +90,7 @@ order (steps 1–5 done 2026-10-31):
    least a year.
 7. **Acceptance** (done 2026-10-31): `acc.pauta.cc` in Caddy (the old name redirects),
    `PAUTA_RP_ID=acc.pauta.cc` and `PAUTA_ORIGIN=https://acc.pauta.cc` in `pauta-acc.service`
-   (hand-installed, not in this repo), and an admin invite from its CLI because its old
+   (now `deploy/pauta-acc.service`, see "Acceptance: trying a branch"), and an admin invite from its CLI because its old
    passkeys don't work there.
 8. **Monitoring**: du7's watchdog `pauta*` checks and the repo's homepage link point at
    `app.pauta.cc`, as the GitHub uptime check does.
@@ -108,6 +108,47 @@ database (the `passkey.rp_id` column is additive) and the old address still work
 Schema changes are additive (new tables and columns), so an older release runs on a newer
 database. If one ever isn't, restore the matching file from `~/backups/pauta/pre-deploy`
 (stop `pauta`, copy it over `~/.local/share/pauta/pauta.db`, start `pauta`).
+
+## Acceptance: trying a branch
+
+https://acc.pauta.cc is a second copy of Pauta on du7 (unit `pauta-acc`, `127.0.0.1:8089`,
+user `pauta-acc`, demo data, its own accounts). It takes builds of any branch before they are
+merged or released; decision 9 says why and what that exposes.
+
+```
+gh workflow run deploy-branch.yml -f ref=feat/meta-connect     # or Actions → Deploy branch to acceptance
+gh workflow run deploy-branch.yml -f rollback=true             # back to the build before
+```
+
+Only the owner can start it (the job guard refuses anyone else's run on du7). GitHub builds the
+branch as `X.Y.Z.devN+gSHA` (the next patch, the run number, the commit), checks it installs
+and answers `/healthz`, and du7 runs `sudo pauta-deploy-branch acc VERSION WHEEL LOCK SOURCE`:
+
+- refuses unless the unit runs as `pauta-acc`, in no other group, with `ProtectHome=yes`, from
+  `/opt/pauta-acc/current`; it has no way to name production's `/opt/pauta`, unit or data,
+- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required),
+  then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
+- backs up the DB read-only to `/var/backups/pauta-acc` (30 days), never writing
+  `/var/lib/pauta-acc` (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key),
+- switches `/opt/pauta-acc/current`, restarts `pauta-acc`, waits for `/healthz` to report the
+  version, and switches back if it doesn't; keeps 5 builds.
+
+On du7: `sudo pauta-deploy-branch acc --status` (log in `/opt/pauta-acc/deploy.log` and
+`journalctl -t pauta-deploy-acc`), `sudo pauta-deploy-branch acc --rollback`. The DB is
+acceptance's own: if a branch's schema change breaks the build before, restore the newest
+`/var/backups/pauta-acc/pauta-*-before-<version>.db` (stop `pauta-acc`, copy it over
+`/var/lib/pauta-acc/pauta.db` as `pauta-acc`, start it).
+
+**Setting it up** (re-runnable; it never starts, restarts or reads into acceptance's state):
+from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. It installs
+`pauta-deploy-branch`, the sudo rule `/etc/sudoers.d/gh-runner-pauta-branch`, the
+`pauta-acc` user and unit (`deploy/pauta-acc.service`; settings for one environment, like the
+Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the
+runner's job guard, which a sudo rule for unreleased code must never be without.
+
+**Another environment** (`dev`): a line in `env_config` in `pauta-deploy-branch` (its port),
+`deploy/pauta-dev.service`, a Caddy block, `dev` in the workflow's `environment` choices, then
+`sudo deploy/provision-branch-env.sh dev`.
 
 ## Setting up du7 (once)
 
@@ -129,7 +170,8 @@ and `systemctl reload caddy`.
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
 shell and no groups, and keeps itself updated. Its job-started hook,
 `/usr/local/lib/pauta/runner-job-guard`, refuses every job except `du7` of `release.yml` on a
-`vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`; refusals are in
+`vX.Y.Z` tag, `du7` of `deploy.yml` run by hand on `main`, and `du7` of `deploy-branch.yml` run
+by hand on `main` by the owner; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
 

@@ -10,3 +10,4 @@ both files.
 | [2](0002-collaborators-and-a-public-repo.md) | Maintainers via PRs, owner-only releases, rulesets, a job guard on du7's runner, a public repo | Accepted; du7 part pending |
 | [3](0003-request-files-in-onedrive.md) | Files on requests, stored in a team member's OneDrive through Pauta | Proposed (this PR) |
 | [7](0007-financeiro.md) | Financeiro: a receivables ledger per client, with the team's conventions as settings | Proposed (this PR) |
+| [9](0009-branch-deploys-to-acceptance.md) | Any branch on acceptance, by hand, by the owner, as its own user (amends 1) | Proposed |

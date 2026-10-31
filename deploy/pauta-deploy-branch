@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# Install a build of any branch on one of du7's test environments, switch to it, and roll
+# back if it doesn't come up healthy. Production is not one of them, and can't be named.
+#
+#   pauta-deploy-branch ENV VERSION WHEEL LOCKFILE [SOURCE]   install VERSION and switch to it
+#   pauta-deploy-branch ENV --rollback                        back to the release before
+#   pauta-deploy-branch ENV --status                          what is live and installed
+#
+# ENV is `acc` (https://acc.pauta.cc); `dev` is one more line in env_config below, plus its
+# unit and Caddy block. VERSION is X.Y.Z.devN+gSHA, as .github/workflows/deploy-branch.yml
+# builds it; WHEEL and LOCKFILE are absolute paths. SOURCE is a note for the log (branch@sha).
+#
+# Lives at /usr/local/sbin/pauta-deploy-branch (root:root 0755). The GitHub runner user may
+# run it with sudo, so every argument is checked here. Unlike pauta-deploy, the wheel is
+# whatever the run built: an environment here runs unreleased code. That is safe only
+# because of what this script checks before every deploy: the environment's own user, with
+# no groups and no access to /home, from its unit; see docs/decisions/0009.
+#
+# Layout (per environment, all root-owned but the state):
+#   /opt/pauta-ENV/releases/VERSION/   one venv per build (built as the service user, then
+#                                      made root's, so the running app can't change code)
+#   /opt/pauta-ENV/current, previous   -> the live build, the one before
+#   /opt/pauta-ENV/deploy.log          one line per deploy and rollback
+#   /var/backups/pauta-ENV/            the DB before each deploy (service user, 0700)
+#   /var/lib/pauta-ENV/                the unit's state: never written here
+set -euo pipefail
+umask 022
+
+KEEP=5   # builds kept on disk (current and previous are never pruned)
+PYTHON=/usr/bin/python3
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+log() { echo "pauta-deploy-branch: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+env_config() {  # ENV -> the environment's paths, unit, user and port; nothing else is valid
+    local port
+    case "${1:-}" in
+        acc) port=8089 ;;
+        *) die "unknown environment '${1:-}' (known: acc)" ;;
+    esac
+    ENV_NAME=$1
+    ROOT=/opt/pauta-$1
+    RELEASES=$ROOT/releases
+    SERVICE=pauta-$1
+    SERVICE_USER=pauta-$1
+    STATE_DIR=/var/lib/pauta-$1
+    BACKUPS=/var/backups/pauta-$1
+    HEALTH=http://127.0.0.1:$port/healthz
+    not_production
+}
+
+not_production() {
+    # Belt and braces: env_config can only build pauta-<env> names, but a bad edit there
+    # must still never reach production's code, unit, user or data.
+    case "$ROOT" in /opt/pauta | /opt/pauta/*) die "refusing production's $ROOT" ;; esac
+    [[ $ROOT =~ ^/opt/pauta-[a-z]+$ ]] || die "refusing $ROOT"
+    [[ $SERVICE =~ ^pauta-[a-z]+$ ]] || die "refusing unit $SERVICE"
+    case "$SERVICE_USER" in root | esaleh | pauta) die "refusing user $SERVICE_USER" ;; esac
+    [[ $SERVICE_USER =~ ^pauta-[a-z]+$ ]] || die "refusing user $SERVICE_USER"
+    [[ $STATE_DIR =~ ^/var/lib/pauta-[a-z]+$ ]] || die "refusing state dir $STATE_DIR"
+    [[ $HEALTH =~ ^http://127\.0\.0\.1:[0-9]+/healthz$ ]] && [ "${HEALTH##*:}" != 8088/healthz ] ||
+        die "refusing health check $HEALTH"
+}
+
+check_isolation() {
+    # What makes unreleased code acceptable here, checked on du7 itself before every deploy
+    # and rollback: the unit runs as its own user, that user is in no other group, and the
+    # unit can't see /home (production's data until decision 2's `pauta` user; then
+    # /var/lib/pauta, 0700 and not this user's).
+    local user groups home exec
+    id -u "$SERVICE_USER" >/dev/null 2>&1 || die "no user $SERVICE_USER"
+    [ "$(id -u "$SERVICE_USER")" -ne 0 ] || die "$SERVICE_USER is root"
+    groups=$(id -nG "$SERVICE_USER")
+    [ "$groups" = "$SERVICE_USER" ] || die "$SERVICE_USER is in other groups ($groups)"
+    user=$(systemctl show -p User --value "$SERVICE")
+    [ "$user" = "$SERVICE_USER" ] || die "$SERVICE runs as '${user:-root}', not $SERVICE_USER"
+    home=$(systemctl show -p ProtectHome --value "$SERVICE")
+    case "$home" in yes | tmpfs) ;; *) die "$SERVICE can see /home (ProtectHome=$home)" ;; esac
+    exec=$(systemctl show -p ExecStart --value "$SERVICE")
+    [[ $exec == *"path=$ROOT/current/bin/pauta "* ]] ||
+        die "$SERVICE doesn't run $ROOT/current/bin/pauta"
+}
+
+record() {  # deploy.log, and the journal (journalctl -t pauta-deploy-ENV); FAILED is an error
+    echo "$(date -Is) $*" >> "$ROOT/deploy.log"
+    logger -t "pauta-deploy-$ENV_NAME" -p "user.$([[ $* == FAILED* ]] && echo err || echo notice)" -- "$*" || true
+}
+as_user() {  # run as the service user, with a clean environment (no cache, no HOME writes)
+    runuser -u "$SERVICE_USER" -- env -i PATH="$PATH" HOME=/nonexistent LANG=C.UTF-8 \
+        PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+        PIP_NO_INPUT=1 "$@"
+}
+read_input() {
+    # A file the caller handed us, read with the caller's own rights: a path swapped for a
+    # symlink to a root-only file after our checks gets the caller nothing it couldn't read
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        runuser -u "$SUDO_USER" -- cat -- "$1"
+    else
+        cat -- "$1"
+    fi
+}
+version_of() { basename "$(readlink -e "$1" 2>/dev/null || echo none)"; }
+
+health_version() {
+    # the version /healthz reports, within ~30 s, or nothing
+    local out
+    for _ in $(seq 60); do
+        if out=$(curl -fsS --max-time 2 "$HEALTH" 2>/dev/null); then
+            "$PYTHON" -I -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+switch_to() {  # atomically point `current` at a release dir and restart
+    ln -sfn "$1" "$ROOT/current.new"
+    mv -T "$ROOT/current.new" "$ROOT/current"
+    systemctl restart "$SERVICE"
+}
+
+# shellcheck disable=SC2012
+status() {
+    echo "$ENV_NAME live: $(version_of "$ROOT/current") (healthz: $(health_version || echo down))"
+    echo "previous:  $(version_of "$ROOT/previous")"
+    echo "on disk:   $(ls -1t "$RELEASES" 2>/dev/null | tr '\n' ' ')"
+    echo "recent:"
+    tail -n 5 "$ROOT/deploy.log" 2>/dev/null | sed 's/^/  /' || true
+}
+
+backup_db() {
+    # Read-only SQLite backup as the service user, with the system Python (the new build
+    # never runs before the switch). The state dir itself is never written.
+    [ -f "$STATE_DIR/pauta.db" ] || return 0
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$BACKUPS"
+    local out
+    out="$BACKUPS/pauta-$(date +%Y%m%d-%H%M%S)-before-$1.db"
+    as_user "$PYTHON" -I -c 'import os,sqlite3,sys
+os.umask(0o077)
+s = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+d = sqlite3.connect(sys.argv[2])
+s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
+    as_user find "$BACKUPS" -name 'pauta-*.db' -mtime +30 -delete
+    log "database backed up to $out"
+}
+
+install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
+    local version=$1 wheel=$2 lock=$3 dir=$RELEASES/$1
+    if [ -f "$dir/.complete" ] && [ "$(stat -c %U "$dir")" = root ]; then
+        log "$version is already installed; reusing it"
+        return 0
+    fi
+    rm -rf --one-file-system "$dir"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$dir"
+    # the runner's workspace isn't readable by the service user: stream the inputs in
+    read_input "$wheel" | as_user tee "$dir/$(basename -- "$wheel")" >/dev/null
+    read_input "$lock" | as_user tee "$dir/requirements.lock" >/dev/null
+    as_user "$PYTHON" -I -m venv "$dir"
+    # binary wheels only (nothing runs at install time), every hash checked, PyPI only
+    as_user "$dir/bin/pip" install -q --require-hashes --only-binary=:all: \
+        -r "$dir/requirements.lock"
+    as_user "$dir/bin/pip" install -q --no-deps "$dir/$(basename -- "$wheel")"
+    # from here on the code is root's: nothing running as the service user can change it
+    chown -R -P root:root "$dir"
+    # The build's own code first runs inside the unit's sandbox, after the switch: take the
+    # version from its metadata (running `pauta --version` here would run it unsandboxed)
+    local meta got
+    meta=$(find "$dir/lib" -path '*/site-packages/pauta-*.dist-info/METADATA' -type f)
+    [ -n "$meta" ] && [ "$(wc -l <<<"$meta")" -eq 1 ] ||
+        die "expected one pauta-*.dist-info in the venv, found: ${meta:-none}"
+    got=$(sed -n 's/^Version: //p' "$meta" | head -n 1)
+    [ "$got" = "$version" ] || die "the wheel says version '$got', expected '$version'"
+    [ -x "$dir/bin/pauta" ] || die "the wheel has no pauta command"
+    touch "$dir/.complete"
+}
+
+# shellcheck disable=SC2012
+prune() {
+    local keep_cur keep_prev
+    keep_cur=$(readlink -e "$ROOT/current" || true)
+    keep_prev=$(readlink -e "$ROOT/previous" || true)
+    ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r d; do
+        d=${d%/}
+        [ "$d" = "$keep_cur" ] || [ "$d" = "$keep_prev" ] ||
+            { rm -rf --one-file-system "$d"; log "pruned $(basename "$d")"; }
+    done
+}
+
+activate() {  # VERSION [SOURCE]: switch, check health, roll back on failure
+    local version=$1 source=${2:-} old
+    old=$(readlink -e "$ROOT/current" 2>/dev/null || true)
+    if [ "$old" = "$RELEASES/$version" ]; then
+        systemctl restart "$SERVICE"
+    else
+        switch_to "$RELEASES/$version"
+    fi
+    local got
+    got=$(health_version || true)
+    if [ "$got" = "$version" ]; then
+        if [ -n "$old" ] && [ "$old" != "$RELEASES/$version" ]; then
+            ln -sfn "$old" "$ROOT/previous"
+        fi
+        record "live $version${source:+ ($source)} (was $(basename "${old:-none}"))"
+        log "$version is live on $ENV_NAME"
+        return 0
+    fi
+    log "$version did not come up healthy (healthz: ${got:-no answer}); last log lines:"
+    journalctl -u "$SERVICE" -n 30 --no-pager >&2 || true
+    if [ -n "$old" ] && [ "$old" != "$RELEASES/$version" ]; then
+        switch_to "$old"
+        record "FAILED $version${source:+ ($source)}, rolled back to $(basename "$old") (healthz: $(health_version || echo down))"
+        log "rolled back to $(basename "$old")"
+    else
+        record "FAILED $version${source:+ ($source)}, nothing to roll back to"
+    fi
+    exit 1
+}
+
+check_version() {
+    [[ $1 =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}\.dev[0-9]{1,9}\+g[0-9a-f]{7,40}$ ]] ||
+        die "bad version '$1' (expected X.Y.Z.devN+gSHA)"
+}
+
+check_source() {
+    [ -z "$1" ] || [[ $1 =~ ^[A-Za-z0-9._/@+-]{1,200}$ ]] || die "bad source note '$1'"
+}
+
+main() {
+    [ "$(id -u)" -eq 0 ] || die "run me as root (sudo)"
+    cd /  # nothing from the caller's directory gets imported or read by accident
+    [ $# -ge 2 ] || die "usage: pauta-deploy-branch ENV VERSION WHEEL LOCKFILE [SOURCE] | ENV --rollback | ENV --status"
+    env_config "$1"
+    shift
+    install -d -m 0755 "$ROOT" "$RELEASES"
+    exec 9>"$ROOT/.lock"
+    flock -w 600 9 || die "another deploy to $ENV_NAME is running"
+
+    case "$1" in
+        --status)
+            [ $# -eq 1 ] || die "usage: pauta-deploy-branch ENV --status"
+            status
+            ;;
+        --rollback)
+            [ $# -eq 1 ] || die "usage: pauta-deploy-branch ENV --rollback"
+            check_isolation
+            local prev
+            prev=$(readlink -e "$ROOT/previous" 2>/dev/null) || die "no previous build"
+            [ -x "$prev/bin/pauta" ] || die "previous build $prev is not installed"
+            backup_db "$(basename "$prev")"
+            activate "$(basename "$prev")" rollback
+            ;;
+        *)
+            [ $# -eq 3 ] || [ $# -eq 4 ] ||
+                die "usage: pauta-deploy-branch ENV VERSION WHEEL LOCKFILE [SOURCE]"
+            local version=$1 wheel=$2 lock=$3 source=${4:-}
+            check_version "$version"
+            check_source "$source"
+            [ "$(basename -- "$wheel")" = "pauta-$version-py3-none-any.whl" ] ||
+                die "unexpected wheel '$wheel'"
+            [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
+            [[ $wheel == /* && $lock == /* ]] || die "WHEEL and LOCKFILE must be absolute paths"
+            [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
+            [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
+            check_isolation
+            log "installing $version${source:+ ($source)} on $ENV_NAME"
+            install_release "$version" "$wheel" "$lock"
+            backup_db "$version"
+            activate "$version" "$source"
+            prune
+            ;;
+    esac
+}
+
+# sourced by the tests (tests/unit/test_deploy_branch.py), run otherwise
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

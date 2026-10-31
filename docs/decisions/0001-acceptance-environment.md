@@ -3,6 +3,9 @@
 - **Status:** accepted, not built yet (decided 2026-10-28; build it when needed)
 - **Depends on:** the domain choice. If Pauta moves off `genic.dev`, build acceptance on the
   new domain directly.
+- **Amended by:** decision 9 (proposed): acceptance takes builds of any branch, started by
+  hand by the owner, through `pauta-deploy-branch` instead of `pauta-deploy`; deploying `main`
+  on every merge is not built.
 
 ## Context
 

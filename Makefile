@@ -13,7 +13,7 @@ lint:  ## ruff, formatting, JS syntax, shellcheck, actionlint
 	uv run --extra dev ruff check src tests scripts tools
 	uv run --extra dev ruff format --check src tests scripts tools
 	node --check src/pauta/static/app.js
-	uvx --from shellcheck-py shellcheck deploy/pauta-deploy deploy/provision-du7.sh deploy/runner-job-guard scripts/repo-settings.sh
+	uvx --from shellcheck-py shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
 	uvx --from actionlint-py actionlint
 
 fmt:  ## fix what ruff can fix

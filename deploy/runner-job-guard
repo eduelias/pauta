@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The du7 runner's job-started hook: refuse every job except Pauta's deploy.
+# The du7 runner's job-started hook: refuse every job except Pauta's deploys.
 #
 # A self-hosted runner runs whatever a workflow says, for anyone who can make a workflow
 # run: a collaborator pushing a branch, or (in a public repo) a pull request from a fork.
@@ -10,6 +10,9 @@
 #   - job `du7` of release.yml, run by pushing a release tag vX.Y.Z (only the owner may)
 #   - job `du7` of deploy.yml, run by hand (workflow_dispatch) from main, to redeploy or
 #     roll back to a published release
+#   - job `du7` of deploy-branch.yml, run by hand from main by the owner, to put a build of
+#     any branch on a test environment (acc.pauta.cc) through pauta-deploy-branch, which
+#     can't reach production (decision 9)
 # Release tags and main only change through the rulesets, and workflows only through the
 # owner's review (CODEOWNERS), so these two are the owner's own code.
 #
@@ -17,6 +20,7 @@
 set -u
 
 REPO=eduelias/pauta
+OWNER=eduelias
 WF=$REPO/.github/workflows
 
 refuse() {
@@ -34,8 +38,12 @@ if [[ $ref =~ $tag_re ]] && [ "$event" = push ]; then
     :
 elif [ "$ref" = "$WF/deploy.yml@refs/heads/main" ] && [ "$event" = workflow_dispatch ]; then
     :
+elif [ "$ref" = "$WF/deploy-branch.yml@refs/heads/main" ] && [ "$event" = workflow_dispatch ]; then
+    # unreleased code: only the owner may start it, or re-run it
+    [ "${GITHUB_ACTOR:-}" = "$OWNER" ] && [ "${GITHUB_TRIGGERING_ACTOR:-}" = "$OWNER" ] ||
+        refuse "only $OWNER may deploy a branch"
 else
-    refuse "only release.yml on a release tag, or deploy.yml run by hand on main"
+    refuse "only release.yml on a release tag, or deploy.yml or deploy-branch.yml run by hand on main"
 fi
 logger -t pauta-runner-guard -p user.notice -- "allowed: $ref ($event, ${GITHUB_ACTOR:-?})" 2>/dev/null || true
 echo "runner-job-guard: $ref ($event) may deploy"
