@@ -162,11 +162,17 @@ install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless alr
     as_user "$dir/bin/pip" install -q --require-hashes --only-binary=:all: \
         -r "$dir/requirements.lock"
     as_user "$dir/bin/pip" install -q --no-deps "$dir/$(basename -- "$wheel")"
-    # from here on the code is root's: the app can't change its own or another build
+    # from here on the code is root's: nothing running as the service user can change it
     chown -R -P root:root "$dir"
-    local got
-    got=$(as_user "$dir/bin/pauta" --version)
-    [ "$got" = "pauta $version" ] || die "the wheel says '$got', expected 'pauta $version'"
+    # The build's own code first runs inside the unit's sandbox, after the switch: take the
+    # version from its metadata (running `pauta --version` here would run it unsandboxed)
+    local meta got
+    meta=$(find "$dir/lib" -path '*/site-packages/pauta-*.dist-info/METADATA' -type f)
+    [ -n "$meta" ] && [ "$(wc -l <<<"$meta")" -eq 1 ] ||
+        die "expected one pauta-*.dist-info in the venv, found: ${meta:-none}"
+    got=$(sed -n 's/^Version: //p' "$meta" | head -n 1)
+    [ "$got" = "$version" ] || die "the wheel says version '$got', expected '$version'"
+    [ -x "$dir/bin/pauta" ] || die "the wheel has no pauta command"
     touch "$dir/.complete"
 }
 

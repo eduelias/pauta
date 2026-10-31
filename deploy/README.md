@@ -127,7 +127,7 @@ and answers `/healthz`, and du7 runs `sudo pauta-deploy-branch acc VERSION WHEEL
 - refuses unless the unit runs as `pauta-acc`, in no other group, with `ProtectHome=yes`, from
   `/opt/pauta-acc/current`; it has no way to name production's `/opt/pauta`, unit or data,
 - builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required),
-  then makes it root's,
+  then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
 - backs up the DB read-only to `/var/backups/pauta-acc` (30 days), never writing
   `/var/lib/pauta-acc` (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key),
 - switches `/opt/pauta-acc/current`, restarts `pauta-acc`, waits for `/healthz` to report the

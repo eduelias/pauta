@@ -252,11 +252,13 @@ def test_prune_keeps_current_and_previous(env_dir):
     assert len(left) == 5 + 2
 
 
-def fake_wheel(path, version):
-    """A tiny but real wheel named pauta whose console script prints its version."""
+def fake_wheel(path, version, ran=None):
+    """A tiny but real wheel named pauta whose console script prints its version (and, given
+    `ran`, leaves that file behind: proof that its code ran)."""
     dist = f"pauta-{version}.dist-info"
+    touch = f"    open({str(ran)!r}, 'w').close()\n" if ran else ""
     files = {
-        "pauta_fake.py": f"def main():\n    print('pauta {version}')\n",
+        "pauta_fake.py": f"def main():\n{touch}    print('pauta {version}')\n",
         f"{dist}/METADATA": f"Metadata-Version: 2.1\nName: pauta\nVersion: {version}\n",
         f"{dist}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"
         "Tag: py3-none-any\n",
@@ -275,7 +277,8 @@ def test_install_builds_a_venv_and_checks_the_version(tmp_path):
     (root / "releases").mkdir(parents=True)
     wheel = tmp_path / "in" / f"pauta-{VERSION}-py3-none-any.whl"
     wheel.parent.mkdir()
-    fake_wheel(wheel, VERSION)
+    ran = tmp_path / "ran"
+    fake_wheel(wheel, VERSION, ran)
     lock = tmp_path / "in" / "requirements.lock"
     lock.write_text("")  # no dependencies: nothing to fetch
     # as the current user instead of runuser; chown to root is du7's business
@@ -291,6 +294,12 @@ def test_install_builds_a_venv_and_checks_the_version(tmp_path):
     assert (dest / ".complete").exists()
     assert (dest / wheel.name).read_bytes() == wheel.read_bytes()
     assert f"chown -R -P root:root {dest}" in (root / "calls").read_text()
+    # the build's code only ever runs in the unit's sandbox, never during the install
+    assert not ran.exists()
+    assert subprocess.run([dest / "bin" / "pauta"], capture_output=True, text=True).stdout == (
+        f"pauta {VERSION}\n"
+    )
+    assert ran.exists()  # (the check above would have seen it)
     # a wheel that says another version is refused
     other = tmp_path / "in2" / "pauta-9.9.9.dev1+gabc1234-py3-none-any.whl"
     other.parent.mkdir()
@@ -299,4 +308,4 @@ def test_install_builds_a_venv_and_checks_the_version(tmp_path):
     lock2.write_text("")
     r = bash(stubs + f'install_release "1.6.2.dev4+gabc1234" "{other}" "{lock2}"')
     assert r.returncode == 1
-    assert "the wheel says 'pauta 9.9.9.dev1+gabc1234'" in r.stderr
+    assert "the wheel says version '9.9.9.dev1+gabc1234'" in r.stderr
