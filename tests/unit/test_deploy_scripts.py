@@ -209,3 +209,16 @@ def test_sourcing_does_not_deploy():
         text=True,
     )
     assert r.returncode == 0 and r.stdout.strip() == "sourced"
+
+
+@pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])
+def test_the_guard_is_installed_where_the_runner_will_run_it(script):
+    # the runner fails every job when the hook's name doesn't end in .sh, .ps1 or .js
+    text = (DEPLOY / script).read_text()
+    hooks = [
+        line.split("=", 2)[2].strip().strip('"')
+        for line in text.splitlines()
+        if "ACTIONS_RUNNER_HOOK_JOB_STARTED=" in line
+    ]
+    assert hooks == ["/usr/local/lib/pauta/runner-job-guard.sh"]
+    assert 'runner-job-guard" /usr/local/lib/pauta/runner-job-guard.sh' in text

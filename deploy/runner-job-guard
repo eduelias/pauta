@@ -16,7 +16,9 @@
 # Release tags and main only change through the rulesets, and workflows only through the
 # owner's review (CODEOWNERS), so these two are the owner's own code.
 #
-# Lives at /usr/local/lib/pauta/runner-job-guard (root:root 0755); see deploy/README.md.
+# Lives at /usr/local/lib/pauta/runner-job-guard.sh (root:root 0755); see deploy/README.md.
+# The runner only runs a hook whose name ends in .sh (or .ps1, .js), with bash -e, and fails
+# every job if it doesn't: hence the extension there and not here.
 set -u
 
 REPO=eduelias/pauta

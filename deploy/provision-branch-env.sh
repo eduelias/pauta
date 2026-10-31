@@ -54,13 +54,14 @@ mv "$rule.tmp" "$rule"
 # The same as provision-du7.sh's; installed here too because a sudo rule for unreleased
 # code must never exist on an unguarded runner.
 install -d -o root -g root -m 0755 /usr/local/lib/pauta
-install -o root -g root -m 0755 "$HERE/runner-job-guard" /usr/local/lib/pauta/runner-job-guard
+install -o root -g root -m 0755 "$HERE/runner-job-guard" /usr/local/lib/pauta/runner-job-guard.sh
+rm -f /usr/local/lib/pauta/runner-job-guard  # before 2026-10-31: no .sh, which the runner refuses
 runner=actions.runner.eduelias-pauta.du7.service
 dropin=/etc/systemd/system/$runner.d/job-guard.conf
 if [ -f "/etc/systemd/system/$runner" ]; then
-    want="# Every job on du7 first passes /usr/local/lib/pauta/runner-job-guard (deploy/README.md).
+    want="# Every job on du7 first passes /usr/local/lib/pauta/runner-job-guard.sh (deploy/README.md).
 [Service]
-Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard"
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/pauta/runner-job-guard.sh"
     if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ]; then
         install -d -o root -g root -m 0755 "/etc/systemd/system/$runner.d"
         printf '%s\n' "$want" > "$dropin"
