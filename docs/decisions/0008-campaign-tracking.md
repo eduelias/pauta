@@ -214,7 +214,8 @@ this decision; it gets its own once phase 2 is in use and someone asks.
   first plan): no login flow to build, but his portfolio isn't verified, so App Review was
   closed to it, and every future team would repeat the manual setup. Du7's verified app
   with Facebook Login for Business does both jobs.
-- **Piero's personal token via Facebook Login:** no system user needed, but it expires in
+- **Piero's personal token via Facebook Login** (reconsidered 2026-10-31, see "More than
+  one ad account"): no system user needed, but it expires in
   about 60 days, carries everything his profile can do, and dies when his access changes;
   the system user is the pattern Meta recommends for server-to-server reading.
 - **Storing Meta's raw responses or ad-level daily rows for everything:** more than the
@@ -275,6 +276,16 @@ replaces it. The other way in needs no Pauta at all: Business Settings → Integ
 Connected apps → Pauta → add the account, then Atualizar. One connection per team stays
 the model: one system user in the agency's portfolio, reading every client account it is
 given; `meta_account` (above) ties each one to its Pauta client.
+
+**Reconsidered and settled (owner, 2026-10-31): the robot stays.** The alternative was a
+*user* token: Piero signs in as himself once, and `/me/adaccounts` returns every account his
+profile can reach, new clients included, with no per-client step. It costs a re-login about
+every 60 days (long-lived user tokens have no refresh), dies with his password or a sign-out
+everywhere, and carries his identity rather than a robot's; Meta's management API can only
+narrow a token's assets, never widen them, so there is no middle way short of giving the
+robot `business_management` and letting Pauta write permissions in his business, which
+breaks "Pauta only reads". One Meta-side click per new client, in the place Piero already is
+when he accepts that client, was judged the smaller cost. The panel says where that click is.
 
 Adding his other clients **on acceptance** goes past the one-client exception to decision 1
 ("Tested on acceptance"). That is the owner's call: either acceptance becomes Piero's working
