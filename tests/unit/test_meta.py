@@ -118,10 +118,17 @@ def test_state_is_one_time_and_expires(meta_on, fake_meta, monkeypatch):
         meta_on.finish_connect("forged", back["code"])
     assert e.value.status == 400 and e.value.reason == "expirou"
     meta_on.finish_connect(back["state"], back["code"])
-    with pytest.raises(MetaError) as e:  # the same state twice
+    # the same callback loaded again (a reload, a retry): still connected, no second exchange
+    meta_on.finish_connect(back["state"], back["code"])
+    meta_on.finish_connect(back["state"], "another-code")
+    assert fake_meta.exchanges == 1
+    # ... for ten minutes; after that the state is just expired
+    later = meta_mod.time.time() + 601
+    monkeypatch.setattr(meta_mod.time, "time", lambda: later)
+    with pytest.raises(MetaError) as e:
         meta_on.finish_connect(back["state"], back["code"])
     assert e.value.reason == "expirou"
-    assert fake_meta.exchanges == 1
+    monkeypatch.undo()
 
     back = fake_meta.approve(meta_on.start_connect(1))
     now = meta_mod.time.time()
@@ -170,7 +177,6 @@ def test_accounts_this_month_in_cents(linked, fake_meta):
         "currency": "BRL",
         "status": 1,
         "status_label": "Ativa",
-        "business": "Clínica Bem Estar Ltda",
         "spend_cents": 123456,
         "impressions": 48210,
         "reach": 20118,

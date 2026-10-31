@@ -131,6 +131,9 @@ class Meta:
         self.token_file = Path(f"{db_path}.meta-token")
         self._lock = threading.Lock()
         self._states: dict[str, tuple[int | None, float]] = {}  # state -> (account, expiry)
+        # states that already connected: a second load of the same callback (a reload, the
+        # browser retrying) says "conectado" again instead of "expirou"
+        self._done: dict[str, float] = {}  # state -> expiry
         self._cache: tuple[float, list[dict]] | None = None
         self.error = ""  # why the connection stopped working, until reconnected
 
@@ -269,6 +272,11 @@ class Meta:
         """Meta sent the admin back with a code: exchange it and keep the token."""
         if not self.enabled:
             raise MetaError("o servidor não tem a Meta configurada", 400, "desligado")
+        with self._lock:
+            done = self._done.get(state or "", 0) > time.time()
+        if done:
+            obs.event("meta_callback_repeated")
+            return
         by = self.take_state(state)
         if not code:
             raise MetaError("a Meta não mandou o código; tente de novo", 400)
@@ -307,6 +315,10 @@ class Meta:
         )
         self.error = ""
         self._cache = None
+        now = time.time()
+        with self._lock:
+            self._done = {s: t for s, t in self._done.items() if t > now}
+            self._done[state] = now + STATE_SECONDS
         obs.event("meta_connected", account=by)
 
     def disconnect(self) -> None:
@@ -340,7 +352,9 @@ class Meta:
         doc = self._graph(
             "/me/adaccounts",
             {
-                "fields": "name,account_id,currency,account_status,business{name}",
+                # not business{name}: that field needs business_management, which this
+                # read-only login doesn't ask for (Meta answers #100 for the whole list)
+                "fields": "name,account_id,currency,account_status",
                 "limit": "100",
             },
             "adaccounts",
@@ -368,7 +382,6 @@ class Meta:
             "currency": str(a.get("currency") or "BRL"),
             "status": status,
             "status_label": ACCOUNT_STATUS.get(status, ""),
-            "business": str((a.get("business") or {}).get("name") or ""),
             "spend_cents": cents(row.get("spend")) or 0,
             "impressions": _int(row.get("impressions")),
             "reach": _int(row.get("reach")),

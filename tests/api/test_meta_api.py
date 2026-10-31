@@ -73,11 +73,11 @@ def test_callback_needs_a_live_state(team, fake_meta, monkeypatch):
     # nobody started it
     status, location, _ = fetch(f"{base}/api/meta/callback?code=x&state=forged")
     assert status == 302 and location == erro + "expirou"
-    # started, but used twice
+    # started, and the callback loaded twice (Piero's browser did): connected both times
     url = start(base, nato)
     first = urlparse(fetch(url)[1]).query
     assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/equipe?meta=conectado"
-    assert fetch(f"{base}/api/meta/callback?{first}")[1] == erro + "expirou"
+    assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/equipe?meta=conectado"
     # started, but too long ago
     query = urlparse(fetch(start(base, nato))[1]).query
     now = meta_mod.time.time()

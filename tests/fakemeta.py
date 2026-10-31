@@ -31,7 +31,6 @@ ACCOUNTS = [
         "name": "Clínica Bem Estar",
         "currency": "BRL",
         "account_status": 1,
-        "business": {"id": "400000000000004", "name": "Clínica Bem Estar Ltda"},
     },
     {
         "id": "act_222",
@@ -205,7 +204,9 @@ class FakeMeta:
         if path == f"/{BUSINESS}":
             return h._send(200, {"id": BUSINESS, "name": "Agência Exemplo"})
         if path == "/me/adaccounts":
-            assert "business{name}" in q.get("fields", "")
+            if "business" in q.get("fields", ""):  # what the real Meta says to ads_read
+                need = "Requires business_management permission to access the field."
+                return h._send(400, oauth_error(100, need))
             return h._send(200, {"data": ACCOUNTS, "paging": {"cursors": {}}})
         m = re.fullmatch(r"/act_(\d+)(/insights)?", path)
         if not m or m.group(1) not in BALANCE:

@@ -1404,7 +1404,7 @@ function metaBody(d) {
   }
   const since = d.connected_at ? new Date(d.connected_at).toLocaleDateString("pt-BR") : "";
   const accs = d.accounts || [];
-  const rows = accs.map((a) => `<tr><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.business ? ` · ${esc(a.business)}` : ""}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
+  const rows = accs.map((a) => `<tr><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
       <td class="r">${esc(centsMoney(a.spend_cents, a.currency))}</td>
       <td class="r">${esc(count(a.reach))}</td>
       <td class="r">${esc(count(a.impressions))}</td>
