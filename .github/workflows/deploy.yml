@@ -50,13 +50,13 @@ jobs:
           retention-days: 7
 
   du7:
-    name: du7 → pauta.cc
+    name: du7 → app.pauta.cc
     needs: fetch
     runs-on: [self-hosted, du7, pauta]
     timeout-minutes: 15
     environment:
       name: production
-      url: https://pauta.cc
+      url: https://app.pauta.cc
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -72,7 +72,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          live=$(curl -fsS --resolve pauta.cc:443:192.168.2.68 https://pauta.cc/healthz \
+          live=$(curl -fsS --resolve app.pauta.cc:443:192.168.2.68 https://app.pauta.cc/healthz \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
           [ "$live" = "$VERSION" ] || { echo "Caddy serves ${live:-nothing}, expected $VERSION"; exit 1; }
           {
@@ -88,17 +88,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: https://pauta.cc answers with the new version
+      - name: https://app.pauta.cc answers with the new version
         env:
           VERSION: ${{ inputs.version }}
         run: |
           for _ in $(seq 20); do
-            live=$(curl -fsS https://pauta.cc/healthz | jq -r .version) && [ "$live" = "$VERSION" ] && break
+            live=$(curl -fsS https://app.pauta.cc/healthz | jq -r .version) && [ "$live" = "$VERSION" ] && break
             sleep 3
           done
-          [ "$live" = "$VERSION" ] || { echo "pauta.cc says ${live:-nothing}, expected $VERSION"; exit 1; }
-          curl -fsS https://pauta.cc/ | grep -q 'og:image'
-          echo "pauta.cc answers $VERSION from the internet" >> "$GITHUB_STEP_SUMMARY"
+          [ "$live" = "$VERSION" ] || { echo "app.pauta.cc says ${live:-nothing}, expected $VERSION"; exit 1; }
+          curl -fsS https://app.pauta.cc/ | grep -q 'og:image'
+          echo "app.pauta.cc answers $VERSION from the internet" >> "$GITHUB_STEP_SUMMARY"
 
   alert:
     name: WhatsApp if the deploy failed

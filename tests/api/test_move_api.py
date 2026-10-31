@@ -7,7 +7,7 @@ import pytest
 from pauta.auth import Auth
 from softpasskey import ORIGIN, SoftPasskey, call, start
 
-NEW, OLD = "https://pauta.cc", "https://pauta.example"
+NEW, OLD = "https://app.pauta.cc", "https://pauta.example"
 
 
 @pytest.fixture()
@@ -48,18 +48,18 @@ def test_moving_from_the_old_address(moving):
 
     # the old address says where Pauta went; the new one knows it's home
     me = call(f"{base}/api/me", **on(OLD, old_cookie))[1]
-    assert me["move"] == {"to": "pauta.cc", "url": NEW, "here": False, "done": False}
+    assert me["move"] == {"to": "app.pauta.cc", "url": NEW, "here": False, "done": False}
     assert call(f"{base}/api/me", **on(NEW))[1]["move"]["here"] is True
     assert call(f"{base}/api/boot", **on(OLD, old_cookie))[1]["me"]["move"]["done"] is False
 
     # the link is only made on the old address, for someone signed in
     assert call(f"{base}/api/move", {}, **on(OLD))[0] == 401
     status, err, _ = call(f"{base}/api/move", {}, **on(NEW, old_cookie))
-    assert status == 400 and "já está em pauta.cc" in err["error"]
+    assert status == 400 and "já está em app.pauta.cc" in err["error"]
     status, link, _ = call(f"{base}/api/move", {}, **on(OLD, old_cookie))
     assert status == 200 and link["url"].startswith(f"{NEW}/#/mudar/")
     mtoken = link["url"].rsplit("/", 1)[1]
-    assert call(f"{base}/api/move/{mtoken}")[1] == {"name": "Renato", "to": "pauta.cc"}
+    assert call(f"{base}/api/move/{mtoken}")[1] == {"name": "Renato", "to": "app.pauta.cc"}
 
     # opened on the wrong address, the link says where to go
     status, err, _ = call(f"{base}/api/passkey/register/options", {"move": mtoken}, **on(OLD))
@@ -108,9 +108,11 @@ def test_an_admin_sends_someone_their_link(moving):
 
     # made on either address, it always points at the new one
     status, link, _ = call(f"{base}/api/members/{piero['account']}/move", {}, **on(OLD, admin))
-    assert status == 200 and link["to"] == "pauta.cc" and link["url"].startswith(f"{NEW}/#/mudar/")
+    assert (
+        status == 200 and link["to"] == "app.pauta.cc" and link["url"].startswith(f"{NEW}/#/mudar/")
+    )
     mtoken = link["url"].rsplit("/", 1)[1]
-    assert call(f"{base}/api/move/{mtoken}")[1] == {"name": "Piero", "to": "pauta.cc"}
+    assert call(f"{base}/api/move/{mtoken}")[1] == {"name": "Piero", "to": "app.pauta.cc"}
 
     # Piero taps it in WhatsApp: no cookie on the new address, just a passkey
     status, me, cookie = ceremony(

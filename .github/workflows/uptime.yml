@@ -1,4 +1,4 @@
-# Is https://pauta.cc up, seen from outside the house? du7's own watchdog can't tell
+# Is https://app.pauta.cc up, seen from outside the house? du7's own watchdog can't tell
 # when du7 or the home internet is down, so this runs on GitHub's machines, every hour.
 #
 # Down: opens one issue labelled `uptime` (GitHub email and app push) and sends a WhatsApp
@@ -21,12 +21,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  URL: https://pauta.cc/healthz
-  TITLE: pauta.cc is down
+  URL: https://app.pauta.cc/healthz
+  TITLE: app.pauta.cc is down
 
 jobs:
   probe:
-    name: pauta.cc/healthz
+    name: app.pauta.cc/healthz
     runs-on: ubuntu-latest
     # the WhatsApp secrets live in the `alerts` environment: main and release tags only
     environment: alerts
@@ -71,7 +71,7 @@ jobs:
           WA_TO: ${{ secrets.WA_TO }}
           WA_TEMPLATE: ${{ vars.WA_TEMPLATE }}
         run: |
-          gh label create uptime --color B60205 --description "pauta.cc outages" \
+          gh label create uptime --color B60205 --description "app.pauta.cc outages" \
             2>/dev/null || true
           open=$(gh issue list --label uptime --state open --json number --jq '.[0].number // empty')
           now=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -79,7 +79,7 @@ jobs:
             if [ -z "$open" ]; then
               gh issue create --label uptime --title "$TITLE" --body \
                 "Seen from GitHub at $now: $DETAIL. Checked every hour; closed when it answers again. Run: $RUN"
-              python3 scripts/alert.py "pauta.cc" \
+              python3 scripts/alert.py "app.pauta.cc" \
                 "down, seen from GitHub at $now: $DETAIL. du7 or the home internet may be down. $RUN"
             else
               gh issue comment "$open" --body "Still down at $now: $DETAIL. $RUN"
@@ -88,5 +88,5 @@ jobs:
           fi
           if [ -n "$open" ]; then
             gh issue close "$open" --comment "Back up at $now. $RUN"
-            python3 scripts/alert.py "pauta.cc" "back up at $now (outage issue #$open closed)."
+            python3 scripts/alert.py "app.pauta.cc" "back up at $now (outage issue #$open closed)."
           fi

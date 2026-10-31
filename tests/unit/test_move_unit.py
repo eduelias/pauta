@@ -11,7 +11,7 @@ from pauta.auth import MOVE_LINK_DAYS, Auth, AuthError
 from pauta.db import Store
 from softpasskey import SoftPasskey
 
-NEW, OLD = "https://pauta.cc", "https://pauta.example"
+NEW, OLD = "https://app.pauta.cc", "https://pauta.example"
 
 
 @pytest.fixture()
@@ -63,10 +63,10 @@ def test_moving_an_account(store, moving):
     acc, old_key = join_old(moving)
     assert domains(store, acc["id"]) == ["pauta.example"]
     hint = moving.move_hint(OLD, acc["id"])
-    assert hint == {"to": "pauta.cc", "url": NEW, "here": False, "done": False}
+    assert hint == {"to": "app.pauta.cc", "url": NEW, "here": False, "done": False}
 
     token, _ = moving.create_move(acc["id"])
-    assert moving.move_info(token) == {"name": "Renato", "to": "pauta.cc"}
+    assert moving.move_info(token) == {"name": "Renato", "to": "app.pauta.cc"}
     moved = move(moving, token, SoftPasskey("pauta.cc", NEW))
     assert moved["id"] == acc["id"]  # the same account, now with a passkey on both domains
     assert domains(store, acc["id"]) == ["pauta.cc", "pauta.example"]
@@ -121,7 +121,7 @@ def test_an_admin_link_lasts_days_and_survives_a_restart(store, moving):
     token, expires = moving.create_move(acc["id"], MOVE_LINK_DAYS * 86400, created_by=acc["id"])
     assert expires > time.time() + 2 * 86400
     restarted = Auth(store, enabled=True, rp_id="pauta.cc,pauta.example", origins=[NEW, OLD])
-    assert restarted.move_info(token) == {"name": "Renato", "to": "pauta.cc"}
+    assert restarted.move_info(token) == {"name": "Renato", "to": "app.pauta.cc"}
     assert move(restarted, token, SoftPasskey("pauta.cc", NEW))["id"] == acc["id"]
     assert restarted.move_info(token) is None
 
@@ -170,3 +170,22 @@ def test_a_database_from_before_the_move_gets_the_column(tmp_path):
         assert conn.execute("SELECT rp_id FROM passkey").fetchone()[0] == ""
         assert "account" in {r[1] for r in conn.execute("PRAGMA table_info(invite)")}
     assert store.members()[0]["domains"] == []
+
+
+def test_the_app_lives_on_a_subdomain_of_its_passkey_domain(store, moving):
+    """app.pauta.cc with passkeys for pauta.cc: acceptance (acc.pauta.cc) and the public site
+    (www.pauta.cc) sit under the same domain and could ask a browser for a pauta.cc passkey,
+    but production only accepts its own origin."""
+    assert moving.home == NEW and moving.home_host == "app.pauta.cc"
+    assert moving.rp_for(NEW) == "pauta.cc"
+    acc, key = join_old(moving)
+    token, _ = moving.create_move(acc["id"])
+    opts = moving.register_options(move=token, rp_id="pauta.cc")
+    sibling = SoftPasskey("pauta.cc", "https://acc.pauta.cc")
+    with pytest.raises(AuthError, match="não aceita"):
+        moving.register_verify(opts["flow"], sibling.create(opts["options"]))
+    moved = move(moving, token, SoftPasskey("pauta.cc", NEW))
+    assert moved["id"] == acc["id"]
+    # with only the apex allowed (as 1.6.0 ran), the apex is home
+    apex = Auth(store, enabled=True, rp_id="pauta.cc", origins=["https://pauta.cc"])
+    assert apex.home == "https://pauta.cc" and apex.home_host == "pauta.cc"

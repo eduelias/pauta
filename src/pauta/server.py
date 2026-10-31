@@ -342,7 +342,7 @@ def make_handler(
 
         def _metrics(self, method: str):
             """For du7's watchdog: straight to 127.0.0.1:8088 only. Caddy always adds
-            X-Forwarded-For, so through pauta.cc this is a 404."""
+            X-Forwarded-For, so through app.pauta.cc this is a 404."""
             if not self._proxied() or self.headers.get("X-Forwarded-For"):
                 return self._json(404, {"error": "não encontrado"})
             if method not in ("GET", "HEAD"):
@@ -638,7 +638,7 @@ def make_handler(
             rp_id = auth.rp_for(self._page_origin())
             if body.get("move"):
                 if rp_id != auth.rp_id:
-                    raise Reply(400, {"error": f"abra este link em {auth.rp_id}"})
+                    raise Reply(400, {"error": f"abra este link em {auth.home_host}"})
                 return auth.register_options(move=str(body["move"]), rp_id=rp_id)
             if body.get("invite"):
                 return auth.register_options(
@@ -680,7 +680,7 @@ def make_handler(
             token, expires = auth.create_move(
                 int(mid), MOVE_LINK_DAYS * 86400, created_by=viewer["account"]
             )
-            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.rp_id}
+            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
 
         @route("GET", "/api/move/([A-Za-z0-9_-]{20,64})", "open")
         def move_info(self, viewer, _body, token):

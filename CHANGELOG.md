@@ -7,6 +7,18 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- A Pauta agora fica em **https://app.pauta.cc**. As passkeys feitas em pauta.cc continuam
+  valendo, sem fazer nada. pauta.cc e pauta.team levam para www.pauta.cc, o futuro site
+  (por enquanto ele leva para o app), e links antigos como pauta.cc/#/mudar/... ainda chegam
+  ao lugar certo. O teste fica em https://acc.pauta.cc.
+
+### Fixed
+
+- Equipe: os botões de quem administra não espremem mais o nome das pessoas no painel Time;
+  vão para baixo do nome quando falta espaço.
+
 ## [1.6.0] - 2026-10-31
 
 ### Changed
