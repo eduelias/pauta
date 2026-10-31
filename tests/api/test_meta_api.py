@@ -134,3 +134,125 @@ def test_metrics(team):
     assert call(f"{base}/metrics")[1]["meta"] == {"enabled": True, "connected": False, "error": ""}
     through_meta(base, start(base, nato))
     assert call(f"{base}/metrics")[1]["meta"]["connected"] is True
+
+
+# ---- the account ↔ client mapping ---------------------------------------------------------
+
+
+def connected(team, fake_meta):
+    base, nato, piero, _ = team
+    through_meta(base, start(base, nato))
+    return base, nato, piero
+
+
+def new_client(base, nato, **data):
+    status, doc, _ = call(f"{base}/api/clients", data, nato)
+    assert status == 200, doc
+    return doc
+
+
+def test_accounts_carry_their_client_and_a_suggestion(team, fake_meta):
+    base, nato, piero = connected(team, fake_meta)
+    clinic = new_client(base, nato, name="Clínica Bem Estar")
+    bakery = new_client(base, nato, name="Padaria", ad_account="act_222")
+    doc = call(f"{base}/api/meta?refresh=1", cookie=nato)[1]
+    first, second = doc["accounts"]
+    # suggested by name, not saved; auto-linked by the client's ad_account
+    assert first["client"] is None and not first["stale"]
+    assert first["suggested"] == {"id": clinic["id"], "name": "Clínica Bem Estar"}
+    assert second["client"] == {"id": bakery["id"], "name": "Padaria"}
+    assert second["suggested"] is None
+    assert second["spend_cents"] == 0 and second["status_label"] == "Desativada"
+    assert call(f"{base}/api/clients/{bakery['id']}", cookie=piero)[1]["meta_accounts"] == [
+        {"id": "222", "name": "Padaria Trigo de Ouro"}
+    ]
+    assert call(f"{base}/api/clients/{clinic['id']}", cookie=piero)[1]["meta_accounts"] == []
+
+    # the export carries the table
+    rows = call(f"{base}/api/export", cookie=nato)[1]["meta_account"]
+    assert [(r["id"], r["client"]) for r in rows] == [
+        ("111", None),
+        ("222", {"id": bakery["id"], "name": "Padaria"}),
+    ]
+
+    # the bakery's account is unticked in Meta: its row stays, greyed, without numbers
+    fake_meta.accounts = fake_meta.accounts[:1]
+    doc = call(f"{base}/api/meta?refresh=1", cookie=nato)[1]
+    assert [a["id"] for a in doc["accounts"]] == ["111", "222"]
+    gone = doc["accounts"][1]
+    assert gone["stale"] and gone["client"]["id"] == bakery["id"] and gone["suggested"] is None
+    assert gone["name"] == "Padaria Trigo de Ouro" and gone["status_label"] == "Desativada"
+    assert "spend_cents" not in gone and gone["seen"]
+
+
+def test_linking_an_account(team, fake_meta):
+    base, nato, piero = connected(team, fake_meta)
+    clinic = new_client(base, nato, name="Clínica Bem Estar")
+    call(f"{base}/api/meta", cookie=nato)  # the first read creates the rows
+    status, row, _ = call(
+        f"{base}/api/meta/accounts/111", {"client": clinic["id"]}, nato, method="PATCH"
+    )
+    assert status == 200
+    assert row["id"] == "111" and row["client"] == {"id": clinic["id"], "name": "Clínica Bem Estar"}
+    assert row["name"] == "Clínica Bem Estar" and row["currency"] == "BRL" and row["seen"]
+    doc = call(f"{base}/api/meta", cookie=nato)[1]
+    assert doc["accounts"][0]["client"]["id"] == clinic["id"]
+    assert doc["accounts"][0]["suggested"] is None
+    assert call(f"{base}/api/clients/{clinic['id']}", cookie=nato)[1]["ad_account"] == "111"
+
+    status, row, _ = call(f"{base}/api/meta/accounts/111", {"client": None}, nato, method="PATCH")
+    assert status == 200 and row["client"] is None
+    assert call(f"{base}/api/clients/{clinic['id']}", cookie=nato)[1]["ad_account"] == "111"
+
+    # who may, and what is refused
+    status, doc, _ = call(f"{base}/api/meta/accounts/111", {"client": 1}, piero, method="PATCH")
+    assert status == 403
+    status, doc, _ = call(f"{base}/api/meta/accounts/999", {"client": 1}, nato, method="PATCH")
+    assert status == 404 and "conta" in doc["error"]
+    status, doc, _ = call(f"{base}/api/meta/accounts/111", {"client": 999}, nato, method="PATCH")
+    assert status == 400 and "cliente" in doc["error"]
+    status, doc, _ = call(f"{base}/api/meta/accounts/111", {}, nato, method="PATCH")
+    assert status == 400
+    assert call(f"{base}/api/meta/accounts/11", {"client": 1}, nato, method="PATCH")[0] == 404
+    assert call(f"{base}/api/meta/accounts/111", {"client": 1}, method="PATCH")[0] == 401
+
+
+def test_the_clients_meta_numbers(team, fake_meta):
+    base, nato, piero, _ = team
+    clinic = new_client(base, nato, name="Clínica Bem Estar")
+    bakery = new_client(base, nato, name="Padaria", ad_account="222")
+    # not connected yet: no error, just nothing
+    status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)
+    assert status == 200 and doc == {"connected": False, "accounts": []}
+    through_meta(base, start(base, nato))
+    # connected, cache cold: the member's request reads Meta (and syncs the rows: the
+    # bakery auto-links); the clinic has nothing linked yet
+    status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)
+    assert status == 200 and doc == {"connected": True, "accounts": []}
+    status, doc, _ = call(f"{base}/api/clients/{bakery['id']}/meta", cookie=piero)
+    assert status == 200 and doc["connected"]
+    assert [(a["id"], a["stale"]) for a in doc["accounts"]] == [("222", False)]
+    assert doc["accounts"][0]["name"] == "Padaria Trigo de Ouro"
+    call(f"{base}/api/meta/accounts/111", {"client": clinic["id"]}, nato, method="PATCH")
+    seen = len(fake_meta.seen)
+    doc = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)[1]
+    assert len(fake_meta.seen) == seen  # from the cache
+    (acc,) = doc["accounts"]
+    assert acc["spend_cents"] == 123456 and acc["reach"] == 20118 and acc["cpc_cents"] == 137
+    assert acc["balance"]["remaining_cents"] == 376544 and not acc["stale"]
+    assert fake_meta.token not in json.dumps(doc)
+    # the account left Meta's list: shown as stale, without numbers
+    fake_meta.accounts = fake_meta.accounts[1:]
+    call(f"{base}/api/meta?refresh=1", cookie=nato)
+    (acc,) = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)[1]["accounts"]
+    assert acc["stale"] and acc["name"] == "Clínica Bem Estar" and "spend_cents" not in acc
+    # Meta's trouble is reported on a client with accounts, not on one without; 404 unknown
+    nobody = new_client(base, nato, name="Sem conta")
+    fake_meta.token_invalid = True
+    call(f"{base}/api/meta?refresh=1", cookie=nato)  # drops the cache (revoked)
+    status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)
+    assert status == 409 and doc["error"] == REVOKED
+    status, doc, _ = call(f"{base}/api/clients/{nobody['id']}/meta", cookie=piero)
+    assert status == 200 and doc == {"connected": True, "accounts": []}
+    assert call(f"{base}/api/clients/999/meta", cookie=piero)[0] == 404
+    assert call(f"{base}/api/clients/{clinic['id']}/meta")[0] == 401

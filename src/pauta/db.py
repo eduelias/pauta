@@ -17,12 +17,14 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
+import unicodedata
 from datetime import date, timedelta
 from pathlib import Path
 
-from . import finance
+from . import finance, obs
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -104,6 +106,13 @@ CREATE TABLE IF NOT EXISTS payment (
     voided_by INTEGER REFERENCES account(id), voided_at TEXT
 );
 CREATE INDEX IF NOT EXISTS payment_client ON payment(client, paid_on);
+CREATE TABLE IF NOT EXISTS meta_account (
+    account_id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT 'BRL', status INTEGER NOT NULL DEFAULT 0,
+    client INTEGER REFERENCES client(id) ON DELETE SET NULL, seen TEXT,
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS meta_account_client ON meta_account(client);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -399,6 +408,37 @@ def clean(spec: dict, data: dict, db: sqlite3.Connection, partial: bool) -> dict
     return out
 
 
+def digits(value) -> str:
+    """An ad account id as Meta's bare digits: "act_123", " 123 " and 123 are all "123"."""
+    return "".join(c for c in str(value or "") if c.isdigit())
+
+
+def fold(name: str) -> str:
+    """A name for loose comparison: no accents, casefolded, only letters, digits and spaces."""
+    plain = unicodedata.normalize("NFKD", str(name or ""))
+    plain = "".join(c for c in plain if not unicodedata.combining(c)).casefold()
+    return " ".join("".join(c if c.isalnum() else " " for c in plain).split())
+
+
+def suggest(name: str, clients: list) -> int | None:
+    """The client an ad account called `name` probably belongs to, or None. Conservative:
+    one name contains the other (both at least 4 letters), or they share two words of
+    four letters or more. `clients` are (id, name) pairs in the order to prefer."""
+    key = fold(name)
+    if len(key) < 4:
+        return None
+    for cid, cname in clients:
+        ck = fold(cname)
+        if len(ck) >= 4 and (ck in key or key in ck):
+            return cid
+    words = {w for w in key.split() if len(w) >= 4}
+    for cid, cname in clients:
+        shared = words & {w for w in fold(cname).split() if len(w) >= 4}
+        if len(shared) >= 2:
+            return cid
+    return None
+
+
 def gravatar(email: str | None) -> str:
     """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
     email = (email or "").strip().lower()
@@ -438,6 +478,7 @@ class Store:
                 db.execute("ALTER TABLE client ADD COLUMN billed INTEGER NOT NULL DEFAULT 1")
             for row in db.execute("SELECT id FROM client WHERE state='Ativo' AND billed"):
                 self._open_cycle(db, row[0], None)
+            # v8: meta_account (decision 8, phase 2) is a new table: SCHEMA creates it
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -538,7 +579,18 @@ class Store:
             reqs = self._requests(db, "WHERE r.client=?", (cid,))
             billing = self._billing(db, dict(row))
             payments = self._payments(db, cid)
-        return {**dict(row), "requests": reqs, "billing": billing, "payments": payments}
+            accounts = db.execute(
+                "SELECT account_id AS id, name FROM meta_account WHERE client=? "
+                "ORDER BY name COLLATE NOCASE, account_id",
+                (cid,),
+            ).fetchall()
+        return {
+            **dict(row),
+            "requests": reqs,
+            "billing": billing,
+            "payments": payments,
+            "meta_accounts": [dict(a) for a in accounts],
+        }
 
     def save_client(self, data: dict, cid: int | None = None, by: int | None = None) -> dict:
         with self.db() as db:
@@ -585,6 +637,96 @@ class Store:
             db.execute("DELETE FROM request WHERE client=?", (cid,))  # events cascade
             db.execute("DELETE FROM client WHERE id=?", (cid,))
         return n
+
+    # ---- Meta ad accounts (decision 8, phase 2) --------------------------------------------
+    # Every ad account the connected system user reads, and the Pauta client each belongs to.
+    # Rows outlive the account's presence in Meta's list, so an untick in Meta or a short
+    # outage doesn't lose the mapping; the UI shows those as "não aparece mais na Meta".
+
+    @staticmethod
+    def _meta_row(r) -> dict:
+        d = dict(r)
+        name = d.pop("client_name")
+        d["client"] = {"id": d["client"], "name": name} if d["client"] is not None else None
+        return d
+
+    def meta_accounts(self) -> list[dict]:
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
+                "m.created, c.name AS client_name FROM meta_account m "
+                "LEFT JOIN client c ON c.id=m.client ORDER BY m.name COLLATE NOCASE, m.account_id"
+            ).fetchall()
+        return [self._meta_row(r) for r in rows]
+
+    def sync_meta_accounts(self, accounts: list[dict], now: str | None = None) -> None:
+        """What Meta listed just now: upsert name, currency, status and `seen`; rows for
+        accounts no longer listed stay. An unlinked account whose id is some client's
+        `ad_account` is linked to that client (the field seeded the match, decision 8)."""
+        now = now or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        with self.db() as db:
+            for a in accounts:
+                aid = digits(a.get("id") or a.get("account_id"))
+                if not aid:
+                    continue
+                db.execute(
+                    "INSERT INTO meta_account(account_id, name, currency, status, seen) "
+                    "VALUES (?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET name=excluded.name, "
+                    "currency=excluded.currency, status=excluded.status, seen=excluded.seen",
+                    (
+                        aid,
+                        str(a.get("name") or ""),
+                        str(a.get("currency") or "BRL"),
+                        int(a.get("status") or 0),
+                        now,
+                    ),
+                )
+            by_field: dict[str, int] = {}
+            clients = db.execute("SELECT id, ad_account FROM client WHERE ad_account<>''")
+            for c in clients:
+                by_field.setdefault(digits(c["ad_account"]), c["id"])
+            unlinked = db.execute("SELECT account_id FROM meta_account WHERE client IS NULL")
+            for aid in [r["account_id"] for r in unlinked]:
+                cid = by_field.get(aid)
+                if cid:
+                    db.execute("UPDATE meta_account SET client=? WHERE account_id=?", (cid, aid))
+                    obs.event("meta_account_autolinked", client=cid)
+
+    def link_meta_account(self, account_id: str, client_id, by: int | None = None) -> dict:
+        """Tie an ad account to a client (or to none). Linking fills the client's empty
+        `ad_account` with the id, so the field stays meaningful; unlinking never clears it."""
+        aid = digits(account_id)
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM meta_account WHERE account_id=?", (aid,)).fetchone():
+                raise NotFound("conta de anúncios não encontrada")
+            cid = None
+            if client_id is not None:
+                cid = _id(client_id)
+                known = cid and db.execute("SELECT 1 FROM client WHERE id=?", (cid,)).fetchone()
+                if not known:
+                    raise Invalid("cliente não encontrado")
+                db.execute(
+                    "UPDATE client SET ad_account=?, updated=datetime('now') "
+                    "WHERE id=? AND ad_account=''",
+                    (aid, cid),
+                )
+            db.execute("UPDATE meta_account SET client=? WHERE account_id=?", (cid, aid))
+            row = db.execute(
+                "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
+                "m.created, c.name AS client_name FROM meta_account m "
+                "LEFT JOIN client c ON c.id=m.client WHERE m.account_id=?",
+                (aid,),
+            ).fetchone()
+        obs.event("meta_account_linked" if cid else "meta_account_unlinked", account=by, client=cid)
+        return self._meta_row(row)
+
+    def suggest_client(self, name: str) -> int | None:
+        """The client an unlinked ad account probably belongs to, by name; never saved."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT id, name FROM client ORDER BY state='Encerrado', name COLLATE NOCASE"
+            ).fetchall()
+        return suggest(name, [(r["id"], r["name"]) for r in rows])
 
     # ---- finance (decision 7) ---------------------------------------------------------------
 

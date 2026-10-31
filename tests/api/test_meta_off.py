@@ -16,3 +16,15 @@ def test_off_by_default(team):
         "connected": False,
         "error": "",
     }
+
+
+def test_a_clients_meta_card_is_simply_off(team):
+    base, nato, piero, _ = team
+    status, c, _ = call(f"{base}/api/clients", {"name": "Padaria", "ad_account": "222"}, nato)
+    assert status == 200 and c["meta_accounts"] == []
+    status, doc, _ = call(f"{base}/api/clients/{c['id']}/meta", cookie=piero)
+    assert status == 200 and doc == {"connected": False, "accounts": []}
+    # the mapping itself needs no Meta: nothing was ever read, so there is nothing to link
+    body = {"client": c["id"]}
+    assert call(f"{base}/api/meta/accounts/222", body, nato, method="PATCH")[0] == 404
+    assert call(f"{base}/api/export", cookie=nato)[1]["meta_account"] == []

@@ -15,6 +15,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   mês: investido, alcance, impressões, cliques no link, custo por clique e o saldo (ou "sem
   permissão", quando a Meta não deixa ler). A Pauta só lê; não altera nada na Meta. Primeiro
   passo da fase 2 da decisão 8.
+- Equipe → Meta: a coluna **Cliente** diz de quem é cada conta de anúncios. A Pauta sugere
+  pelo nome (você confirma) e já vincula sozinha quando o número da conta está no cadastro do
+  cliente. Na página do cliente aparece um cartão **Meta** com os números deste mês das contas
+  vinculadas (investido, alcance, cliques no link, custo por clique e saldo). Uma conta que
+  sumir da lista da Meta continua aqui, marcada "não aparece mais na Meta".
 
 ## [1.6.1] - 2026-10-31
 

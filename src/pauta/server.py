@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__, obs
 from .auth import MOVE_LINK_DAYS, Auth, AuthError
 from .db import Invalid, NotFound, Store
-from .meta import Meta, MetaError
+from .meta import ACCOUNT_STATUS, Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
 
@@ -58,6 +58,19 @@ QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or coun
 SENT = object()  # a route that wrote its own response (a redirect, an image)
 
 
+def _stale(row: dict) -> dict:
+    """A meta_account row as an account entry without numbers (not in Meta's latest list)."""
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "currency": row["currency"],
+        "status": row["status"],
+        "status_label": ACCOUNT_STATUS.get(row["status"], ""),
+        "client": row["client"],
+        "seen": row["seen"],
+    }
+
+
 class Reply(Exception):
     def __init__(self, status: int, doc: dict | list):
         super().__init__(status)
@@ -83,6 +96,7 @@ def make_handler(
     metrics = metrics or obs.Metrics()
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
+    meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
     slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
     # method, path, handler, access, raw (the body is a file, not JSON)
     routes: list[tuple[str, re.Pattern, str, str, bool]] = []
@@ -436,6 +450,7 @@ def make_handler(
                 "requests": [store.request(r["id"]) for r in store.requests()],
                 "finance": store.finance_settings(),
                 "payments": [p for c in store.clients() for p in store.client(c["id"])["payments"]],
+                "meta_account": store.meta_accounts(),
             }
 
         # ---- requests ---------------------------------------------------------------------
@@ -536,6 +551,31 @@ def make_handler(
                 client = {**client, "billing": None, "payments": []}
             return client
 
+        @route("GET", f"/api/clients/{ID}/meta")
+        def client_meta(self, viewer, _body, cid):
+            """This client's linked ad accounts with this month's numbers (from the Meta
+            cache; a cold cache reads Meta). Meta off or not connected is not an error."""
+            store.client(int(cid))  # 404 for an unknown client
+            if not meta.connected:
+                return {"connected": False, "accounts": []}
+            try:
+                live = {a["id"]: a for a in meta.accounts()}  # a cold cache syncs the rows
+            except MetaError:
+                if not store.client(int(cid))["meta_accounts"]:
+                    return {"connected": True, "accounts": []}  # nothing to show anyway
+                raise
+            linked = store.client(int(cid))["meta_accounts"]
+            rows = {r["id"]: r for r in store.meta_accounts()}
+            return {
+                "connected": True,
+                "accounts": [
+                    {**live[a["id"]], "stale": False}
+                    if a["id"] in live
+                    else {**_stale(rows[a["id"]]), "stale": True}
+                    for a in linked
+                ],
+            }
+
         # ---- finance (decision 7) ---------------------------------------------------------
 
         def _finance(self, viewer):
@@ -622,8 +662,31 @@ def make_handler(
             out = meta.status()
             if out["connected"]:
                 refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
-                out["accounts"] = meta.accounts(refresh=refresh)
+                out["accounts"] = self._with_clients(meta.accounts(refresh=refresh))
             return out
+
+        def _with_clients(self, accounts: list[dict]) -> list[dict]:
+            """Each account with its Pauta client ({id, name} or null) and, when unlinked,
+            a suggested client by name (never saved: the admin picks). Accounts kept from
+            an earlier read but missing now come last, with `stale` and no numbers."""
+            rows = {r["id"]: r for r in store.meta_accounts()}
+            names = {c["id"]: c["name"] for c in store.clients()}
+            out = []
+            for a in accounts:
+                row = rows.pop(a["id"], None)
+                client = row["client"] if row else None
+                sid = None if client else store.suggest_client(a["name"])
+                suggested = {"id": sid, "name": names[sid]} if sid in names else None
+                out.append({**a, "client": client, "suggested": suggested, "stale": False})
+            for row in rows.values():
+                out.append({**_stale(row), "suggested": None, "stale": True})
+            return out
+
+        @route("PATCH", "/api/meta/accounts/([0-9]{3,20})", "admin")
+        def meta_link(self, viewer, body, aid):
+            if "client" not in body:
+                raise Invalid("informe o cliente (ou null para desvincular)")
+            return store.link_meta_account(aid, body["client"], viewer["account"])
 
         @route("POST", "/api/meta/connect", "admin")
         def meta_connect(self, viewer, _body):

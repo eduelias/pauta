@@ -539,6 +539,15 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .mtable tr:last-child td { border-bottom: 0; }
 .mtable td span { display: block; }
 .mtable .r { text-align: right; }
+.mtable td.pick { white-space: normal; min-width: 180px; }
+.mtable td.pick select.input { min-height: 34px; padding: 5px 30px 5px 10px; font-size: 13px; }
+.mtable td.pick .hint { margin-top: 4px; }
+.mtable tr.stale td, .mtable tr.stale td span { color: var(--muted); }
+.mtable tr.stale td b { font-weight: 500; }
+.clientbox .metaacc + .metaacc { margin-top: 10px; border-top: 1px solid var(--line-2); padding-top: 4px; }
+.clientbox .metaacc .row { padding: 6px 0; }
+.clientbox .metaacc .row b { font-variant-numeric: tabular-nums; text-align: right; }
+.clientbox .metaacc .row b span { display: block; font-weight: 400; }
 
 /* ---- financeiro (decision 7) ----------------------------------------------------------- */
 .stats.fin .stat .n { font-size: 26px; }

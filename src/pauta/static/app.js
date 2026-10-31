@@ -951,6 +951,7 @@ async function viewClient(_q, id) {
           <div class="quiet-off">${clientForm(c)}</div></section>
       </div>
       <aside><div class="panel clientbox"><div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}</div>
+        <div id="clientmeta"></div>
         <div id="paybox">${payBox(c)}</div>
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
     </div></div>`;
@@ -976,6 +977,7 @@ async function viewClient(_q, id) {
   }));
   $("#del")?.addEventListener("click", () => deleteClient(c));
   bindCopy(app);
+  loadClientMeta(c);
 }
 
 // Deleting a client with requests takes them (and their history) along, so the name has to
@@ -1373,8 +1375,8 @@ const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
 
 async function loadMeta(refresh = false) {
   if (!$("#metabody")) return;
-  let doc, error = "";
-  try { doc = await api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`); }
+  let doc, clients = [], error = "";
+  try { [doc, clients] = await Promise.all([api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients")]); }
   catch (e) { error = e.message; }
   const box = $("#metabody");
   if (!box) return;  // left the page while waiting
@@ -1382,7 +1384,17 @@ async function loadMeta(refresh = false) {
     ? `<p class="warnbox">${esc(error)}</p>
       <div class="row-gap mt"><button class="btn primary" data-metaconnect>${icon("target")}Conectar de novo</button>
         <button class="btn ghost danger" id="metaoff">Desconectar</button></div>`
-    : metaBody(doc);
+    : metaBody(doc, clients);
+  // the Cliente column: picking saves at once; a suggestion is only a suggestion until picked
+  $$("select[data-link]").forEach((sel) => sel.addEventListener("change", async (e) => {
+    const el = e.currentTarget, value = el.value;
+    el.disabled = true;
+    try {
+      const row = await api("PATCH", `/api/meta/accounts/${el.dataset.link}`, { client: value ? Number(value) : null });
+      toast(row.client ? `Conta vinculada a ${row.client.name}` : "Conta desvinculada");
+      loadMeta();
+    } catch (err) { toast(err.message, true); el.disabled = false; }
+  }));
   // Conectar, Conectar de novo and Adicionar contas are the same trip through Meta's login
   $$("[data-metaconnect]").forEach((b) => b.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
@@ -1399,20 +1411,30 @@ async function loadMeta(refresh = false) {
   });
 }
 
-function metaBody(d) {
+function metaBody(d, clients = []) {
   if (!d.connected) {
     return `<p class="muted">Conecte o portfólio empresarial da agência para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
       <button class="btn primary" data-metaconnect>${icon("target")}Conectar Meta</button>`;
   }
   const since = d.connected_at ? new Date(d.connected_at).toLocaleDateString("pt-BR") : "";
   const accs = d.accounts || [];
-  const rows = accs.map((a) => `<tr><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
-      <td class="r">${esc(centsMoney(a.spend_cents, a.currency))}</td>
+  // Ativo clients first, then the rest, each group as /api/clients orders them
+  const sorted = [...clients.filter((c) => c.state === "Ativo"), ...clients.filter((c) => c.state !== "Ativo")];
+  const pick = (a) => {
+    const cur = a.client?.id, sug = !cur && a.suggested ? a.suggested.id : null;
+    return `<select class="input small" data-link="${esc(a.id)}" aria-label="Cliente da conta ${esc(a.name)}"><option value="">— sem cliente —</option>
+      ${sorted.map((c) => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${esc(c.name)}${c.id === sug ? " (sugestão)" : ""}</option>`).join("")}</select>
+      ${sug ? `<span class="muted small hint">Sugestão: ${esc(a.suggested.name)}</span>` : ""}`;
+  };
+  const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""}><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
+      <td class="pick">${pick(a)}</td>
+      ${a.stale ? `<td colspan="6" class="muted">não aparece mais na Meta</td>`
+    : `<td class="r">${esc(centsMoney(a.spend_cents, a.currency))}</td>
       <td class="r">${esc(count(a.reach))}</td>
       <td class="r">${esc(count(a.impressions))}</td>
       <td class="r">${esc(count(a.link_clicks))}</td>
       <td class="r">${esc(centsMoney(a.cpc_cents, a.currency))}</td>
-      <td class="r">${metaBalance(a)}</td></tr>`).join("");
+      <td class="r">${metaBalance(a)}</td>`}</tr>`).join("");
   return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
     <div class="member"><div class="who"><b>Conectado: ${esc(d.business_name || "portfólio")}${since ? ` desde ${esc(since)}` : ""}</b>
       <span>Números deste mês. A Pauta guarda por 10 minutos; Atualizar busca de novo.</span></div>
@@ -1420,10 +1442,38 @@ function metaBody(d) {
         : `<button class="btn primary small" data-metaconnect="add">${icon("plus")}Adicionar contas</button>`}
         <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button>
         <button class="btn ghost small danger" id="metaoff">Desconectar</button></div></div>
-    ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th class="r">Investido este mês</th><th class="r">Alcance</th><th class="r">Impressões</th><th class="r">Cliques no link</th><th class="r">Custo por clique</th><th class="r">Saldo</th></tr></thead>
+    ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th>Cliente</th><th class="r">Investido este mês</th><th class="r">Alcance</th><th class="r">Impressões</th><th class="r">Cliques no link</th><th class="r">Custo por clique</th><th class="r">Saldo</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
     : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta neste portfólio.</div>`}
-    <p class="muted small mt">Cliente novo? Toque em <b>Adicionar contas</b> e marque, na Meta, todas as contas que a Pauta deve ler. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar.</p>`;
+    <p class="muted small mt">Cliente novo? Toque em <b>Adicionar contas</b> e marque, na Meta, todas as contas que a Pauta deve ler. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar. Na coluna <b>Cliente</b>, diga de quem é cada conta: os números aparecem na página do cliente.</p>`;
+}
+
+// The Meta card on a client's page: this month's numbers of the accounts linked to it
+// (Equipe → Meta). Loaded after the page draws; never blocks it.
+async function loadClientMeta(c) {
+  const box = $("#clientmeta");
+  if (!box || !BOOT.meta?.enabled) return;
+  let doc;
+  try { doc = await api("GET", `/api/clients/${c.id}/meta`); }
+  catch (e) {
+    if ($("#clientmeta")) box.innerHTML = `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3></div><p class="warnbox">${esc(e.message)}</p></div>`;
+    return;
+  }
+  if (!$("#clientmeta") || !doc.connected) return;
+  if (!doc.accounts.length) {
+    box.innerHTML = ME.is_admin ? `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3></div>
+      <p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/equipe">Vincule em Equipe → Meta.</a></p></div>` : "";
+    return;
+  }
+  const line = (label, value) => `<div class="row"><span class="grow muted">${label}</span><b>${value}</b></div>`;
+  box.innerHTML = `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3><span class="muted small">este mês</span></div>
+    ${doc.accounts.map((a) => `<div class="metaacc"><div class="row"><b class="grow">${esc(a.name)}</b><span class="muted small">${esc(a.id)}</span></div>
+      ${a.stale ? `<p class="muted small">não aparece mais na Meta</p>`
+      : line("Investido este mês", esc(centsMoney(a.spend_cents, a.currency)))
+        + line("Alcance", esc(count(a.reach)))
+        + line("Cliques no link", esc(count(a.link_clicks)))
+        + line("Custo por clique", esc(centsMoney(a.cpc_cents, a.currency)))
+        + line("Saldo", metaBalance(a))}</div>`).join("")}</div>`;
 }
 
 function metaBalance(a) {

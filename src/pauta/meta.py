@@ -43,6 +43,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
@@ -136,6 +137,9 @@ class Meta:
         self._done: dict[str, float] = {}  # state -> expiry
         self._cache: tuple[float, list[dict]] | None = None
         self.error = ""  # why the connection stopped working, until reconnected
+        # called with the fresh list each time Meta is actually read (not from the cache);
+        # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
+        self.on_read: Callable[[list[dict]], None] | None = None
 
     @classmethod
     def from_env(cls, db_path: Path) -> Meta:
@@ -362,6 +366,8 @@ class Meta:
         out = [self._account(a) for a in doc.get("data") or [] if isinstance(a, dict)]
         self._cache = (time.time(), out)
         obs.event("meta_read", accounts=len(out))
+        if self.on_read:
+            self.on_read(out)
         return out
 
     def _account(self, a: dict) -> dict:
