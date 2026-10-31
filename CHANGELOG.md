@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-31
+
 ### Changed
 
 - A Pauta mudou para **https://pauta.cc** (decision 4). No endereço antigo aparece "Mudar
@@ -212,7 +214,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/eduelias/pauta/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/eduelias/pauta/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/eduelias/pauta/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0
