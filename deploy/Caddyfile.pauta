@@ -1,33 +1,40 @@
-# Appended to the Caddyfile on du7 (which also serves dom.du7.dev; its global block binds
-# 192.168.2.68 only and disables the :80 redirect server). DNS for pauta.cc and pauta.team is
-# in du7/dns-zone (OpenTofu), DNS-only so these certificates come from TLS-ALPN on 443.
-(pauta_tls) {
-	tls {
-		issuer acme {
-			disable_http_challenge
-		}
-	}
-}
+# Pauta's sites in the Caddyfile on du7 (~/dns-stack/caddy/Caddyfile, a docker container that
+# also serves dom.du7.dev; its global block binds 192.168.2.68 only and disables the :80
+# redirect server). DNS for pauta.cc and pauta.team is in du7/dns-zone (OpenTofu), DNS-only
+# so these certificates come from TLS-ALPN on 443. That Caddyfile already defines:
+#
+# (public_site) {
+# 	tls {
+# 		issuer acme {
+# 			disable_http_challenge
+# 		}
+# 	}
+# 	encode gzip
+# 	header Strict-Transport-Security "max-age=31536000"
+# }
 
 pauta.cc {
-	import pauta_tls
-	encode gzip
-	header Strict-Transport-Security "max-age=31536000"
+	import public_site
 	reverse_proxy 127.0.0.1:8088
 }
 
 www.pauta.cc, pauta.team, www.pauta.team {
-	import pauta_tls
+	import public_site
 	redir https://pauta.cc{uri} 301
 }
 
-# The old address, during the move (decision 4): the same app, so people can sign in with
-# their old passkey and tap "Mudar para pauta.cc". Once `pauta users` shows everyone on
-# pauta.cc, replace the reverse_proxy with `redir https://pauta.cc{uri} 301` and keep that
-# for at least a year.
+# The old address during the move (decision 4): the same app, so people can still sign in
+# and tap "Mudar para pauta.cc". Once `pauta users` shows everyone on pauta.cc, replace the
+# reverse_proxy with `redir https://pauta.cc{uri} 301` and keep that for at least a year.
 pauta.genic.dev {
-	import pauta_tls
-	encode gzip
-	header Strict-Transport-Security "max-age=31536000"
+	import public_site
 	reverse_proxy 127.0.0.1:8088
+}
+
+# Acceptance (decision 1): demo data, unreleased builds, the pauta-acc unit. Moves to
+# acc.pauta.cc with step 7 of "Moving to pauta.cc" in deploy/README.md.
+acc.pauta.genic.dev {
+	import public_site
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy 127.0.0.1:8089
 }
