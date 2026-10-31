@@ -1227,7 +1227,9 @@ async function viewTeam() {
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
-            ${ME.move && !m.disabled && !m.domains.includes(ME.move.to) ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>` : ""}
+            ${ME.auth && !m.disabled ? (ME.move && !m.domains.includes(ME.move.to)
+              ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>`
+              : `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}" data-new="1">${icon("key")}Link de nova passkey</button>`) : ""}
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
         </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
@@ -1265,7 +1267,7 @@ async function viewTeam() {
     try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
-  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name)));
+  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
@@ -1392,13 +1394,17 @@ function addMoveBar() {
 }
 
 // An admin's link for someone who hasn't moved: sent on WhatsApp, it's one tap and Face ID
-async function makeMoveLink(id, name) {
+// The same one-time link serves a domain move and a new (or lost) phone; only the words differ
+async function makeMoveLink(id, name, fresh = false) {
   const box = $(`#mv-${id}`);
   try {
     const mv = await api("POST", `/api/members/${id}/move`, {});
     const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
-    const msg = `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
-    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>Link de ${esc(firstName(name))} para ${esc(mv.to)}</b>
+    const msg = fresh
+      ? `Oi, ${firstName(name)}! Este é o seu link para criar uma passkey nova na Pauta (celular novo ou perdido). Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
+      : `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
+    const title = fresh ? `Link de nova passkey de ${esc(firstName(name))}` : `Link de ${esc(firstName(name))} para ${esc(mv.to)}`;
+    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>${title}</b>
       <div class="muted small">Só para ${esc(firstName(name))}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
       <code class="invlink">${esc(mv.url)}</code>
       <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
@@ -1417,13 +1423,17 @@ async function showMove(token) {
   let info;
   try { info = await api("GET", `/api/move/${encodeURIComponent(token)}`); }
   catch (e) {
-    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
+    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta${ME.move ? `, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo` : ""}.</p><a class="btn big" href="#/">Ir para o login</a>`);
     return;
   }
-  const g = gate(`<h1>Olá, ${esc(firstName(info.name))}!</h1>
+  const g = gate(ME.move ? `<h1>Olá, ${esc(firstName(info.name))}!</h1>
     <p>A Pauta agora mora em <b>${esc(info.to)}</b>. Crie sua passkey aqui para continuar: é a mesma conta, com tudo o que você já fez.</p>
     <button class="btn primary big" id="moveok">${icon("key")}Criar passkey em ${esc(info.to)}</button>
-    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`);
+    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`
+    : `<h1>Olá, ${esc(firstName(info.name))}!</h1>
+    <p>Crie uma passkey neste aparelho para entrar na Pauta: é a mesma conta, com tudo o que você já fez.</p>
+    <button class="btn primary big" id="moveok">${icon("key")}Criar passkey neste aparelho</button>
+    <p class="fine">Dica: adicione a Pauta à tela de início do celular para abrir com um toque.</p>`);
   $("#moveok", g).addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
