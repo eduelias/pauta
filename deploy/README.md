@@ -1,7 +1,8 @@
 # Running on du7
 
 Pauta runs on du7 (192.168.2.68) as the systemd unit `pauta`, on `127.0.0.1:8088` only.
-Caddy puts it on the internet at https://pauta.genic.dev, next to dom.du7.dev.
+Caddy puts it on the internet at https://pauta.cc, next to dom.du7.dev. The old address,
+https://pauta.genic.dev, serves the same app until everyone has moved (see "Moving to pauta.cc").
 
 ```
 phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Caddy, TLS) ──▶ 127.0.0.1:8088 (pauta)
@@ -9,9 +10,9 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 
 | What | Where |
 |---|---|
-| DNS | Squarespace, `genic.dev` → DNS → custom record `pauta` CNAME `du7.sytes.net`, TTL 1 hr (the No-IP name the router keeps on the home IP, same as `dom.du7.dev`). Editing it asks for the account passkey |
+| DNS | `pauta.cc` and `pauta.team` (registered at Cloudflare, auto-renew and lock on): zones and records are code in `du7/dns-zone` (`pauta.tf`, OpenTofu). `pauta.cc`, `www.`, `acc.` and `pauta.team`, `www.` are CNAMEs to `du7.sytes.net` (the No-IP name the router keeps on the home IP), DNS-only. The old `pauta.genic.dev` is a Squarespace record (`genic.dev` → DNS → `pauta` CNAME `du7.sytes.net`; editing it asks for the account passkey) |
 | Router | the existing TCP 443 → 192.168.2.68:443 forward (shared with dom.du7.dev; nothing new) |
-| Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
+| Caddy | The `caddy` container's Caddyfile (`~/dns-stack/caddy/Caddyfile`, bind-mounted as a single file), the blocks from `deploy/Caddyfile.pauta`. Certificates via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
 | DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
 | Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
@@ -50,10 +51,45 @@ starts `.github/workflows/release.yml`:
      doesn't (the job then fails),
    - keeps the last 5 releases.
 4. **Reachable from the internet**: a GitHub-hosted runner fetches
-   https://pauta.genic.dev/healthz and expects 1.2.0.
+   https://pauta.cc/healthz and expects 1.2.0.
 
 The `production` environment on GitHub only accepts deploys from `v*` tags and `main`, and
 lists every deploy under the repo's *Deployments*.
+
+## Moving to pauta.cc
+
+Decision 4. Passkeys belong to the domain they were made on, so everyone makes one new
+passkey on `pauta.cc`, from inside their account on the old address. In order:
+
+1. **DNS**: `cd ~/reps/du7/dns-zone && op-env run -- tofu plan`, then `apply` (`pauta.tf`).
+2. **Caddy** on du7: add the blocks from `deploy/Caddyfile.pauta` to
+   `~/dns-stack/caddy/Caddyfile` *in place* (same inode), then check the container sees them
+   (`sudo docker exec caddy grep -c pauta.cc /etc/caddy/Caddyfile`; if 0, the mount is stale:
+   `sudo docker restart caddy`) and `sudo docker exec caddy caddy reload --config
+   /etc/caddy/Caddyfile --adapter caddyfile`. `curl -sI https://pauta.cc/healthz` answers
+   (with the old release) once the certificate is issued.
+3. **Unit**: install the new `deploy/pauta.service` (both domains), `sudo systemctl
+   daemon-reload`.
+4. **Release** the version with the move (`make release`). The deploy checks `pauta.cc`, so
+   steps 2 and 3 come first.
+5. **Move the team**: send each person their own link, which is one tap and Face ID. From
+   the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   A link works once, for 3 days, for that account only: send it to that person only.
+   Without a link, the bar on the old address does the same (*Mudar para pauta.cc*). Either
+   way, afterwards add `pauta.cc` to the phone's home screen (the old icon keeps opening the
+   old address). `pauta users` and the Equipe page show who has moved.
+6. **Close the old address** when everyone shows `pauta.cc`: in the unit, `PAUTA_RP_ID=pauta.cc`
+   and `PAUTA_ORIGIN=https://pauta.cc`; in Caddy, the `pauta.genic.dev` block becomes
+   `redir https://pauta.cc{uri} 301`. Keep the redirect (and the Squarespace record) for at
+   least a year.
+7. **Acceptance** moves the same way: `acc.pauta.cc` in Caddy, `PAUTA_RP_ID` and
+   `PAUTA_ORIGIN` in `pauta-acc.service`, and its test account made again.
+8. **Monitoring**: du7's watchdog `pauta*` checks and the repo's homepage link point at
+   `pauta.cc` (the GitHub uptime check already does).
+
+Until step 6 a rollback is the usual one: the release before the move runs on the new
+database (the `passkey.rp_id` column is additive) and the old address still works.
 
 ## Rolling back
 
@@ -141,7 +177,8 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
-  ask an admin for a fresh invite and disable the old account. Disabling ends every session
+  an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
+  or `pauta move-link <name>` on du7). Disabling ends every session
   the account had; "Sair em todos os aparelhos" does the same for your own account.
 - Sign everyone out (a leaked cookie, a suspicion): delete
   `~/.local/share/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is

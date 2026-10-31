@@ -271,6 +271,7 @@ function hashParts() {
 async function route() {
   const { path, query } = hashParts();
   if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
+  if (path.startsWith("/mudar/")) return showMove(path.slice(7));
   if (ME.auth && !ME.logged_in) return showGate();
   // signed in without the boot data, e.g. the page was opened on an invite link: load it first
   if (!BOOT) return enter();
@@ -287,6 +288,7 @@ async function route() {
       try {
         await view(query, ...m.slice(1));
         app.firstElementChild?.classList.add("fadein");
+        addMoveBar();
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
         app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
@@ -1223,11 +1225,12 @@ async function viewTeam() {
         <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
         ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round", m.avatar)}
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
-          <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}</span></div>
+          <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
+            ${ME.move && !m.disabled && !m.domains.includes(ME.move.to) ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>` : ""}
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
-        </div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
+        </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
       </section>
     </div>
     ${ME.is_admin && ME.auth ? `<section class="panel mt">
@@ -1262,6 +1265,7 @@ async function viewTeam() {
     try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
+  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name)));
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
@@ -1370,6 +1374,70 @@ async function makeInvite() {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---------- moving to a new address (decision 4) ----------------------------------------------
+
+// On the old address: a bar on every screen until this person has a passkey on the new one
+function addMoveBar() {
+  const mv = ME?.move;
+  if (!mv || mv.here || $("#movebar")) return;
+  app.insertAdjacentHTML("afterbegin", `<div class="movebar" id="movebar">
+    <div><b>A Pauta mudou para ${esc(mv.to)}</b>
+      <span>${mv.done ? "Você já tem passkey lá. A partir de agora, abra a Pauta pelo endereço novo." : "Leve sua conta em um minuto: é só criar uma passkey no endereço novo. Tudo continua igual."}</span></div>
+    ${mv.done ? `<a class="btn primary" href="${esc(mv.url)}/">Abrir ${esc(mv.to)}</a>` : `<button class="btn primary" id="moveme">Mudar para ${esc(mv.to)}</button>`}</div>`);
+  $("#moveme")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try { location.href = (await api("POST", "/api/move", {})).url; }
+    catch (err) { toast(err.message, true); e.currentTarget.disabled = false; }
+  });
+}
+
+// An admin's link for someone who hasn't moved: sent on WhatsApp, it's one tap and Face ID
+async function makeMoveLink(id, name) {
+  const box = $(`#mv-${id}`);
+  try {
+    const mv = await api("POST", `/api/members/${id}/move`, {});
+    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    const msg = `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
+    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>Link de ${esc(firstName(name))} para ${esc(mv.to)}</b>
+      <div class="muted small">Só para ${esc(firstName(name))}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+      <code class="invlink">${esc(mv.url)}</code>
+      <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
+      <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
+    bindCopy(box);
+  } catch (e) { toast(e.message, true); }
+}
+
+// On the new address: make a passkey for the same account, then in
+async function showMove(token) {
+  const to = ME.move?.to || location.hostname;
+  if (ME.logged_in && ME.auth) {
+    gate(`<h1>Tudo certo</h1><p>Você já está na Pauta em ${esc(to)}, ${esc(firstName(ME.name))}.</p><a class="btn primary big" href="#/">Abrir a Pauta</a>`);
+    return;
+  }
+  let info;
+  try { info = await api("GET", `/api/move/${encodeURIComponent(token)}`); }
+  catch (e) {
+    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
+    return;
+  }
+  const g = gate(`<h1>Olá, ${esc(firstName(info.name))}!</h1>
+    <p>A Pauta agora mora em <b>${esc(info.to)}</b>. Crie sua passkey aqui para continuar: é a mesma conta, com tudo o que você já fez.</p>
+    <button class="btn primary big" id="moveok">${icon("key")}Criar passkey em ${esc(info.to)}</button>
+    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`);
+  $("#moveok", g).addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      ME = await passkeyRegister({ move: token });
+      toast(`Pronto, ${firstName(ME.name)}! Você está em ${info.to}.`);
+      location.hash = "#/";
+      await enter();
+    } catch (err) {
+      if (err.name !== "NotAllowedError") toast(err.message, true);
+    } finally { btn.disabled = false; }
+  });
+}
+
 // ---------- passkeys --------------------------------------------------------------------------
 
 const b64u = {
@@ -1447,7 +1515,8 @@ function gate(html) {
 function showGate() {
   const g = gate(`<h1>pauta</h1><p>Os pedidos do time, num lugar só.</p>
     <button class="btn primary big" id="login">${icon("key")}Entrar com passkey</button>
-    <p class="fine">Ainda não tem acesso? Peça um convite a quem administra a Pauta.</p>`);
+    <p class="fine">Ainda não tem acesso? Peça um convite a quem administra a Pauta.</p>
+    ${ME.move && !ME.move.here ? `<p class="fine">A Pauta mudou para <a href="${esc(ME.move.url)}/">${esc(ME.move.to)}</a>. Entre aqui para levar sua conta, ou direto lá se você já mudou.</p>` : ""}`);
   $("#login", g).addEventListener("click", (e) => passkeyLogin(e.currentTarget));
 }
 
@@ -1494,8 +1563,9 @@ async function enter() {
 
 async function start() {
   ME = await api("GET", "/api/me");
-  window.addEventListener("hashchange", () => (ME.logged_in || hashParts().path.startsWith("/entrar/")) ? route() : showGate());
-  if (hashParts().path.startsWith("/entrar/")) return showJoin(hashParts().path.slice(8));
+  const open = () => /^\/(entrar|mudar)\//.test(hashParts().path);
+  window.addEventListener("hashchange", () => (ME.logged_in || open()) ? route() : showGate());
+  if (open()) return route();
   if (!ME.logged_in) return showGate();
   await enter();
 }

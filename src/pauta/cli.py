@@ -1,4 +1,4 @@
-"""pauta serve | invite | users | backup | demo | onedrive"""
+"""pauta serve | invite | move-link | users | backup | demo | onedrive"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, obs
-from .auth import Auth
+from .auth import MOVE_LINK_DAYS, Auth
 from .db import Store
 from .onedrive import DriveError, OneDrive
 
@@ -28,7 +28,7 @@ def cmd_serve(args) -> None:
     store = Store(db_path())
     auth = Auth(store)
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth))
-    mode = f"passkeys on {auth.rp_id}" if auth.enabled else "open (no accounts)"
+    mode = f"passkeys on {','.join(auth.rp_ids)}" if auth.enabled else "open (no accounts)"
     print(f"pauta on http://{args.host}:{args.port} ({mode}), db {store.path}", flush=True)
     obs.setup_logging()
     obs.event("start", version=__version__, auth="passkeys" if auth.enabled else "open")
@@ -47,11 +47,31 @@ def cmd_invite(args) -> None:
     print(f"({who}, {args.uses} use(s), valid until {until})", file=sys.stderr)
 
 
+def cmd_move_link(args) -> None:
+    """A one-time link that gives an existing person a passkey on the home domain (the move
+    in decision 4, or a lost phone). Send it to that person only."""
+    store = Store(db_path())
+    who = str(args.who)
+    found = [
+        m for m in store.members() if str(m["id"]) == who or m["name"].casefold() == who.casefold()
+    ]
+    if len(found) != 1:
+        sys.exit(f"no single account matches {who!r}; see `pauta users`")
+    m = found[0]
+    if m["disabled"]:
+        sys.exit(f"{m['name']} is disabled; enable them on the Equipe page first")
+    token, expires = Auth(store, enabled=True).create_move(m["id"], args.days * 86400)
+    until = time.strftime("%Y-%m-%d %H:%M", time.localtime(expires))
+    print(f"{args.base_url.rstrip('/')}/#/mudar/{token}")
+    print(f"(for {m['name']}, 1 use, valid until {until})", file=sys.stderr)
+
+
 def cmd_users(args) -> None:
     store = Store(db_path())
     for m in store.members():
         flags = ("admin " if m["is_admin"] else "") + ("disabled" if m["disabled"] else "")
-        print(f"{m['id']:>3}  {m['name']:<24} passkeys={m['passkeys']}  {flags}")
+        where = ",".join(m["domains"]) or "-"
+        print(f"{m['id']:>3}  {m['name']:<24} passkeys={m['passkeys']}  on={where}  {flags}")
 
 
 def cmd_backup(args) -> None:
@@ -285,8 +305,13 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--admin", action="store_true")
     s.add_argument("--uses", type=int, default=1)
     s.add_argument("--days", type=float, default=7)
-    s.add_argument("--base-url", default="https://pauta.genic.dev")
+    s.add_argument("--base-url", default="https://pauta.cc")
     s.set_defaults(fn=cmd_invite)
+    s = sub.add_parser("move-link", help="a one-time passkey link for an existing account")
+    s.add_argument("who", help="account id or name (see `pauta users`)")
+    s.add_argument("--days", type=float, default=MOVE_LINK_DAYS)
+    s.add_argument("--base-url", default="https://pauta.cc")
+    s.set_defaults(fn=cmd_move_link)
     s = sub.add_parser("users", help="list accounts")
     s.set_defaults(fn=cmd_users)
     s = sub.add_parser("backup", help="online SQLite backup into a directory")

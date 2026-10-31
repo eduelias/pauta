@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://pauta.genic.dev"
+Homepage = "https://pauta.cc"
 Source = "https://github.com/eduelias/pauta"
 Changelog = "https://github.com/eduelias/pauta/blob/main/CHANGELOG.md"
 

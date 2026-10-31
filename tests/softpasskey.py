@@ -23,18 +23,19 @@ ORIGIN = "http://localhost:8088"
 class SoftPasskey:
     """Enough of a platform authenticator to create and use one discoverable credential."""
 
-    def __init__(self):
+    def __init__(self, rp_id: str = RP_ID, origin: str = ORIGIN):
+        self.rp_id, self.origin = rp_id, origin  # the domain and page it was made on
         self.key = ec.generate_private_key(ec.SECP256R1())
         self.cred_id = secrets.token_bytes(16)
         self.count = 0
 
     def _auth_data(self, flags: int, attested: bytes = b"") -> bytes:
         self.count += 1
-        rp_hash = hashlib.sha256(RP_ID.encode()).digest()
+        rp_hash = hashlib.sha256(self.rp_id.encode()).digest()
         return rp_hash + bytes([flags]) + struct.pack(">I", self.count) + attested
 
     def _client_data(self, kind: str, challenge: str) -> bytes:
-        return json.dumps({"type": kind, "challenge": challenge, "origin": ORIGIN}).encode()
+        return json.dumps({"type": kind, "challenge": challenge, "origin": self.origin}).encode()
 
     def create(self, options: dict) -> dict:
         nums = self.key.public_key().public_numbers()

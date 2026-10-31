@@ -135,7 +135,7 @@ def card():
         img.paste(layer, ((630 + [10, 60, 25][i]) * S, (22 + i * 182) * S), layer)
 
     d = ImageDraw.Draw(img)
-    d.text((90 * S, 566 * S), "pauta.genic.dev", font=font(22, "Semibold"), fill=(150, 148, 162))
+    d.text((90 * S, 566 * S), "pauta.cc", font=font(22, "Semibold"), fill=(150, 148, 162))
     img.resize((1200, 630), Image.LANCZOS).save(OUT / "og.png", optimize=True)
 
 
