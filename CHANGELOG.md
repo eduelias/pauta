@@ -9,6 +9,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- Para testar: qualquer branch pode ir para https://acc.pauta.cc antes do merge (Actions →
+  *Deploy branch to acceptance*). Só o Eduardo pode disparar; a versão do ar não muda.
 - Equipe → **Meta** (para administradores, quando o servidor tem a Meta configurada):
   **Conectar Meta** leva ao login da Meta, onde você escolhe o portfólio empresarial da
   agência e as contas de anúncios. Na volta, a Pauta mostra cada conta com os números deste
@@ -20,6 +22,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   cliente. Na página do cliente aparece um cartão **Meta** com os números deste mês das contas
   vinculadas (investido, alcance, cliques no link, custo por clique e saldo). Uma conta que
   sumir da lista da Meta continua aqui, marcada "não aparece mais na Meta".
+
+### Fixed
+
+- du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
+  todo job, inclusive os deploys.
 
 ## [1.6.1] - 2026-10-31
 

@@ -1,0 +1,190 @@
+# Put a build of any branch (or tag, or commit) on a test environment on du7, to try a change
+# on a real server before it's merged or released: Actions → Deploy branch to acceptance →
+# Run workflow, or `gh workflow run deploy-branch.yml -f ref=feat/x`. Decision 9.
+#
+# The build job runs the branch's code on GitHub's machines with a read-only token and no
+# secrets. Only its wheel and hashed lockfile reach du7, where the du7 job (the runner's
+# guard lets it through for the owner only) hands them to /usr/local/sbin/pauta-deploy-branch
+# (deploy/pauta-deploy-branch). That installs into /opt/pauta-acc as the `pauta-acc` user,
+# switches, health-checks and rolls back on failure; it can't name production.
+name: Deploy branch to acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to deploy (e.g. feat/meta-connect)
+        type: string
+        required: true
+        default: main
+      environment:
+        description: Test environment
+        type: choice
+        options: [acc]
+        default: acc
+      rollback:
+        description: Ignore the ref and switch back to the build before the current one
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  build:
+    name: Build ${{ inputs.ref }}
+    if: ${{ !inputs.rollback }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source: ${{ steps.version.outputs.source }}
+      wheel_sha256: ${{ steps.sums.outputs.wheel }}
+      lock_sha256: ${{ steps.sums.outputs.lock }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.11"
+          enable-cache: false
+      - name: Version X.Y.Z.devN+gSHA (the next patch, this run, the commit)
+        id: version
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          version=$(python3 - "$GITHUB_RUN_NUMBER" "${sha:0:12}" <<'EOF'
+          import re, sys
+          from pathlib import Path
+          p = Path("pyproject.toml")
+          text = p.read_text()
+          m = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"$', text, re.M)
+          if not m:
+              sys.exit("pyproject.toml has no plain X.Y.Z version")
+          x, y, z = m.groups()
+          v = f"{x}.{y}.{int(z) + 1}.dev{sys.argv[1]}+g{sys.argv[2]}"
+          p.write_text(text[: m.start()] + f'version = "{v}"' + text[m.end() :])
+          print(v)
+          EOF
+          )
+          # a note for du7's deploy log: the ref as typed (if it's a plain name) and the commit
+          clean=$(printf '%s' "$REF" | tr -c 'A-Za-z0-9._/+-' '_' | cut -c1-120)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source=$clean@${sha:0:12}" >> "$GITHUB_OUTPUT"
+          echo "### Building \`$clean\` (${sha:0:12}) as $version" >> "$GITHUB_STEP_SUMMARY"
+      - name: Build the wheel
+        run: uv build --wheel
+      - name: Pin the runtime dependencies (with hashes) for the deploy
+        run: >-
+          uv export --no-dev --no-emit-project --format requirements-txt
+          -o dist/requirements.lock
+      - name: Known vulnerabilities in what ships (pip-audit)
+        run: uvx pip-audit --strict --require-hashes --disable-pip -r dist/requirements.lock
+      - name: Install it like du7 does, start it, ask /healthz
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv venv -q --seed --python 3.11 /tmp/rel
+          /tmp/rel/bin/pip install -q --require-hashes --only-binary=:all: -r dist/requirements.lock
+          /tmp/rel/bin/pip install -q --no-deps "dist/pauta-$VERSION-py3-none-any.whl"
+          test "$(/tmp/rel/bin/pauta --version)" = "pauta $VERSION"
+          PAUTA_STATE_DIR=/tmp/state /tmp/rel/bin/pauta serve --port 8099 &
+          for _ in $(seq 30); do curl -fsS localhost:8099/healthz && break; sleep 0.3; done
+          test "$(curl -fsS localhost:8099/healthz | jq -r .version)" = "$VERSION"
+      - name: Checksums
+        id: sums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir bundle
+          cp "dist/pauta-$VERSION-py3-none-any.whl" dist/requirements.lock bundle/
+          echo "wheel=$(sha256sum "bundle/pauta-$VERSION-py3-none-any.whl" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "lock=$(sha256sum bundle/requirements.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: branch-bundle
+          path: bundle/
+          retention-days: 7
+
+  du7:
+    # the runner's guard only lets a job named du7 through, and this one only for the owner
+    name: du7 → ${{ inputs.environment }}.pauta.cc
+    needs: build
+    if: ${{ !cancelled() && (inputs.rollback || needs.build.result == 'success') }}
+    runs-on: [self-hosted, du7, pauta]
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.environment }}
+      url: https://${{ inputs.environment }}.pauta.cc
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ !inputs.rollback }}
+        with:
+          name: branch-bundle
+          path: bundle
+      - name: Install, switch, health check (rolls back on failure)
+        if: ${{ !inputs.rollback }}
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SOURCE: ${{ needs.build.outputs.source }}
+          WHEEL_SHA256: ${{ needs.build.outputs.wheel_sha256 }}
+          LOCK_SHA256: ${{ needs.build.outputs.lock_sha256 }}
+        run: |
+          wheel="$PWD/bundle/pauta-$VERSION-py3-none-any.whl"
+          lock="$PWD/bundle/requirements.lock"
+          printf '%s  %s\n%s  %s\n' "$WHEEL_SHA256" "$wheel" "$LOCK_SHA256" "$lock" | sha256sum -c -
+          sudo -n /usr/local/sbin/pauta-deploy-branch "$ENV_NAME" "$VERSION" "$wheel" "$lock" "$SOURCE"
+      - name: Switch back to the build before
+        if: ${{ inputs.rollback }}
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+        run: sudo -n /usr/local/sbin/pauta-deploy-branch "$ENV_NAME" --rollback
+      - name: Caddy serves it (TLS on du7)
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          host="$ENV_NAME.pauta.cc"
+          live=$(curl -fsS --resolve "$host:443:$(hostname -I | cut -d' ' -f1)" "https://$host/healthz" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          if [ -n "$VERSION" ] && [ "$live" != "$VERSION" ]; then
+            echo "Caddy serves ${live:-nothing}, expected $VERSION"; exit 1
+          fi
+          {
+            echo "### $host is on $live"
+            echo '```'
+            sudo -n /usr/local/sbin/pauta-deploy-branch "$ENV_NAME" --status
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  public:
+    name: Reachable from the internet
+    needs: [build, du7]
+    if: ${{ !cancelled() && needs.du7.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: The environment answers from the internet
+        env:
+          ENV_NAME: ${{ inputs.environment }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          url="https://$ENV_NAME.pauta.cc"
+          for _ in $(seq 20); do
+            live=$(curl -fsS "$url/healthz" | jq -r .version) && { [ -z "$VERSION" ] || [ "$live" = "$VERSION" ]; } && break
+            sleep 3
+          done
+          [ -z "$VERSION" ] || [ "$live" = "$VERSION" ] ||
+            { echo "$url says ${live:-nothing}, expected $VERSION"; exit 1; }
+          echo "$url answers $live from the internet" >> "$GITHUB_STEP_SUMMARY"

@@ -16,6 +16,7 @@ def guard(**env):
         "GITHUB_REPOSITORY": "eduelias/pauta",
         "GITHUB_JOB": "du7",
         "GITHUB_ACTOR": "someone",
+        "GITHUB_TRIGGERING_ACTOR": "someone",
         "PATH": os.environ["PATH"],
     }
     base.update(env)
@@ -89,6 +90,64 @@ def test_guard_refuses_everything_else(env, why):
     assert "refusing this job on du7" in r.stderr and why in r.stderr
 
 
+BRANCH = f"{WF}/deploy-branch.yml@refs/heads/main"
+
+
+def test_guard_lets_the_owner_deploy_a_branch():
+    r = guard(
+        GITHUB_WORKFLOW_REF=BRANCH,
+        GITHUB_EVENT_NAME="workflow_dispatch",
+        GITHUB_ACTOR="eduelias",
+        GITHUB_TRIGGERING_ACTOR="eduelias",
+    )
+    assert r.returncode == 0, r.stderr
+    assert "may deploy" in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("env", "why"),
+    [
+        # anyone else, or a re-run by anyone else
+        ({}, "only eduelias may deploy a branch"),
+        ({"GITHUB_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
+        ({"GITHUB_TRIGGERING_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
+        # the owner, but the workflow from a branch (where anyone could have edited it)
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_WORKFLOW_REF": f"{WF}/deploy-branch.yml@refs/heads/feat/x",
+            },
+            "run by hand on main",
+        ),
+        # the owner, but not by hand
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_EVENT_NAME": "push",
+            },
+            "run by hand on main",
+        ),
+        # the owner, but another job of the workflow
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_JOB": "build",
+            },
+            "only the deploy job",
+        ),
+    ],
+)
+def test_guard_refuses_other_branch_deploys(env, why):
+    full = {"GITHUB_WORKFLOW_REF": BRANCH, "GITHUB_EVENT_NAME": "workflow_dispatch"}
+    full.update(env)
+    r = guard(**full)
+    assert r.returncode == 1
+    assert "refusing this job on du7" in r.stderr and why in r.stderr
+
+
 @pytest.fixture
 def release(tmp_path):
     wheel = tmp_path / "pauta-1.2.3-py3-none-any.whl"
@@ -150,3 +209,16 @@ def test_sourcing_does_not_deploy():
         text=True,
     )
     assert r.returncode == 0 and r.stdout.strip() == "sourced"
+
+
+@pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])
+def test_the_guard_is_installed_where_the_runner_will_run_it(script):
+    # the runner fails every job when the hook's name doesn't end in .sh, .ps1 or .js
+    text = (DEPLOY / script).read_text()
+    hooks = [
+        line.split("=", 2)[2].strip().strip('"')
+        for line in text.splitlines()
+        if "ACTIONS_RUNNER_HOOK_JOB_STARTED=" in line
+    ]
+    assert hooks == ["/usr/local/lib/pauta/runner-job-guard.sh"]
+    assert 'runner-job-guard" /usr/local/lib/pauta/runner-job-guard.sh' in text
