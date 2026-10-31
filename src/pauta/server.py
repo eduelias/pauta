@@ -47,6 +47,7 @@ RATE_BUCKETS = {
     "/api/passkey/register/verify": "register",
     "/api/passkey/login/options": "login",
     "/api/passkey/login/verify": "login",
+    "/api/move": "register",
 }
 ID = r"(\d{1,9})"
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
@@ -182,6 +183,16 @@ def make_handler(
 
         def _secure(self) -> bool:
             return self._proxied() and self.headers.get("X-Forwarded-Proto") == "https"
+
+        def _page_origin(self) -> str:
+            """The address the app is open on: the Origin header when the browser sends one
+            (every write does), else the Host Caddy passed on."""
+            if origin := self.headers.get("Origin"):
+                return origin
+            return f"{'https' if self._secure() else 'http'}://{self.headers.get('Host', '')}"
+
+        def _me(self, viewer: dict) -> dict:
+            return {**viewer, "move": auth.move_hint(self._page_origin(), viewer["account"])}
 
         def _headers(self, ctype: str, length: int, extra: dict | None = None):
             self.send_header("Content-Type", ctype)
@@ -331,7 +342,7 @@ def make_handler(
 
         def _metrics(self, method: str):
             """For du7's watchdog: straight to 127.0.0.1:8088 only. Caddy always adds
-            X-Forwarded-For, so through pauta.genic.dev this is a 404."""
+            X-Forwarded-For, so through pauta.cc this is a 404."""
             if not self._proxied() or self.headers.get("X-Forwarded-For"):
                 return self._json(404, {"error": "não encontrado"})
             if method not in ("GET", "HEAD"):
@@ -374,7 +385,7 @@ def make_handler(
 
         @route("GET", "/api/me", "open")
         def me(self, viewer, _body):
-            return viewer
+            return self._me(viewer)
 
         @route("PATCH", "/api/me")
         def edit_me(self, viewer, body):
@@ -384,7 +395,7 @@ def make_handler(
                 auth.rename(viewer["account"], body["name"])
             if "email" in body:
                 auth.set_email(viewer["account"], body["email"])
-            return auth.viewer(self.headers.get("Cookie"))
+            return self._me(auth.viewer(self.headers.get("Cookie")))
 
         @route("GET", "/api/boot")
         def boot(self, viewer, _body):
@@ -394,7 +405,7 @@ def make_handler(
             # Gravatar ids by account, for avatars on requests and the timeline
             avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
             return {
-                "me": viewer,
+                "me": self._me(viewer),
                 "options": store.options(),
                 "members": members,
                 "avatars": avatars,
@@ -624,12 +635,19 @@ def make_handler(
         def register_options(self, viewer, body):
             if not auth.enabled:
                 raise Reply(400, {"error": "passkeys estão desligadas"})
+            rp_id = auth.rp_for(self._page_origin())
+            if body.get("move"):
+                if rp_id != auth.rp_id:
+                    raise Reply(400, {"error": f"abra este link em {auth.rp_id}"})
+                return auth.register_options(move=str(body["move"]), rp_id=rp_id)
             if body.get("invite"):
-                return auth.register_options(invite=str(body["invite"]), name=body.get("name"))
+                return auth.register_options(
+                    invite=str(body["invite"]), name=body.get("name"), rp_id=rp_id
+                )
             acc = auth.account_from_cookie(self.headers.get("Cookie"))
             if not acc:
                 raise Reply(401, {"error": "entre primeiro para adicionar um aparelho"})
-            return auth.register_options(account=acc)
+            return auth.register_options(account=acc, rp_id=rp_id)
 
         @route("POST", "/api/passkey/register/verify", "open")
         def register_verify(self, viewer, body):
@@ -640,7 +658,25 @@ def make_handler(
         def login_options(self, viewer, _body):
             if not auth.enabled:
                 raise Reply(400, {"error": "passkeys estão desligadas"})
-            return auth.login_options()
+            return auth.login_options(auth.rp_for(self._page_origin()))
+
+        @route("POST", "/api/move")
+        def move(self, viewer, _body):
+            """From the old domain: a one-time link to make a passkey on the new one."""
+            hint = auth.move_hint(self._page_origin(), viewer["account"])
+            if not hint or viewer["account"] is None:
+                raise Reply(400, {"error": "a Pauta não está mudando de endereço"})
+            if hint["here"]:
+                raise Reply(400, {"error": f"você já está em {hint['to']}"})
+            token = auth.create_move(viewer["account"])
+            return {"url": f"{hint['url']}/#/mudar/{token}"}
+
+        @route("GET", "/api/move/([A-Za-z0-9_-]{20,64})", "open")
+        def move_info(self, viewer, _body, token):
+            info = auth.move_info(token)
+            if not info:
+                raise Reply(404, {"error": "este link de mudança expirou"})
+            return info
 
         @route("POST", "/api/passkey/login/verify", "open")
         def login_verify(self, viewer, body):

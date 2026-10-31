@@ -7,6 +7,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- A Pauta mudou para **https://pauta.cc** (decision 4). No endereço antigo aparece "Mudar
+  para pauta.cc": um toque leva sua conta para o endereço novo, onde você cria uma passkey
+  com Face ID ou digital. A conta, os pedidos e o histórico continuam os mesmos. Depois,
+  adicione pauta.cc à tela de início do celular. A página Equipe mostra quem já mudou, e
+  `pauta users` também. pauta.team leva para pauta.cc.
+
 ## [1.5.1] - 2026-10-30
 
 ### Fixed

@@ -1,11 +1,32 @@
-# Appended to /etc/caddy/Caddyfile on du7 (which also serves dom.du7.dev; its global block
-# binds 192.168.2.68 only and disables the :80 redirect server).
-pauta.genic.dev {
+# Appended to the Caddyfile on du7 (which also serves dom.du7.dev; its global block binds
+# 192.168.2.68 only and disables the :80 redirect server). DNS for pauta.cc and pauta.team is
+# in du7/dns-zone (OpenTofu), DNS-only so these certificates come from TLS-ALPN on 443.
+(pauta_tls) {
 	tls {
 		issuer acme {
 			disable_http_challenge
 		}
 	}
+}
+
+pauta.cc {
+	import pauta_tls
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8088
+}
+
+www.pauta.cc, pauta.team, www.pauta.team {
+	import pauta_tls
+	redir https://pauta.cc{uri} 301
+}
+
+# The old address, during the move (decision 4): the same app, so people can sign in with
+# their old passkey and tap "Mudar para pauta.cc". Once `pauta users` shows everyone on
+# pauta.cc, replace the reverse_proxy with `redir https://pauta.cc{uri} 301` and keep that
+# for at least a year.
+pauta.genic.dev {
+	import pauta_tls
 	encode gzip
 	header Strict-Transport-Security "max-age=31536000"
 	reverse_proxy 127.0.0.1:8088

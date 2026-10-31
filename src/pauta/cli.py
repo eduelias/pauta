@@ -28,7 +28,7 @@ def cmd_serve(args) -> None:
     store = Store(db_path())
     auth = Auth(store)
     httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth))
-    mode = f"passkeys on {auth.rp_id}" if auth.enabled else "open (no accounts)"
+    mode = f"passkeys on {','.join(auth.rp_ids)}" if auth.enabled else "open (no accounts)"
     print(f"pauta on http://{args.host}:{args.port} ({mode}), db {store.path}", flush=True)
     obs.setup_logging()
     obs.event("start", version=__version__, auth="passkeys" if auth.enabled else "open")
@@ -51,7 +51,8 @@ def cmd_users(args) -> None:
     store = Store(db_path())
     for m in store.members():
         flags = ("admin " if m["is_admin"] else "") + ("disabled" if m["disabled"] else "")
-        print(f"{m['id']:>3}  {m['name']:<24} passkeys={m['passkeys']}  {flags}")
+        where = ",".join(m["domains"]) or "-"
+        print(f"{m['id']:>3}  {m['name']:<24} passkeys={m['passkeys']}  on={where}  {flags}")
 
 
 def cmd_backup(args) -> None:
@@ -285,7 +286,7 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--admin", action="store_true")
     s.add_argument("--uses", type=int, default=1)
     s.add_argument("--days", type=float, default=7)
-    s.add_argument("--base-url", default="https://pauta.genic.dev")
+    s.add_argument("--base-url", default="https://pauta.cc")
     s.set_defaults(fn=cmd_invite)
     s = sub.add_parser("users", help="list accounts")
     s.set_defaults(fn=cmd_users)

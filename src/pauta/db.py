@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import finance
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS account (
 CREATE TABLE IF NOT EXISTS passkey (
     id TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
     public_key BLOB NOT NULL, sign_count INTEGER NOT NULL DEFAULT 0, transports TEXT,
-    created TEXT NOT NULL DEFAULT (datetime('now')), last_used TEXT
+    created TEXT NOT NULL DEFAULT (datetime('now')), last_used TEXT,
+    rp_id TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS invite (
     token_hash TEXT PRIMARY KEY, admin INTEGER NOT NULL DEFAULT 0,
@@ -419,6 +420,10 @@ class Store:
             # v4: bumped to end every session of an account (logout, disable, enable)
             if "session_gen" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0")
+            # v7: the domain a passkey belongs to (decision 4's move); '' until it's next used
+            cols = {r[1] for r in db.execute("PRAGMA table_info(passkey)")}
+            if "rp_id" not in cols:
+                db.execute("ALTER TABLE passkey ADD COLUMN rp_id TEXT NOT NULL DEFAULT ''")
             # v3: the client's ads page (free text: usually a Meta Ad Library or page link)
             cols = {r[1] for r in db.execute("PRAGMA table_info(client)")}
             if "ads_page" not in cols:
@@ -493,13 +498,16 @@ class Store:
             rows = db.execute(
                 "SELECT a.id, a.name, a.email, a.is_admin, a.disabled, a.created, "
                 "(SELECT COUNT(*) FROM passkey p WHERE p.account=a.id) AS passkeys, "
-                "(SELECT MAX(last_used) FROM passkey p WHERE p.account=a.id) AS last_seen "
+                "(SELECT MAX(last_used) FROM passkey p WHERE p.account=a.id) AS last_seen, "
+                "(SELECT group_concat(DISTINCT p.rp_id) FROM passkey p "
+                "WHERE p.account=a.id AND p.rp_id<>'') AS domains "
                 "FROM account a ORDER BY a.disabled, a.id"
             ).fetchall()
         # the address itself stays private; teammates only get the Gravatar hash
         out = []
         for r in map(dict, rows):
             r["avatar"] = gravatar(r.pop("email"))
+            r["domains"] = sorted((r["domains"] or "").split(",")) if r["domains"] else []
             out.append(r)
         return out
 

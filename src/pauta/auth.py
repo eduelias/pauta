@@ -5,10 +5,16 @@ person types a name and creates a passkey, done. The first account is the admin;
 invite makes another admin. Without `PAUTA_AUTH=passkeys` the app runs open (local dev):
 one anonymous admin, no login screen.
 
+Moving to a new domain (decision 4): a passkey only works on the domain it was made on, so
+during a move both domains are configured, the new one first. Each ceremony uses the domain
+its page is on, and on the old one a signed-in person gets a one-time link that lets them make
+a passkey for the same account on the new one.
+
 Configuration (environment):
   PAUTA_AUTH=passkeys     turn accounts on
-  PAUTA_RP_ID             passkey domain, e.g. pauta.genic.dev (default: localhost)
-  PAUTA_ORIGIN            allowed origin(s), comma-separated, e.g. https://pauta.genic.dev
+  PAUTA_RP_ID             passkey domain(s), comma-separated, the current home first,
+                          e.g. pauta.cc,pauta.genic.dev while moving (default: localhost)
+  PAUTA_ORIGIN            allowed origin(s), comma-separated, e.g. https://pauta.cc
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
+from urllib.parse import urlparse
 
 from webauthn import (
     generate_authentication_options,
@@ -47,11 +54,21 @@ SESSION_DAYS = 180
 FLOW_SECONDS = 300
 RP_NAME = "Pauta"
 INVITE_DAYS = 7
+MOVE_SECONDS = 600
 DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localhost"]
 
 
 def _h(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _host(origin: str | None) -> str:
+    return (urlparse(origin or "").hostname or "").lower()
+
+
+def _under(host: str, rp_id: str) -> bool:
+    """WebAuthn's rule: a page may use its own domain or a parent of it as the RP ID."""
+    return host == rp_id or host.endswith("." + rp_id)
 
 
 def clean_name(name) -> str:
@@ -111,12 +128,15 @@ class Auth:
     ):
         self.store = store
         self.enabled = (os.environ.get("PAUTA_AUTH") == "passkeys") if enabled is None else enabled
-        self.rp_id = rp_id or os.environ.get("PAUTA_RP_ID") or "localhost"
+        ids = rp_id or os.environ.get("PAUTA_RP_ID") or "localhost"
+        self.rp_ids = [r.strip().lower() for r in ids.split(",") if r.strip()] or ["localhost"]
+        self.rp_id = self.rp_ids[0]  # home: where passkeys are made from now on
         env_origins = [
             o.strip() for o in os.environ.get("PAUTA_ORIGIN", "").split(",") if o.strip()
         ]
         self.origins = origins or env_origins or DEV_ORIGINS
         self._flows: dict[str, dict] = {}
+        self._moves: dict[str, dict] = {}  # hashed token -> account, expires
         self._lock = threading.Lock()
         self.secret = load_secret(store)
 
@@ -186,6 +206,72 @@ class Auth:
             "is_admin": bool(acc and acc["is_admin"]),
         }
 
+    # ---- domains (a move from one to another, decision 4) -----------------------------------
+
+    def rp_for(self, origin: str | None) -> str:
+        """The passkey domain for a page at `origin`: the configured one it sits under, else
+        home. The browser and the signature check enforce the rest."""
+        host = _host(origin)
+        return next((r for r in self.rp_ids if _under(host, r)), self.rp_id)
+
+    def _origins_for(self, rp_id: str) -> list[str]:
+        return [o for o in self.origins if _under(_host(o), rp_id)] or self.origins
+
+    @property
+    def moving(self) -> bool:
+        return self.enabled and len(self.rp_ids) > 1
+
+    @property
+    def home(self) -> str | None:
+        """The home domain's address, e.g. https://pauta.cc."""
+        return next((o for o in self.origins if _host(o) == self.rp_id), None)
+
+    def move_hint(self, origin: str | None, account_id: int | None) -> dict | None:
+        """What the app shows about a move: where to, whether this page is already there,
+        and whether this person already has a passkey there."""
+        if not self.moving or not self.home:
+            return None
+        done = False
+        if account_id is not None:
+            with self.store.db() as db:
+                done = bool(
+                    db.execute(
+                        "SELECT 1 FROM passkey WHERE account=? AND rp_id=?",
+                        (account_id, self.rp_id),
+                    ).fetchone()
+                )
+        return {
+            "to": self.rp_id,
+            "url": self.home,
+            "here": self.rp_for(origin) == self.rp_id,
+            "done": done,
+        }
+
+    def create_move(self, account_id: int) -> str:
+        """A one-time link to make a passkey for this account on the home domain. Short-lived
+        and kept in memory only: a restart just means tapping the button again."""
+        token = secrets.token_urlsafe(24)
+        with self._lock:
+            now = time.time()
+            self._moves = {k: v for k, v in self._moves.items() if v["expires"] > now}
+            self._moves[_h(token)] = {"account": account_id, "expires": now + MOVE_SECONDS}
+        return token
+
+    def _move_account(self, token: str) -> dict | None:
+        with self._lock:
+            m = self._moves.get(_h(str(token or "")))
+        if not m or m["expires"] < time.time():
+            return None
+        with self.store.db() as db:
+            row = db.execute(
+                "SELECT * FROM account WHERE id=? AND NOT disabled", (m["account"],)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def move_info(self, token: str) -> dict | None:
+        acc = self._move_account(token)
+        return {"name": acc["name"], "to": self.rp_id} if acc else None
+
     # ---- invites --------------------------------------------------------------------------
 
     def create_invite(
@@ -245,8 +331,19 @@ class Auth:
     # ---- registration: join with an invite, or add a passkey to my account ------------------
 
     def register_options(
-        self, *, invite: str | None = None, name: str = "", account: dict | None = None
+        self,
+        *,
+        invite: str | None = None,
+        name: str = "",
+        account: dict | None = None,
+        move: str | None = None,
+        rp_id: str | None = None,
     ) -> dict:
+        rp_id = rp_id or self.rp_id
+        if move is not None:
+            account = self._move_account(move)
+            if not account:
+                raise AuthError("este link de mudança expirou; toque em Mudar de novo")
         if account:
             display = account["name"]
             with self.store.db() as db:
@@ -266,7 +363,7 @@ class Auth:
                 self._check_name_free(db, display)
             handle, existing = bytes_to_base64url(secrets.token_bytes(16)), []
         options = generate_registration_options(
-            rp_id=self.rp_id,
+            rp_id=rp_id,
             rp_name=RP_NAME,
             user_name=display,
             user_display_name=display,
@@ -286,6 +383,8 @@ class Auth:
             name=display,
             handle=handle,
             account=account["id"] if account else None,
+            move=move,
+            rp_id=rp_id,
         )
         return {"flow": fid, "options": json.loads(options_to_json(options))}
 
@@ -296,8 +395,8 @@ class Auth:
             v = verify_registration_response(
                 credential=credential,
                 expected_challenge=flow["challenge"],
-                expected_rp_id=self.rp_id,
-                expected_origin=self.origins,
+                expected_rp_id=flow["rp_id"],
+                expected_origin=self._origins_for(flow["rp_id"]),
                 require_user_verification=True,
             )
         except Exception as e:  # the library raises several types for bad responses
@@ -308,6 +407,11 @@ class Auth:
         transports = ",".join(t for t in transports if isinstance(t, str))[:200]
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")  # one join at a time: an invite's uses can't race
+            if flow["move"] is not None:
+                with self._lock:  # the link works once
+                    m = self._moves.pop(_h(flow["move"]), None)
+                if not m or m["expires"] < time.time() or m["account"] != flow["account"]:
+                    raise AuthError("este link de mudança expirou; toque em Mudar de novo")
             if flow["account"]:
                 account_id = flow["account"]
             else:
@@ -326,20 +430,28 @@ class Auth:
                     (flow["name"], flow["handle"], int(first or inv["admin"])),
                 ).lastrowid
             db.execute(
-                "INSERT INTO passkey(id, account, public_key, sign_count, transports) "
-                "VALUES (?,?,?,?,?)",
-                (cred_id, account_id, v.credential_public_key, v.sign_count, transports),
+                "INSERT INTO passkey(id, account, public_key, sign_count, transports, rp_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    cred_id,
+                    account_id,
+                    v.credential_public_key,
+                    v.sign_count,
+                    transports,
+                    flow["rp_id"],
+                ),
             )
             row = db.execute("SELECT * FROM account WHERE id=?", (account_id,)).fetchone()
         return dict(row)
 
     # ---- login with a discoverable passkey ------------------------------------------------
 
-    def login_options(self) -> dict:
+    def login_options(self, rp_id: str | None = None) -> dict:
+        rp_id = rp_id or self.rp_id
         options = generate_authentication_options(
-            rp_id=self.rp_id, user_verification=UserVerificationRequirement.REQUIRED
+            rp_id=rp_id, user_verification=UserVerificationRequirement.REQUIRED
         )
-        fid = self._new_flow(kind="login", challenge=options.challenge)
+        fid = self._new_flow(kind="login", challenge=options.challenge, rp_id=rp_id)
         return {"flow": fid, "options": json.loads(options_to_json(options))}
 
     def login_verify(self, fid: str, credential: dict) -> dict:
@@ -360,17 +472,18 @@ class Auth:
                 v = verify_authentication_response(
                     credential=credential,
                     expected_challenge=flow["challenge"],
-                    expected_rp_id=self.rp_id,
-                    expected_origin=self.origins,
+                    expected_rp_id=flow["rp_id"],
+                    expected_origin=self._origins_for(flow["rp_id"]),
                     credential_public_key=pk["public_key"],
                     credential_current_sign_count=pk["sign_count"],
                     require_user_verification=True,
                 )
             except Exception as e:
                 raise AuthError(f"passkey não aceita: {e}") from e
+            # a passkey from before 1.6 learns its domain the first time it's used
             db.execute(
-                "UPDATE passkey SET sign_count=?, last_used=datetime('now') WHERE id=?",
-                (v.new_sign_count, cred_id),
+                "UPDATE passkey SET sign_count=?, last_used=datetime('now'), rp_id=? WHERE id=?",
+                (v.new_sign_count, flow["rp_id"], cred_id),
             )
             row = db.execute("SELECT * FROM account WHERE id=?", (pk["account"],)).fetchone()
         return dict(row)

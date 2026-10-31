@@ -4,7 +4,7 @@
 [![Release](https://github.com/eduelias/pauta/actions/workflows/release.yml/badge.svg)](https://github.com/eduelias/pauta/actions/workflows/release.yml)
 
 The request queue between whoever sells the campaign and whoever runs it, live at
-**https://pauta.genic.dev**. Whoever talks to the client files a request (*pedido*) with the
+**https://pauta.cc**. Whoever talks to the client files a request (*pedido*) with the
 briefing; whoever runs the Meta ads works it through *A fazer → Em andamento → Aguardando →
 Concluído*, and every change lands on the request's timeline. It replaced the spreadsheet
 "Controle de Clientes e Campanhas".

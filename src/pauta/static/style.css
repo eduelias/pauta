@@ -581,3 +581,10 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .pay .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pay.void .d, .pay.void .v, .pay.void .m { text-decoration: line-through; color: var(--faint); }
 .paytotal { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; }
+
+/* moving to a new address (decision 4): shown on the old one until the person has moved */
+.movebar { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; margin: 0 0 22px; padding: 14px 16px; border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.movebar b { display: block; }
+.movebar span { color: var(--muted); font-size: 14px; }
