@@ -32,7 +32,7 @@ Prices are rough; the registrar shows the real one.
 | Topic | Decision |
 |---|---|
 | Domain | **`pauta.team`**, keeping the name Pauta. The owner weighed a new name too (see Alternatives) and kept the one the team already uses |
-| Registrar and DNS | Cloudflare (sold at cost). DNS there lets du7's Caddy image (`du7/caddy-cloudflare`) get certificates by DNS challenge, which wildcard subdomains would need later |
+| Registrar and DNS | Cloudflare (sold at cost; `.team` is on its TLD list), in the same account as `du7.dev`. Bought once in the dashboard with auto-renew and the registrar lock on: the Terraform/OpenTofu provider has no registrar resource, and the Registrar API (beta, 2026) can register but not renew. The zone and its records are code in `du7/dns-zone` (OpenTofu), like `du7.dev`. DNS there also lets du7's Caddy image (`du7/caddy-cloudflare`) get certificates by DNS challenge, which wildcard subdomains would need later |
 | Hosts | `pauta.team`: the public site (landing page, prices, terms, privacy, refunds, checkout page). `app.pauta.team`: the app. `acc.pauta.team`: acceptance (decision 1) |
 | Passkey RP ID | The apex, `pauta.team`, not the app host. A passkey made on `app.pauta.team` with RP ID `pauta.team` keeps working if teams later get their own subdomains. Acceptance keeps its own RP ID (`acc.pauta.team`) so its passkeys can't sign in to production |
 | The old address | `pauta.genic.dev` redirects to `app.pauta.team` for a year, then goes |
