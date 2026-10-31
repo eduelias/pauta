@@ -5,7 +5,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const app = $("#app");
 let ME = null;        // /api/me
-let BOOT = null;      // {me, options, members, avatars, files}
+let BOOT = null;      // {me, options, members, avatars, files, finance, meta}
 let REQS = null;      // last /api/requests, for the nav counter
 
 // ---------- small helpers ---------------------------------------------------------------
@@ -1204,7 +1204,7 @@ function financeSettingsPanel(fin) {
 
 // ---------- team, account, settings ---------------------------------------------------------
 
-async function viewTeam() {
+async function viewTeam(query) {
   const members = await api("GET", "/api/members");
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
@@ -1241,6 +1241,8 @@ async function viewTeam() {
       <div id="qrbox"></div></section>` : ""}
     ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}OneDrive</h2><span class="muted small">Arquivos dos pedidos</span></div>
       <div id="drivebody">${spinner()}</div></section>` : ""}
+    ${ME.is_admin && BOOT.meta?.enabled ? `<section class="panel mt" id="meta"><div class="panel-head"><h2>${icon("target")}Meta</h2><span class="muted small">Números das campanhas</span></div>
+      <div id="metabody">${spinner()}</div></section>` : ""}
     ${ME.is_admin ? financeSettingsPanel(BOOT.finance) : ""}
     ${ME.is_admin ? `<section class="panel mt"><div class="panel-head"><h2>Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
@@ -1251,6 +1253,13 @@ async function viewTeam() {
   $("#logout")?.addEventListener("click", logout);
   $("#addkey")?.addEventListener("click", addPasskey);
   if (ME.is_admin) loadDrive();
+  if (ME.is_admin && BOOT.meta?.enabled) loadMeta();
+  const back = query?.get("meta");  // the way back from Meta's login (/api/meta/callback)
+  if (back) {
+    history.replaceState(null, "", "#/equipe");
+    if (back === "conectado") toast("Meta conectada");
+    else toast(META_ERRORS[query.get("motivo")] || "Não foi possível conectar à Meta; tente de novo", true);
+  }
   $("#rename")?.addEventListener("click", async () => {
     try {
       ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value, email: $("#myemail").value })) };
@@ -1351,6 +1360,73 @@ function driveBody(d) {
     ${q}
     <div class="row-gap mt">${d.error ? `<button class="btn primary" id="driveconnect">${icon("cloud")}Reconectar</button>` : ""}
       <button class="btn ghost danger" id="driveoff">Desconectar</button></div>`;
+}
+
+// The Meta card: connect the agency's business portfolio (Facebook Login for Business, a
+// full-page trip to facebook.com and back), then this month's numbers per ad account.
+const META_ERRORS = {
+  cancelado: "A conexão foi cancelada na Meta",
+  expirou: "O pedido de conexão expirou; tente de novo",
+};
+const centsMoney = (c, cur) => c == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100);
+const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
+
+async function loadMeta(refresh = false) {
+  if (!$("#metabody")) return;
+  let doc, error = "";
+  try { doc = await api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`); }
+  catch (e) { error = e.message; }
+  const box = $("#metabody");
+  if (!box) return;  // left the page while waiting
+  box.innerHTML = error
+    ? `<p class="warnbox">${esc(error)}</p>
+      <div class="row-gap mt"><button class="btn primary" id="metaconnect">${icon("target")}Conectar de novo</button>
+        <button class="btn ghost danger" id="metaoff">Desconectar</button></div>`
+    : metaBody(doc);
+  $("#metaconnect")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try { location.href = (await api("POST", "/api/meta/connect")).url; }
+    catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
+  $("#metarefresh")?.addEventListener("click", (e) => { e.currentTarget.disabled = true; loadMeta(true); });
+  $("#metaoff")?.addEventListener("click", async () => {
+    if (!confirm("Desconectar a Meta? A Pauta esquece o acesso e para de ler os números. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio (Integrações → Apps conectados).")) return;
+    try { await api("DELETE", "/api/meta"); toast("Meta desconectada"); loadMeta(); }
+    catch (err) { toast(err.message, true); }
+  });
+}
+
+function metaBody(d) {
+  if (!d.connected) {
+    return `<p class="muted">Conecte o portfólio empresarial da agência para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
+      <button class="btn primary" id="metaconnect">${icon("target")}Conectar Meta</button>`;
+  }
+  const since = d.connected_at ? new Date(d.connected_at).toLocaleDateString("pt-BR") : "";
+  const accs = d.accounts || [];
+  const rows = accs.map((a) => `<tr><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.business ? ` · ${esc(a.business)}` : ""}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
+      <td class="r">${esc(centsMoney(a.spend_cents, a.currency))}</td>
+      <td class="r">${esc(count(a.reach))}</td>
+      <td class="r">${esc(count(a.impressions))}</td>
+      <td class="r">${esc(count(a.link_clicks))}</td>
+      <td class="r">${esc(centsMoney(a.cpc_cents, a.currency))}</td>
+      <td class="r">${metaBalance(a)}</td></tr>`).join("");
+  return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
+    <div class="member"><div class="who"><b>Conectado: ${esc(d.business_name || "portfólio")}${since ? ` desde ${esc(since)}` : ""}</b>
+      <span>Números deste mês. A Pauta guarda por 10 minutos; Atualizar busca de novo.</span></div>
+      <div class="row-gap">${d.error ? `<button class="btn primary small" id="metaconnect">${icon("target")}Conectar de novo</button>` : ""}
+        <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button>
+        <button class="btn ghost small danger" id="metaoff">Desconectar</button></div></div>
+    ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th class="r">Investido este mês</th><th class="r">Alcance</th><th class="r">Impressões</th><th class="r">Cliques no link</th><th class="r">Custo por clique</th><th class="r">Saldo</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`
+    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta neste portfólio.</div>`}`;
+}
+
+function metaBalance(a) {
+  const b = a.balance || {};
+  if (!b.available) return `<span class="muted" title="${esc(b.reason || "")}">sem permissão</span>`;
+  if (b.remaining_cents != null) return `${esc(centsMoney(b.remaining_cents, a.currency))}<span class="muted small">até o limite</span>`;
+  return b.funding ? esc(b.funding) : "—";
 }
 
 async function makeInvite() {

@@ -7,6 +7,15 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Equipe → **Meta** (para administradores, quando o servidor tem a Meta configurada):
+  **Conectar Meta** leva ao login da Meta, onde você escolhe o portfólio empresarial da
+  agência e as contas de anúncios. Na volta, a Pauta mostra cada conta com os números deste
+  mês: investido, alcance, impressões, cliques no link, custo por clique e o saldo (ou "sem
+  permissão", quando a Meta não deixa ler). A Pauta só lê; não altera nada na Meta. Primeiro
+  passo da fase 2 da decisão 8.
+
 ## [1.6.1] - 2026-10-31
 
 ### Changed

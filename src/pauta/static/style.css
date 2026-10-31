@@ -530,6 +530,15 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .quota div { height: 100%; background: var(--accent); }
 .warnbox { border: 1px solid var(--danger); color: var(--danger); border-radius: var(--radius-sm);
   padding: 8px 12px; font-size: 14px; }
+/* the Meta card's ad accounts: a plain table that scrolls sideways on a phone */
+.scrollx { overflow-x: auto; margin-top: 10px; }
+.mtable { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.mtable th { text-align: left; font-size: 12px; font-weight: 650; color: var(--muted);
+  padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.mtable td { padding: 10px; border-bottom: 1px solid var(--line-2); vertical-align: top; white-space: nowrap; }
+.mtable tr:last-child td { border-bottom: 0; }
+.mtable td span { display: block; }
+.mtable .r { text-align: right; }
 
 /* ---- financeiro (decision 7) ----------------------------------------------------------- */
 .stats.fin .stat .n { font-size: 26px; }

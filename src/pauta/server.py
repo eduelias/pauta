@@ -1,7 +1,8 @@
 """Tiny stdlib HTTP server: the static app plus JSON endpoints under /api.
 
-Everything except the login/join endpoints needs a signed-in account (client data is private;
-there is no public view). Writes must come from an allowed origin with a JSON body (file
+Everything except the login/join endpoints and the Meta login's return (authorized by its
+one-time state, see meta.py) needs a signed-in account (client data is private; there is no
+public view). Writes must come from an allowed origin with a JSON body (file
 uploads send the file itself), and the session cookie is SameSite=Strict.
 """
 
@@ -24,6 +25,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__, obs
 from .auth import MOVE_LINK_DAYS, Auth, AuthError
 from .db import Invalid, NotFound, Store
+from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
 
@@ -75,10 +77,12 @@ def make_handler(
     limiter: RateLimiter | None = None,
     metrics: obs.Metrics | None = None,
     drive: OneDrive | None = None,
+    meta: Meta | None = None,
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
     drive = drive or OneDrive.from_env(store.path)
+    meta = meta or Meta.from_env(store.path)
     slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
     # method, path, handler, access, raw (the body is a file, not JSON)
     routes: list[tuple[str, re.Pattern, str, str, bool]] = []
@@ -326,7 +330,7 @@ def make_handler(
                 self._json(400, {"error": str(e)})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
-            except DriveError as e:
+            except (DriveError, MetaError) as e:
                 self._json(e.status, {"error": str(e)})
 
         def _health(self, method: str):
@@ -359,6 +363,11 @@ def make_handler(
                     "enabled": drive.enabled,
                     "connected": drive.connected,
                     "error": drive.error,
+                },
+                "meta": {
+                    "enabled": meta.enabled,
+                    "connected": meta.connected,
+                    "error": meta.error,
                 },
             }
             self._json(200, doc)
@@ -416,6 +425,7 @@ def make_handler(
                     "max_mb": drive.max_bytes // (1024 * 1024),
                 },
                 "finance": {**fin, "visible": finance_visible(viewer, fin)},
+                "meta": {"enabled": meta.enabled},
             }
 
         @route("GET", "/api/export", "admin")
@@ -604,6 +614,44 @@ def make_handler(
         def drive_disconnect(self, viewer, _body):
             drive.disconnect()
             return {**drive.status(), "state": "idle"}
+
+        # ---- Meta (decision 8, phase 2): read-only ad account numbers ---------------------
+
+        @route("GET", "/api/meta", "admin")
+        def meta_status(self, viewer, _body):
+            out = meta.status()
+            if out["connected"]:
+                refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
+                out["accounts"] = meta.accounts(refresh=refresh)
+            return out
+
+        @route("POST", "/api/meta/connect", "admin")
+        def meta_connect(self, viewer, _body):
+            return {"url": meta.start_connect(viewer["account"])}
+
+        @route("GET", "/api/meta/callback", "open")
+        def meta_callback(self, viewer, _body):
+            """Meta's login sends the admin back here. The SameSite=Strict cookie doesn't come
+            along on that cross-site redirect, so the one-time state is the authorization."""
+            q = parse_qs(urlparse(self.path).query)
+            state, code = q.get("state", [""])[0], q.get("code", [""])[0]
+            try:
+                if q.get("error") or not code:  # cancelled or refused in Meta's dialog
+                    with contextlib.suppress(MetaError):
+                        meta.take_state(state)
+                    obs.event("meta_connect_cancelled", logging.WARNING)
+                    raise MetaError("cancelado", 400, "cancelado")
+                meta.finish_connect(state, code)
+            except MetaError as e:
+                self._redirect(f"/#/equipe?meta=erro&motivo={e.reason}")
+                return SENT
+            self._redirect("/#/equipe?meta=conectado")
+            return SENT
+
+        @route("DELETE", "/api/meta", "admin")
+        def meta_disconnect(self, viewer, _body):
+            meta.disconnect()
+            return meta.status()
 
         @route("PUT", "/api/options/(kind|goal|segment)", "admin")
         def options(self, viewer, body, lst):
