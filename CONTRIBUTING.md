@@ -27,7 +27,7 @@
   installs exact hashes.
 - No secrets, client data or real phone numbers in code, tests, issues or commits. Test data
   is made up (`example.com`, `31600000000`).
-- Never point anything at https://pauta.cc (or the old pauta.genic.dev) or du7: `make run` gives you a local copy
+- Never point anything at https://app.pauta.cc (or the old pauta.genic.dev) or du7: `make run` gives you a local copy
   in open mode, `make demo` fills it with made-up data.
 - UI text is Brazilian Portuguese; code, comments, commits and docs are English.
 

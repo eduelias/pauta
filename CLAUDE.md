@@ -1,6 +1,6 @@
 # pauta
 
-The team's request queue at https://pauta.cc. It replaces the spreadsheet "Controle de
+The team's request queue at https://app.pauta.cc. It replaces the spreadsheet "Controle de
 Clientes e Campanhas": the person who talks to clients files a request (pedido), and the
 person who runs the Meta ads campaigns works it through A fazer → Em andamento → Aguardando →
 Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
@@ -71,6 +71,6 @@ under Unreleased in `CHANGELOG.md`. Merge your own PR once CI is green. Paths in
 `.github/CODEOWNERS` (CI, `deploy/`, `scripts/`, `Makefile`, `auth.py`, `ratelimit.py`,
 `tests/softpasskey.py`, `pyproject.toml`, `uv.lock`, this file, the decisions) need the
 owner's review: don't change them to get a feature through; say what you need in the PR.
-Never create or move `v*` tags, never touch du7, https://pauta.cc (or the old pauta.genic.dev) or real data, and
+Never create or move `v*` tags, never touch du7, https://app.pauta.cc (or the old pauta.genic.dev) or real data, and
 never put secrets or real phone numbers anywhere in the repo. Security model:
 `docs/decisions/0002-collaborators-and-a-public-repo.md`.

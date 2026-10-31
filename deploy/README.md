@@ -1,7 +1,9 @@
 # Running on du7
 
 Pauta runs on du7 (192.168.2.68) as the systemd unit `pauta`, on `127.0.0.1:8088` only.
-Caddy puts it on the internet at https://pauta.cc, next to dom.du7.dev. The old address,
+Caddy puts it on the internet at https://app.pauta.cc, next to dom.du7.dev. Acceptance is
+https://acc.pauta.cc; https://www.pauta.cc is for the public site (a temporary redirect to the
+app until it exists), and pauta.cc and pauta.team lead there. The old address,
 https://pauta.genic.dev, serves the same app until everyone has moved (see "Moving to pauta.cc").
 
 ```
@@ -10,7 +12,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 
 | What | Where |
 |---|---|
-| DNS | `pauta.cc` and `pauta.team` (registered at Cloudflare, auto-renew and lock on): zones and records are code in `du7/dns-zone` (`pauta.tf`, OpenTofu). `pauta.cc`, `www.`, `acc.` and `pauta.team`, `www.` are CNAMEs to `du7.sytes.net` (the No-IP name the router keeps on the home IP), DNS-only. The old `pauta.genic.dev` is a Squarespace record (`genic.dev` → DNS → `pauta` CNAME `du7.sytes.net`; editing it asks for the account passkey) |
+| DNS | `pauta.cc` and `pauta.team` (registered at Cloudflare, auto-renew and lock on): zones and records are code in `du7/dns-zone` (`pauta.tf`, OpenTofu). `pauta.cc`, `app.`, `acc.`, `www.` and `pauta.team`, `www.` are CNAMEs to `du7.sytes.net` (the No-IP name the router keeps on the home IP), DNS-only. The old `pauta.genic.dev` is a Squarespace record (`genic.dev` → DNS → `pauta` CNAME `du7.sytes.net`; editing it asks for the account passkey) |
 | Router | the existing TCP 443 → 192.168.2.68:443 forward (shared with dom.du7.dev; nothing new) |
 | Caddy | The `caddy` container's Caddyfile (`~/dns-stack/caddy/Caddyfile`, bind-mounted as a single file), the blocks from `deploy/Caddyfile.pauta`. Certificates via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
@@ -51,7 +53,7 @@ starts `.github/workflows/release.yml`:
      doesn't (the job then fails),
    - keeps the last 5 releases.
 4. **Reachable from the internet**: a GitHub-hosted runner fetches
-   https://pauta.cc/healthz and expects 1.2.0.
+   https://app.pauta.cc/healthz and expects 1.2.0.
 
 The `production` environment on GitHub only accepts deploys from `v*` tags and `main`, and
 lists every deploy under the repo's *Deployments*.
@@ -59,34 +61,39 @@ lists every deploy under the repo's *Deployments*.
 ## Moving to pauta.cc
 
 Decision 4. Passkeys belong to the domain they were made on, so everyone makes one new
-passkey on `pauta.cc`, from inside their account on the old address. In order:
+passkey for `pauta.cc`, from inside their account on the old address. The app itself is on
+`app.pauta.cc` (since 1.6.1; 1.6.0 had it on the apex): a passkey for `pauta.cc` works on
+any address under it, and production only accepts the origin `https://app.pauta.cc`. In
+order (steps 1–5 done 2026-10-31):
 
 1. **DNS**: `cd ~/reps/du7/dns-zone && op-env run -- tofu plan`, then `apply` (`pauta.tf`).
 2. **Caddy** on du7: add the blocks from `deploy/Caddyfile.pauta` to
    `~/dns-stack/caddy/Caddyfile` *in place* (same inode), then check the container sees them
-   (`sudo docker exec caddy grep -c pauta.cc /etc/caddy/Caddyfile`; if 0, the mount is stale:
+   (`sudo docker exec caddy grep -c app.pauta.cc /etc/caddy/Caddyfile`; if 0, the mount is stale:
    `sudo docker restart caddy`) and `sudo docker exec caddy caddy reload --config
-   /etc/caddy/Caddyfile --adapter caddyfile`. `curl -sI https://pauta.cc/healthz` answers
+   /etc/caddy/Caddyfile --adapter caddyfile`. `curl -sI https://app.pauta.cc/healthz` answers
    (with the old release) once the certificate is issued.
 3. **Unit**: install the new `deploy/pauta.service` (both domains), `sudo systemctl
    daemon-reload`.
-4. **Release** the version with the move (`make release`). The deploy checks `pauta.cc`, so
+4. **Release** the version with the move (`make release`). The deploy checks `app.pauta.cc`, so
    steps 2 and 3 come first.
 5. **Move the team**: send each person their own link, which is one tap and Face ID. From
    the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
    (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
    A link works once, for 3 days, for that account only: send it to that person only.
-   Without a link, the bar on the old address does the same (*Mudar para pauta.cc*). Either
-   way, afterwards add `pauta.cc` to the phone's home screen (the old icon keeps opening the
+   Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
+   Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
    old address). `pauta users` and the Equipe page show who has moved.
 6. **Close the old address** when everyone shows `pauta.cc`: in the unit, `PAUTA_RP_ID=pauta.cc`
-   and `PAUTA_ORIGIN=https://pauta.cc`; in Caddy, the `pauta.genic.dev` block becomes
-   `redir https://pauta.cc{uri} 301`. Keep the redirect (and the Squarespace record) for at
+   and `PAUTA_ORIGIN=https://app.pauta.cc`; in Caddy, the `pauta.genic.dev` block becomes
+   `redir https://app.pauta.cc{uri} 301`. Keep the redirect (and the Squarespace record) for at
    least a year.
-7. **Acceptance** moves the same way: `acc.pauta.cc` in Caddy, `PAUTA_RP_ID` and
-   `PAUTA_ORIGIN` in `pauta-acc.service`, and its test account made again.
+7. **Acceptance** (done 2026-10-31): `acc.pauta.cc` in Caddy (the old name redirects),
+   `PAUTA_RP_ID=acc.pauta.cc` and `PAUTA_ORIGIN=https://acc.pauta.cc` in `pauta-acc.service`
+   (hand-installed, not in this repo), and an admin invite from its CLI because its old
+   passkeys don't work there.
 8. **Monitoring**: du7's watchdog `pauta*` checks and the repo's homepage link point at
-   `pauta.cc` (the GitHub uptime check already does).
+   `app.pauta.cc`, as the GitHub uptime check does.
 
 Until step 6 a rollback is the usual one: the release before the move runs on the new
 database (the `passkey.rp_id` column is additive) and the old address still works.

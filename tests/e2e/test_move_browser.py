@@ -82,6 +82,8 @@ def test_an_admin_sends_a_link_and_it_is_one_tap(two_addresses, device):
     admin.page.goto(f"{old}/#/equipe")
     row = admin.page.locator(".member", has_text="Piero Sales")
     expect(row).to_contain_text("ainda não mudou")
+    # three admin buttons never squeeze the name into a word-per-line column
+    assert row.locator(".who").bounding_box()["width"] > 180
     row.get_by_role("button", name="Link para mudar").click()
     box = admin.page.locator(".qrbox", has_text="Link de Piero")
     expect(box).to_contain_text("Vale uma vez")

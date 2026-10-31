@@ -429,9 +429,11 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .client-hero h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---- team --------------------------------------------------------------------------- */
-.member { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+.member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
 .member:last-child { border-bottom: 0; }
-.member .who { flex: 1; min-width: 0; }
+.member .who { flex: 1 1 200px; min-width: 0; }
+/* an admin's buttons go under the name when the panel is narrow, never squeeze it */
+.member > .row-gap { margin-left: auto; justify-content: flex-end; }
 .member .who b { display: flex; align-items: center; gap: 8px; }
 .member .who span { font-size: 13px; color: var(--muted); }
 .member.off { opacity: .5; }

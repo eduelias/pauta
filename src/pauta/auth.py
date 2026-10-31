@@ -15,7 +15,9 @@ Configuration (environment):
   PAUTA_AUTH=passkeys     turn accounts on
   PAUTA_RP_ID             passkey domain(s), comma-separated, the current home first,
                           e.g. pauta.cc,pauta.genic.dev while moving (default: localhost)
-  PAUTA_ORIGIN            allowed origin(s), comma-separated, e.g. https://pauta.cc
+  PAUTA_ORIGIN            allowed origin(s), comma-separated, the app's own first, e.g.
+                          https://app.pauta.cc. A page may sit on a subdomain of its passkey
+                          domain: passkeys made for pauta.cc work on app.pauta.cc
 """
 
 from __future__ import annotations
@@ -224,8 +226,13 @@ class Auth:
 
     @property
     def home(self) -> str | None:
-        """The home domain's address, e.g. https://pauta.cc."""
-        return next((o for o in self.origins if _host(o) == self.rp_id), None)
+        """The app's address on the home domain, e.g. https://app.pauta.cc: the first allowed
+        origin under the home passkey domain."""
+        return next((o for o in self.origins if _under(_host(o), self.rp_id)), None)
+
+    @property
+    def home_host(self) -> str:
+        return _host(self.home) or self.rp_id
 
     def move_hint(self, origin: str | None, account_id: int | None) -> dict | None:
         """What the app shows about a move: where to, whether this page is already there,
@@ -242,7 +249,7 @@ class Auth:
                     ).fetchone()
                 )
         return {
-            "to": self.rp_id,
+            "to": self.home_host,
             "url": self.home,
             "here": self.rp_for(origin) == self.rp_id,
             "done": done,
@@ -279,7 +286,7 @@ class Auth:
 
     def move_info(self, token: str) -> dict | None:
         acc = self._move_account(token)
-        return {"name": acc["name"], "to": self.rp_id} if acc else None
+        return {"name": acc["name"], "to": self.home_host} if acc else None
 
     # ---- invites --------------------------------------------------------------------------
 
