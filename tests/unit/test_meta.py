@@ -1,17 +1,31 @@
 """The Meta client against the fake Meta: the one-time state, the code exchange, reading ad
-accounts, money in cents, a refused balance, a revoked token, and never leaking the secret."""
+accounts in two calls (list + batch), money in cents, a refused balance, one account without
+numbers, a revoked token, failures remembered, and never leaking the secret."""
 
+import http.client
 import json
 import logging
 import os
 import stat
+import threading
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from fakemeta import APP_ID, CONFIG_ID, SECRET, secret
+from fakemeta import APP_ID, CONFIG_ID, SECRET, oauth_error, secret
 from pauta import meta as meta_mod
-from pauta.meta import NO_BALANCE, REVOKED, Meta, MetaError, cents
+from pauta.meta import (
+    NO_BALANCE,
+    NO_BALANCE_ANSWER,
+    NO_NUMBERS,
+    NOT_CONNECTED,
+    REVOKED,
+    THROTTLED,
+    UNAVAILABLE,
+    Meta,
+    MetaError,
+    cents,
+)
 
 
 def connect(meta, fake, account=7):
@@ -177,6 +191,7 @@ def test_accounts_this_month_in_cents(linked, fake_meta):
         "currency": "BRL",
         "status": 1,
         "status_label": "Ativa",
+        "numbers": True,
         "spend_cents": 123456,
         "impressions": 48210,
         "reach": 20118,
@@ -230,25 +245,178 @@ def test_revoked_token_says_connect_again(linked, fake_meta):
     assert linked.status()["error"] == "" and len(linked.accounts()) == 2
 
 
-def test_revoked_while_reading_the_balance(linked, fake_meta, monkeypatch):
-    real = linked._get
+def test_revoked_while_reading_the_balance(linked, monkeypatch):
+    """A 190 inside one batch item (the token died between the two calls) is still the
+    whole list's problem, like a throttle in one item."""
+    real = linked._batch
 
-    def revoke_on_balance(path, params, token=None):
-        if path == "/act_111" and token:
-            fake_meta.token_invalid = True
-        return real(path, params, token)
+    def revoke_in_balance(reads):
+        answers = real(reads)
+        answers[1] = (400, oauth_error(190))
+        return answers
 
-    monkeypatch.setattr(linked, "_get", revoke_on_balance)
+    monkeypatch.setattr(linked, "_batch", revoke_in_balance)
     with pytest.raises(MetaError) as e:
         linked.accounts()
-    assert e.value.status == 409
+    assert e.value.status == 409 and linked.error == REVOKED
+
+    def throttle_in_insights(reads):
+        answers = real(reads)
+        answers[0] = (400, oauth_error(4))
+        return answers
+
+    linked.error = ""
+    monkeypatch.setattr(linked, "_batch", throttle_in_insights)
+    with pytest.raises(MetaError) as e:
+        linked.accounts(refresh=True)
+    assert e.value.status == 503 and str(e.value) == THROTTLED
 
 
-def test_balance_without_a_token_file(linked):
+def test_batch_without_a_token_file(linked):
     linked.token_file.unlink()
     with pytest.raises(MetaError) as e:
-        linked._balance("111")
+        linked._batch(["act_111?fields=spend_cap"])
     assert e.value.status == 409
+
+
+def test_one_accounts_missing_numbers_dont_fail_the_list(linked, fake_meta, caplog):
+    """Meta refusing the clinic's insights (400 #100) leaves the clinic without numbers
+    and the bakery intact; the list is cached like any other."""
+    caplog.set_level(logging.INFO, logger="pauta")
+    fake_meta.fail_insights = {"111"}
+    clinic, bakery = linked.accounts()
+    assert clinic["numbers"] is False and clinic["reason"] == NO_NUMBERS
+    for key in ("spend_cents", "impressions", "reach", "link_clicks", "cpc_cents"):
+        assert clinic[key] is None, key
+    assert clinic["balance"]["remaining_cents"] == 376544  # the balance read still worked
+    assert bakery["numbers"] is True and bakery["spend_cents"] == 0
+    assert not linked.error and "meta_numbers_missing" in caplog.text
+    n = len(fake_meta.calls)
+    assert linked.accounts()[0]["numbers"] is False and len(fake_meta.calls) == n
+    # an item Meta gave up on (null in the batch answer): the same, balance included
+    fake_meta.fail_insights = set()
+    fake_meta.timeouts = {"222"}
+    clinic, bakery = linked.accounts(refresh=True)
+    assert clinic["numbers"] is True
+    assert bakery["numbers"] is False and bakery["spend_cents"] is None
+    assert bakery["balance"] == {"available": False, "reason": NO_BALANCE_ANSWER}
+
+
+def test_a_cold_read_is_two_calls_and_batches_of_fifty(linked, fake_meta):
+    before = len(fake_meta.calls)
+    linked.accounts()
+    assert fake_meta.calls[before:] == ["GET /me/adaccounts", "POST /"]
+    # 26 accounts are 52 reads: the list, then two batches
+    fake_meta.accounts = [
+        {
+            "id": f"act_{900 + i}",
+            "account_id": str(900 + i),
+            "name": f"Conta {i}",
+            "currency": "BRL",
+        }
+        for i in range(26)
+    ]
+    before = len(fake_meta.calls)
+    accs = linked.accounts(refresh=True)
+    assert fake_meta.calls[before:] == ["GET /me/adaccounts", "POST /", "POST /"]
+    assert len(accs) == 26 and accs[25]["id"] == "925" and accs[25]["status_label"] == ""
+
+
+def test_concurrent_cold_readers_share_one_read(linked, fake_meta):
+    before = len(fake_meta.calls)
+    results, errors = [], []
+    ready = threading.Barrier(3)
+
+    def read():
+        try:
+            ready.wait()
+            results.append(linked.accounts())
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=read) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(results) == 3
+    assert fake_meta.calls[before:].count("GET /me/adaccounts") == 1
+    assert fake_meta.calls[before:].count("POST /") == 1
+    assert results[0] is results[1] is results[2]
+
+
+def test_a_failed_read_is_remembered(linked, fake_meta, monkeypatch):
+    """After a 190, a page full of client cards doesn't ask Meta again for a minute; the
+    admin's refresh does; connecting or disconnecting forgets the failure."""
+    fake_meta.token_invalid = True
+    with pytest.raises(MetaError):
+        linked.accounts()
+    n = len(fake_meta.calls)
+    for _ in range(3):
+        with pytest.raises(MetaError) as e:
+            linked.accounts()
+        assert e.value.status == 409 and str(e.value) == REVOKED
+    assert len(fake_meta.calls) == n
+    with pytest.raises(MetaError):
+        linked.accounts(refresh=True)
+    assert len(fake_meta.calls) == n + 1
+    now = meta_mod.time.time()
+    monkeypatch.setattr(meta_mod.time, "time", lambda: now + 61)
+    with pytest.raises(MetaError):
+        linked.accounts()
+    assert len(fake_meta.calls) == n + 2
+    monkeypatch.undo()
+    # disconnecting forgets it: the next answer is "not connected", not the old failure
+    linked.disconnect()
+    with pytest.raises(MetaError) as e:
+        linked.accounts()
+    assert str(e.value) == NOT_CONNECTED and len(fake_meta.calls) == n + 2
+    # connecting again forgets it too (the fake says 190 until told otherwise)
+    fake_meta.token_invalid = False
+    connect(linked, fake_meta)
+    assert len(linked.accounts()) == 2
+
+
+def test_a_throttle_is_remembered_longer(linked, monkeypatch):
+    calls = []
+
+    def throttled(*a, **k):
+        calls.append(a)
+        return 400, {"error": {"code": 17}}
+
+    monkeypatch.setattr(linked, "_get", throttled)
+    with pytest.raises(MetaError) as e:
+        linked.accounts()
+    assert e.value.status == 503
+    now = meta_mod.time.time()
+    monkeypatch.setattr(meta_mod.time, "time", lambda: now + 61)
+    with pytest.raises(MetaError) as e:
+        linked.accounts()
+    assert str(e.value) == THROTTLED and len(calls) == 1
+    monkeypatch.setattr(meta_mod.time, "time", lambda: now + 121)
+    with pytest.raises(MetaError):
+        linked.accounts()
+    assert len(calls) == 2
+
+
+def test_a_short_or_malformed_answer_is_unavailable(linked, fake_meta, monkeypatch):
+    def cut_off(*a, **k):
+        raise http.client.IncompleteRead(b"{")
+
+    monkeypatch.setattr(meta_mod.urllib.request, "urlopen", cut_off)
+    with pytest.raises(MetaError) as e:
+        linked.accounts()
+    assert e.value.status == 502 and str(e.value) == UNAVAILABLE
+
+
+def test_business_id_must_be_digits(meta_on, fake_meta):
+    """The business id goes into a Graph path: anything but digits is never asked for."""
+    fake_meta.business = "../me?fields=accounts"
+    connect(meta_on, fake_meta)
+    saved = json.loads(meta_on.token_file.read_text())
+    assert saved["business_id"] == ""
+    assert saved["business_name"] == "Pauta (usuário do sistema)"
+    assert fake_meta.seen == ["/me"]
 
 
 def test_meta_down_or_unreachable(linked, fake_meta, store):
@@ -291,11 +459,19 @@ def test_throttled(linked, monkeypatch):
 
 
 def test_odd_answers(linked, monkeypatch):
-    monkeypatch.setattr(linked, "_get", lambda *a, **k: (500, {"error": "nope"}))
     with pytest.raises(MetaError) as e:
-        linked._balance("111")
+        linked._balance((500, {"error": "nope"}))
     assert e.value.status == 502
-    assert Meta._code({"error": "text"}) is None
+    assert Meta._code({"error": "text"}) is None and Meta._code([]) is None
+    # the batch answer itself is odd: not a list, too short, items without a JSON body
+    monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, {"data": []}))
+    with pytest.raises(MetaError) as e:
+        linked._batch(["act_111?fields=spend_cap"])
+    assert e.value.status == 502
+    monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, [{"code": 200, "body": "{"}]))
+    assert linked._batch(["a", "b"]) == [(200, {}), (None, {})]
+    monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, [{"code": "x", "body": "[]"}]))
+    assert linked._batch(["a"]) == [(None, {})]
 
 
 def test_logs_never_carry_the_token_code_or_secret(meta_on, fake_meta, caplog):

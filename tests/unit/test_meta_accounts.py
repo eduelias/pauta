@@ -65,6 +65,33 @@ def test_sync_auto_links_by_the_clients_ad_account(store):
     assert store.meta_accounts()[1]["client"]["id"] == other["id"]
 
 
+def test_only_accounts_new_to_this_sync_link_themselves(store):
+    """Linking fills the client's ad_account with the id, so a later sync would see the
+    match again: an admin's unlink has to survive it. Only rows this sync inserted link."""
+    clinic = store.save_client({"name": "Clínica"})
+    store.sync_meta_accounts([CLINIC])
+    store.link_meta_account("111", clinic["id"])
+    assert store.client(clinic["id"])["ad_account"] == "111"
+    store.link_meta_account("111", None)
+    store.sync_meta_accounts([CLINIC])  # the next read
+    assert store.meta_accounts()[0]["client"] is None
+    # a row that already existed, unlinked, is never linked by a client made afterwards...
+    store.save_client({"name": "Nova", "ad_account": "222"})
+    store.sync_meta_accounts([CLINIC, BAKERY])  # the bakery is new now: it links
+    rows = {r["id"]: r for r in store.meta_accounts()}
+    assert rows["111"]["client"] is None and rows["222"]["client"]["name"] == "Nova"
+    store.link_meta_account("222", None)
+    store.save_client({"name": "Outra", "ad_account": "111"})
+    store.sync_meta_accounts([CLINIC, BAKERY])
+    rows = {r["id"]: r for r in store.meta_accounts()}
+    assert rows["111"]["client"] is None and rows["222"]["client"] is None
+    # ...while a brand-new account whose id matches still does
+    store.save_client({"name": "Terceira", "ad_account": "act_333"})
+    store.sync_meta_accounts([CLINIC, BAKERY, {"id": "333", "name": "Terceira Ads"}])
+    rows = {r["id"]: r for r in store.meta_accounts()}
+    assert rows["333"]["client"]["name"] == "Terceira" and rows["111"]["client"] is None
+
+
 def test_link_fills_an_empty_ad_account_and_unlink_keeps_it(store):
     clinic = store.save_client({"name": "Clínica Bem Estar"})
     store.sync_meta_accounts([CLINIC, BAKERY])

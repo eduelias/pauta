@@ -22,6 +22,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   cliente. Na página do cliente aparece um cartão **Meta** com os números deste mês das contas
   vinculadas (investido, alcance, cliques no link, custo por clique e saldo). Uma conta que
   sumir da lista da Meta continua aqui, marcada "não aparece mais na Meta".
+- Meta: a leitura faz duas chamadas por 50 contas (lista + lote), não uma por conta; se a
+  Meta não devolver os números de uma conta, só essa linha mostra "—" (o motivo ao passar o
+  mouse) e as outras continuam. Quando a Meta falha, a página do cliente diz "os números da
+  Meta estão indisponíveis no momento" (o motivo mesmo só para administradores) e a Pauta
+  espera um minuto antes de tentar de novo, a não ser que um administrador toque em
+  Atualizar. Desvincular uma conta agora vale: a próxima leitura não a vincula de volta.
 
 ### Fixed
 

@@ -6,6 +6,10 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from fakemeta import ACCOUNTS
+from pauta.meta import NO_NUMBERS, REVOKED
+from pauta.server import META_DOWN
+
 pytestmark = pytest.mark.e2e
 
 
@@ -172,13 +176,54 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     expect(page.locator("#clientmeta").get_by_role("link")).to_have_attribute("href", "#/equipe")
 
 
+def test_an_account_without_numbers_and_an_odd_currency(live, device, fake_meta):
+    """Meta won't return one account's insights: that row shows dashes (the reason on hover)
+    and the others their numbers; the client card says so. A currency Intl doesn't know
+    (Meta's data) falls back to "<code> <value>" instead of breaking the card."""
+    base, auth, store = live
+    clinic = store.save_client({"name": "Clínica Bem Estar", "ad_account": "111"})
+    fake_meta.accounts = [ACCOUNTS[0], {**ACCOUNTS[1], "currency": "N/A"}]
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    page.goto(f"{base}/#/entrar/{token}")
+    page.fill("#join input[name=name]", "Renato Lima")
+    page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(page.locator("#mechip")).to_contain_text("Renato Lima")
+    page.goto(f"{base}/#/equipe")
+    page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    rows = page.locator("#metaaccounts tbody tr")
+    expect(rows).to_have_count(2)
+    expect(rows.nth(1)).to_contain_text("N/A 0.00")  # the fallback, no console error
+    assert page.evaluate("centsMoney(1234, 'N/A')") == "N/A 12.34"
+    assert page.evaluate("centsMoney(1234, 'BRL')") == "R$\xa012,34"
+    assert page.evaluate("centsMoney(null, 'BRL')") == "—"
+
+    fake_meta.fail_insights = {"111"}
+    page.locator("#meta").get_by_role("button", name="Atualizar").click()
+    clinic_row = page.locator("#metaaccounts tbody tr").first
+    dashes = clinic_row.locator("td[title]")
+    expect(dashes).to_have_count(5)
+    expect(dashes.first).to_have_text("—")
+    expect(dashes.first).to_have_attribute("title", NO_NUMBERS)
+    expect(clinic_row).to_contain_text("3.765,44")  # the balance read still worked
+    expect(page.locator("#metaaccounts tbody tr").nth(1)).to_contain_text("N/A 0.00")
+
+    page.goto(f"{base}/#/cliente/{clinic['id']}")
+    card = page.locator("#clientmeta")
+    expect(card).to_contain_text("números indisponíveis")
+    expect(card).to_contain_text("3.765,44")
+    expect(card).not_to_contain_text("Investido")
+
+
 def test_member_sees_the_card_but_no_pointer(live, device, fake_meta):
     base, auth, store = live
     clinic = store.save_client({"name": "Clínica Bem Estar", "ad_account": "111"})
     empty = store.save_client({"name": "Padaria"})
     # an admin connects first (the clinic's account links itself by ad_account on the read)
     token, _ = auth.create_invite(admin=True)
-    admin = device().page
+    nato = device()
+    admin = nato.page
     admin.goto(f"{base}/#/entrar/{token}")
     admin.fill("#join input[name=name]", "Renato")
     admin.get_by_role("button", name="Criar passkey e entrar").click()
@@ -199,3 +244,16 @@ def test_member_sees_the_card_but_no_pointer(live, device, fake_meta):
     page.goto(f"{base}/#/cliente/{empty['id']}")
     expect(page.locator("#cname")).to_contain_text("Padaria")
     expect(page.locator("#clientmeta")).to_be_empty()
+
+    # Meta revoked the token: the admin's refresh says so and offers to connect again; Ana's
+    # client card only says the numbers are unavailable, never "conecte de novo"
+    fake_meta.token_invalid = True
+    nato.expected.add((409, "/api/meta"))
+    admin.locator("#meta").get_by_role("button", name="Atualizar").click()
+    expect(admin.locator("#meta .warnbox")).to_have_text(REVOKED)
+    expect(admin.locator("#meta").get_by_role("button", name="Conectar de novo")).to_be_visible()
+    page.goto(f"{base}/#/cliente/{clinic['id']}")
+    expect(page.locator("#clientmeta .warnbox")).to_have_text(META_DOWN)
+    expect(page.locator("#clientmeta")).not_to_contain_text("Investido")
+    admin.goto(f"{base}/#/cliente/{clinic['id']}")
+    expect(admin.locator("#clientmeta .warnbox")).to_have_text(REVOKED)

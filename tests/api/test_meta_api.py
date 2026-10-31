@@ -8,7 +8,8 @@ import pytest
 
 from fakemeta import SECRET, fetch
 from pauta import meta as meta_mod
-from pauta.meta import REVOKED
+from pauta.meta import NO_NUMBERS, REVOKED
+from pauta.server import META_DOWN
 from softpasskey import call
 
 
@@ -203,6 +204,10 @@ def test_linking_an_account(team, fake_meta):
     status, row, _ = call(f"{base}/api/meta/accounts/111", {"client": None}, nato, method="PATCH")
     assert status == 200 and row["client"] is None
     assert call(f"{base}/api/clients/{clinic['id']}", cookie=nato)[1]["ad_account"] == "111"
+    # the next read (which syncs the rows) doesn't undo the unlink through that field
+    doc = call(f"{base}/api/meta?refresh=1", cookie=nato)[1]
+    assert doc["accounts"][0]["client"] is None
+    assert call(f"{base}/api/clients/{clinic['id']}", cookie=nato)[1]["meta_accounts"] == []
 
     # who may, and what is refused
     status, doc, _ = call(f"{base}/api/meta/accounts/111", {"client": 1}, piero, method="PATCH")
@@ -246,13 +251,34 @@ def test_the_clients_meta_numbers(team, fake_meta):
     call(f"{base}/api/meta?refresh=1", cookie=nato)
     (acc,) = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)[1]["accounts"]
     assert acc["stale"] and acc["name"] == "Clínica Bem Estar" and "spend_cents" not in acc
-    # Meta's trouble is reported on a client with accounts, not on one without; 404 unknown
+    # Meta's trouble is reported on a client with accounts, not on one without; 404 unknown.
+    # A member gets a neutral line (never "conecte de novo"), an admin the reason, and the
+    # failure is remembered: the client pages don't ask Meta again
     nobody = new_client(base, nato, name="Sem conta")
     fake_meta.token_invalid = True
-    call(f"{base}/api/meta?refresh=1", cookie=nato)  # drops the cache (revoked)
-    status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)
-    assert status == 409 and doc["error"] == REVOKED
+    assert call(f"{base}/api/meta?refresh=1", cookie=nato)[0] == 409  # revoked
+    n = len(fake_meta.calls)
+    for _ in range(3):
+        status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)
+        assert status == 200
+        assert doc == {"connected": True, "accounts": [], "error": META_DOWN}
+    status, doc, _ = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=nato)
+    assert status == 200 and doc == {"connected": True, "accounts": [], "error": REVOKED}
+    assert len(fake_meta.calls) == n
     status, doc, _ = call(f"{base}/api/clients/{nobody['id']}/meta", cookie=piero)
     assert status == 200 and doc == {"connected": True, "accounts": []}
     assert call(f"{base}/api/clients/999/meta", cookie=piero)[0] == 404
     assert call(f"{base}/api/clients/{clinic['id']}/meta")[0] == 401
+
+
+def test_one_account_without_numbers(team, fake_meta):
+    base, nato, piero = connected(team, fake_meta)
+    clinic = new_client(base, nato, name="Clínica", ad_account="111")
+    fake_meta.fail_insights = {"111"}
+    doc = call(f"{base}/api/meta?refresh=1", cookie=nato)[1]
+    first, second = doc["accounts"]
+    assert first["numbers"] is False and first["reason"] == NO_NUMBERS
+    assert first["spend_cents"] is None and first["balance"]["available"]
+    assert second["numbers"] is True and second["spend_cents"] == 0
+    (acc,) = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)[1]["accounts"]
+    assert acc["numbers"] is False and acc["reason"] == NO_NUMBERS and not acc["stale"]

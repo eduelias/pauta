@@ -50,12 +50,17 @@ RATE_BUCKETS = {
     "/api/passkey/login/options": "login",
     "/api/passkey/login/verify": "login",
     "/api/move": "register",
+    # Meta's login sends the browser back here with no cookie: a one-time state is all that
+    # guards it, so guesses are counted like login attempts
+    "/api/meta/callback": "login",
 }
 ID = r"(\d{1,9})"
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
 AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
 QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
 SENT = object()  # a route that wrote its own response (a redirect, an image)
+# what a member sees when Meta fails: the real reason ("conecte de novo") is the admin's
+META_DOWN = "os números da Meta estão indisponíveis no momento"
 
 
 def _stale(row: dict) -> dict:
@@ -554,16 +559,19 @@ def make_handler(
         @route("GET", f"/api/clients/{ID}/meta")
         def client_meta(self, viewer, _body, cid):
             """This client's linked ad accounts with this month's numbers (from the Meta
-            cache; a cold cache reads Meta). Meta off or not connected is not an error."""
+            cache; a cold cache reads Meta). Meta off or not connected is not an error, and
+            neither is Meta failing: 200 with `error` (the reason for admins, a neutral line
+            for members) so the card says so instead of the page breaking."""
             store.client(int(cid))  # 404 for an unknown client
             if not meta.connected:
                 return {"connected": False, "accounts": []}
             try:
                 live = {a["id"]: a for a in meta.accounts()}  # a cold cache syncs the rows
-            except MetaError:
+            except MetaError as e:
                 if not store.client(int(cid))["meta_accounts"]:
                     return {"connected": True, "accounts": []}  # nothing to show anyway
-                raise
+                error = str(e) if viewer["is_admin"] else META_DOWN
+                return {"connected": True, "accounts": [], "error": error}
             linked = store.client(int(cid))["meta_accounts"]
             rows = {r["id"]: r for r in store.meta_accounts()}
             return {

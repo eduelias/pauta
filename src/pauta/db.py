@@ -661,10 +661,13 @@ class Store:
 
     def sync_meta_accounts(self, accounts: list[dict], now: str | None = None) -> None:
         """What Meta listed just now: upsert name, currency, status and `seen`; rows for
-        accounts no longer listed stay. An unlinked account whose id is some client's
-        `ad_account` is linked to that client (the field seeded the match, decision 8)."""
+        accounts no longer listed stay. An account seen for the first time whose id is some
+        client's `ad_account` is linked to that client (the field seeded the match, decision
+        8). Only new rows: an admin's unlink stays unlinked on the next sync, even though
+        linking filled the client's `ad_account` with this very id."""
         now = now or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         with self.db() as db:
+            known = {r["account_id"] for r in db.execute("SELECT account_id FROM meta_account")}
             for a in accounts:
                 aid = digits(a.get("id") or a.get("account_id"))
                 if not aid:
@@ -686,7 +689,7 @@ class Store:
             for c in clients:
                 by_field.setdefault(digits(c["ad_account"]), c["id"])
             unlinked = db.execute("SELECT account_id FROM meta_account WHERE client IS NULL")
-            for aid in [r["account_id"] for r in unlinked]:
+            for aid in [r["account_id"] for r in unlinked if r["account_id"] not in known]:
                 cid = by_field.get(aid)
                 if cid:
                     db.execute("UPDATE meta_account SET client=? WHERE account_id=?", (cid, aid))

@@ -1370,21 +1370,28 @@ const META_ERRORS = {
   cancelado: "A conexão foi cancelada na Meta",
   expirou: "O pedido de conexão expirou; tente de novo",
 };
-const centsMoney = (c, cur) => c == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100);
+// a currency code Intl doesn't know (Meta's data, not ours) must not break the card
+const centsMoney = (c, cur) => {
+  if (c == null) return "—";
+  try { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100); }
+  catch (e) { return `${cur || "BRL"} ${(c / 100).toFixed(2)}`; }
+};
 const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
 
 async function loadMeta(refresh = false) {
   if (!$("#metabody")) return;
-  let doc, clients = [], error = "";
-  try { [doc, clients] = await Promise.all([api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients")]); }
-  catch (e) { error = e.message; }
+  let html = "", error = "";
+  try {
+    const [doc, clients] = await Promise.all([api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients")]);
+    html = metaBody(doc, clients);  // inside the try: an odd answer must not leave the spinner
+  } catch (e) { error = e.message || "não foi possível mostrar a Meta"; }
   const box = $("#metabody");
   if (!box) return;  // left the page while waiting
   box.innerHTML = error
     ? `<p class="warnbox">${esc(error)}</p>
       <div class="row-gap mt"><button class="btn primary" data-metaconnect>${icon("target")}Conectar de novo</button>
         <button class="btn ghost danger" id="metaoff">Desconectar</button></div>`
-    : metaBody(doc, clients);
+    : html;
   // the Cliente column: picking saves at once; a suggestion is only a suggestion until picked
   $$("select[data-link]").forEach((sel) => sel.addEventListener("change", async (e) => {
     const el = e.currentTarget, value = el.value;
@@ -1429,6 +1436,7 @@ function metaBody(d, clients = []) {
   const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""}><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
       <td class="pick">${pick(a)}</td>
       ${a.stale ? `<td colspan="6" class="muted">não aparece mais na Meta</td>`
+    : a.numbers === false ? `<td class="r muted" title="${esc(a.reason || "")}">—</td>`.repeat(5) + `<td class="r">${metaBalance(a)}</td>`
     : `<td class="r">${esc(centsMoney(a.spend_cents, a.currency))}</td>
       <td class="r">${esc(count(a.reach))}</td>
       <td class="r">${esc(count(a.impressions))}</td>
@@ -1460,6 +1468,10 @@ async function loadClientMeta(c) {
     return;
   }
   if (!$("#clientmeta") || !doc.connected) return;
+  if (doc.error) {  // Meta failed: members get a neutral line, admins the reason
+    box.innerHTML = `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3></div><p class="warnbox">${esc(doc.error)}</p></div>`;
+    return;
+  }
   if (!doc.accounts.length) {
     box.innerHTML = ME.is_admin ? `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3></div>
       <p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/equipe">Vincule em Equipe → Meta.</a></p></div>` : "";
@@ -1469,6 +1481,7 @@ async function loadClientMeta(c) {
   box.innerHTML = `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3><span class="muted small">este mês</span></div>
     ${doc.accounts.map((a) => `<div class="metaacc"><div class="row"><b class="grow">${esc(a.name)}</b><span class="muted small">${esc(a.id)}</span></div>
       ${a.stale ? `<p class="muted small">não aparece mais na Meta</p>`
+      : a.numbers === false ? `<p class="muted small" title="${esc(a.reason || "")}">números indisponíveis</p>` + line("Saldo", metaBalance(a))
       : line("Investido este mês", esc(centsMoney(a.spend_cents, a.currency)))
         + line("Alcance", esc(count(a.reach)))
         + line("Cliques no link", esc(count(a.link_clicks)))

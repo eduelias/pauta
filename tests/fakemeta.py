@@ -1,5 +1,6 @@
 """A fake Meta on localhost: Facebook Login for Business's dialog, the code exchange and the
-few Graph reads Pauta makes (the system user, its portfolio, ad accounts, insights, balance).
+few Graph reads Pauta makes (the system user, its portfolio, ad accounts, and, through the
+batch API, each account's insights and balance).
 
 Tests never talk to the real Meta. Point a Meta at it with
 `Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake.graph, dialog=fake.dialog)` and
@@ -101,11 +102,14 @@ class FakeMeta:
         self.accounts = list(ACCOUNTS)  # what the token reads: the accounts picked in Meta
         self.default_accounts = ACCOUNTS
         self.refuse_balance = False  # the token may not read funding details (code 200)
+        self.fail_insights: set[str] = set()  # account ids whose insights answer 400 (#100)
+        self.timeouts: set[str] = set()  # account ids whose batch items time out (null entries)
         self.token_invalid = False  # the token was revoked (code 190)
         self.down = False  # Meta answers 500
         self.deny = False  # the person cancels in the dialog
         self.exchanges = 0
-        self.seen: list[str] = []  # Graph paths asked for, with the token
+        self.seen: list[str] = []  # Graph paths asked for, with the token (batch items too)
+        self.calls: list[str] = []  # every HTTP request: "GET /me/adaccounts", "POST /"
         self._n = 0
         self._lock = threading.Lock()
         fake = self
@@ -125,7 +129,12 @@ class FakeMeta:
                 self.wfile.write(body)
 
             def do_GET(self):  # noqa: N802
-                fake.route(self)
+                fake.route(self, "GET", {})
+
+            def do_POST(self):  # noqa: N802
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
+                fake.route(self, "POST", form)
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.httpd.serve_forever, args=(0.02,), daemon=True).start()
@@ -160,7 +169,7 @@ class FakeMeta:
 
     # ---- routing ---------------------------------------------------------------------------
 
-    def route(self, h):
+    def route(self, h, method: str, form: dict):
         url = urlparse(h.path)
         path = url.path
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
@@ -171,19 +180,44 @@ class FakeMeta:
         if not path.startswith("/v26.0/"):
             return h._send(404, oauth_error(803))
         path = path[len("/v26.0") :]
+        self.calls.append(f"{method} {path}")
         if self.down:
             return h._send(500, oauth_error(2, "Service temporarily unavailable"))
         if path == "/oauth/access_token":
             return self._exchange(h, q)
+        # the token: a Bearer header on a GET, a form field on the batch POST
         auth = h.headers.get("Authorization") or ""
-        token = auth.removeprefix("Bearer ")
+        token = form.get("access_token") or auth.removeprefix("Bearer ")
         if not self.token or token != self.token or self.token_invalid:
             return h._send(400, oauth_error(190, "Error validating access token"))
         proof = hmac.new(SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()
-        if q.get("appsecret_proof") != proof:
+        if (form.get("appsecret_proof") or q.get("appsecret_proof")) != proof:
             return h._send(400, oauth_error(100, "Invalid appsecret_proof"))
+        if method == "POST" and path == "/" and "batch" in form:
+            return h._send(200, self._batch(form))
         self.seen.append(path)
-        return self._graph(h, path, q)
+        return h._send(*self._graph(path, q))
+
+    def _batch(self, form: dict) -> list:
+        """The Graph batch API: each item GETs its relative_url; the answer is a list, in
+        order, of {code, headers, body} (body is a JSON string), or null for one that timed
+        out on Meta's side."""
+        items = json.loads(form["batch"])
+        assert isinstance(items, list) and 0 < len(items) <= 50, items
+        assert form.get("include_headers") == "false"
+        out = []
+        for item in items:
+            assert item["method"] == "GET", item
+            rel = urlparse("/" + item["relative_url"].lstrip("/"))
+            q = {k: v[0] for k, v in parse_qs(rel.query).items()}
+            self.seen.append(rel.path)
+            m = re.fullmatch(r"/act_(\d+)(/insights)?", rel.path)
+            if m and m.group(1) in self.timeouts:
+                out.append(None)
+                continue
+            status, doc = self._graph(rel.path, q)
+            out.append({"code": status, "headers": [], "body": json.dumps(doc)})
+        return out
 
     def _exchange(self, h, q):
         if q.get("client_id") != APP_ID or q.get("client_secret") != SECRET:
@@ -197,29 +231,31 @@ class FakeMeta:
         self.token = f"EAAfake{self.token_n}"
         return h._send(200, {"access_token": self.token, "token_type": "bearer"})
 
-    def _graph(self, h, path, q):
+    def _graph(self, path, q) -> tuple[int, dict]:
+        """One Graph read with a valid token: (status, JSON), the same for a plain GET and
+        for an item of a batch."""
         if path == "/me":
             doc = {"id": "500000000000005", "name": "Pauta (usuário do sistema)"}
             if self.business:
                 doc["client_business_id"] = self.business
-            return h._send(200, doc)
+            return 200, doc
         if path == f"/{BUSINESS}":
-            return h._send(200, {"id": BUSINESS, "name": "Agência Exemplo"})
+            return 200, {"id": BUSINESS, "name": "Agência Exemplo"}
         if path == "/me/adaccounts":
             if "business" in q.get("fields", ""):  # what the real Meta says to ads_read
                 need = "Requires business_management permission to access the field."
-                return h._send(400, oauth_error(100, need))
-            return h._send(200, {"data": self.accounts, "paging": {"cursors": {}}})
+                return 400, oauth_error(100, need)
+            return 200, {"data": self.accounts, "paging": {"cursors": {}}}
         m = re.fullmatch(r"/act_(\d+)(/insights)?", path)
         if not m or m.group(1) not in BALANCE:
-            return h._send(400, oauth_error(100, "Unsupported get request"))
+            return 400, oauth_error(100, "Unsupported get request")
         aid = m.group(1)
         if m.group(2):
             assert q.get("date_preset") == "this_month"
+            if aid in self.fail_insights:
+                return 400, oauth_error(100, "Unsupported get request")
             row = INSIGHTS.get(aid)
-            return h._send(200, {"data": [row] if row else [], "paging": {"cursors": {}}})
+            return 200, {"data": [row] if row else [], "paging": {"cursors": {}}}
         if self.refuse_balance:
-            return h._send(
-                400, oauth_error(200, "(#200) Requires business_management or ads_management")
-            )
-        return h._send(200, {"id": f"act_{aid}", **BALANCE[aid]})
+            return 400, oauth_error(200, "(#200) Requires business_management or ads_management")
+        return 200, {"id": f"act_{aid}", **BALANCE[aid]}

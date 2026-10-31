@@ -12,6 +12,14 @@ The session cookie is SameSite=Strict, so it is not sent on the redirect back fr
 facebook.com: the callback is authorized by the one-time `state` instead, made for the
 admin who clicked, kept in memory for 10 minutes and used once.
 
+Reading is two HTTP calls per 50 accounts, not one per account: `/me/adaccounts`, then one
+Graph batch request carrying every account's insights and balance reads. The list is kept
+for 10 minutes; concurrent cold readers wait for one read and share it; a failure is
+remembered for a minute (two when Meta asked for a pause) so a page full of client cards
+doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers Meta won't
+return comes back with `numbers: false` and a reason; only a revoked token or a throttle
+fails the whole list.
+
 Revoking access is the client's side: Business Settings → Integrations → Connected apps.
 "Desconectar" only forgets the token here.
 
@@ -34,6 +42,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import os
@@ -53,15 +62,22 @@ VERSION = "v26.0"
 GRAPH = f"https://graph.facebook.com/{VERSION}"
 DIALOG = f"https://www.facebook.com/{VERSION}/dialog/oauth"
 DEV_REDIRECT = "http://localhost:8088/api/meta/callback"
-TIMEOUT = 30
+TIMEOUT = 15
 STATE_SECONDS = 600
 CACHE_SECONDS = 600
+FAIL_SECONDS = 60  # a failed read is not retried before this...
+THROTTLE_FAIL_SECONDS = 120  # ...or this, when Meta asked for a pause
+BATCH = 50  # the Graph batch API's maximum per request
 MAX_PENDING = 20
+INSIGHTS_FIELDS = "spend,impressions,reach,inline_link_clicks,cost_per_inline_link_click"
+BALANCE_FIELDS = "is_prepay_account,funding_source_details,spend_cap,amount_spent"
 
 UNAVAILABLE = "a Meta não respondeu; tente de novo"
 REVOKED = "a conexão com a Meta foi revogada ou expirou; conecte de novo"
 NOT_CONNECTED = "a Meta não está conectada; um administrador conecta em Equipe"
 NO_BALANCE = "sem permissão para ler o saldo"
+NO_NUMBERS = "a Meta não devolveu os números desta conta"
+NO_BALANCE_ANSWER = "a Meta não devolveu o saldo desta conta"
 THROTTLED = "a Meta pediu uma pausa; tente de novo em alguns minutos"
 # Graph error codes: 190 is an invalid or revoked token; these say "slow down"
 THROTTLE_CODES = {4, 17, 32, 613}
@@ -136,6 +152,8 @@ class Meta:
         # browser retrying) says "conectado" again instead of "expirou"
         self._done: dict[str, float] = {}  # state -> expiry
         self._cache: tuple[float, list[dict]] | None = None
+        self._failed: tuple[float, MetaError] | None = None  # the last failed read
+        self._reading = threading.Lock()  # one Meta read at a time (accounts())
         self.error = ""  # why the connection stopped working, until reconnected
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
@@ -184,6 +202,10 @@ class Meta:
 
     # ---- HTTP -----------------------------------------------------------------------------
 
+    def _proof(self, token: str) -> str:
+        """Proves the call comes from the app's server ("Require app secret" in Meta)."""
+        return hmac.new(self._secret().encode(), token.encode(), hashlib.sha256).hexdigest()
+
     def _get(self, path: str, params: dict, token: str | None = None) -> tuple[int, dict]:
         """One GET to the Graph. Returns (status, JSON); raises MetaError only when Meta
         can't be reached. Never logs the URL: it may carry the code or the secret."""
@@ -191,31 +213,48 @@ class Meta:
         headers = {"Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-            # proves the call comes from the app's server ("Require app secret" in Meta)
-            query["appsecret_proof"] = hmac.new(
-                self._secret().encode(), token.encode(), hashlib.sha256
-            ).hexdigest()
+            query["appsecret_proof"] = self._proof(token)
         url = f"{self.graph}{path}?{urllib.parse.urlencode(query)}"
-        req = urllib.request.Request(url, headers=headers)
+        status, doc = self._send(urllib.request.Request(url, headers=headers))
+        return status, doc if isinstance(doc, dict) else {}
+
+    def _post(self, path: str, form: dict, token: str) -> tuple[int, dict | list]:
+        """One POST to the Graph with a form body (the token and its proof included)."""
+        body = urllib.parse.urlencode(
+            {**form, "access_token": token, "appsecret_proof": self._proof(token)}
+        ).encode()
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        return self._send(urllib.request.Request(f"{self.graph}{path}", body, headers))
+
+    @staticmethod
+    def _send(req: urllib.request.Request) -> tuple[int, dict | list]:
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 status, raw = r.status, r.read()
         except urllib.error.HTTPError as e:
             with e:
                 status, raw = e.code, e.read()
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            # HTTPException: a short or malformed answer (IncompleteRead, a bad status line)
             obs.event("meta_unreachable", logging.WARNING, error=type(e).__name__)
             raise MetaError(UNAVAILABLE) from None
         try:
             doc = json.loads(raw or b"{}")
         except ValueError:
             doc = {}
-        return status, doc if isinstance(doc, dict) else {}
+        return status, doc if isinstance(doc, (dict, list)) else {}
 
     @staticmethod
     def _code(doc: dict) -> int | None:
-        err = doc.get("error")
+        err = doc.get("error") if isinstance(doc, dict) else None
         return err.get("code") if isinstance(err, dict) else None
+
+    @staticmethod
+    def _throttle(code) -> bool:
+        return code in THROTTLE_CODES or (isinstance(code, int) and 80000 <= code < 80100)
 
     def _fail(self, status: int, doc: dict, step: str) -> MetaError:
         """The error for a Graph answer that wasn't 200 (logged without any message text)."""
@@ -226,7 +265,7 @@ class Meta:
             self._cache = None
             obs.event("meta_revoked", logging.ERROR)
             return MetaError(REVOKED, 409)
-        if code in THROTTLE_CODES or (isinstance(code, int) and 80000 <= code < 80100):
+        if self._throttle(code):
             return MetaError(THROTTLED, 503)
         return MetaError(UNAVAILABLE)
 
@@ -301,11 +340,12 @@ class Meta:
         status, me = self._get("/me", {"fields": "id,name,client_business_id"}, token)
         if status != 200:
             raise self._fail(status, me, "me")
+        # a Graph id is digits; anything else never reaches a path
         business_id = str(me.get("client_business_id") or "")
+        business_id = business_id if business_id.isdigit() else ""
         business_name = ""
         if business_id:
-            path = f"/{urllib.parse.quote(business_id)}"
-            status, biz = self._get(path, {"fields": "name"}, token)
+            status, biz = self._get(f"/{business_id}", {"fields": "name"}, token)
             if status == 200:
                 business_name = str(biz.get("name") or "")
         self._save(
@@ -318,7 +358,7 @@ class Meta:
             }
         )
         self.error = ""
-        self._cache = None
+        self._cache = self._failed = None
         now = time.time()
         with self._lock:
             self._done = {s: t for s, t in self._done.items() if t > now}
@@ -330,7 +370,7 @@ class Meta:
         with self._lock:
             with contextlib.suppress(FileNotFoundError):
                 self.token_file.unlink()
-            self._cache = None
+            self._cache = self._failed = None
             self.error = ""
         obs.event("meta_disconnected")
 
@@ -349,10 +389,46 @@ class Meta:
 
     def accounts(self, refresh: bool = False) -> list[dict]:
         """Every ad account the token reads, with this month's numbers and, when Meta lets
-        Pauta read it, the balance. Kept for 10 minutes unless `refresh`."""
+        Pauta read it, the balance. Kept for 10 minutes unless `refresh`; a failed read is
+        raised again, without asking Meta, for a minute (`refresh` asks anyway). Readers
+        arriving while one read is under way wait for it and get the same list."""
+        fresh = self._fresh(refresh)
+        if fresh is not None:
+            return fresh
+        with self._reading:
+            fresh = self._fresh(refresh)  # someone else may just have read it
+            if fresh is not None:
+                return fresh
+            try:
+                out = self._read()
+            except MetaError as e:
+                self._failed = (time.time(), e)
+                raise
+            self._cache, self._failed = (time.time(), out), None
+        obs.event("meta_read", accounts=len(out))
+        if self.on_read:
+            self.on_read(out)
+        return out
+
+    def _fresh(self, refresh: bool) -> list[dict] | None:
+        """The cached list when it may be used; raises the last failure while it is recent."""
+        if refresh:
+            return None
+        now = time.time()
         cached = self._cache
-        if cached and not refresh and time.time() - cached[0] < CACHE_SECONDS:
+        if cached and now - cached[0] < CACHE_SECONDS:
             return cached[1]
+        failed = self._failed
+        if failed:
+            at, err = failed
+            keep = THROTTLE_FAIL_SECONDS if err.status == 503 else FAIL_SECONDS
+            if now - at < keep:
+                raise MetaError(str(err), err.status, err.reason)
+        return None
+
+    def _read(self) -> list[dict]:
+        """The list from Meta: /me/adaccounts, then every account's insights and balance in
+        batch requests of up to 50 reads (two per account)."""
         doc = self._graph(
             "/me/adaccounts",
             {
@@ -363,53 +439,103 @@ class Meta:
             },
             "adaccounts",
         )
-        out = [self._account(a) for a in doc.get("data") or [] if isinstance(a, dict)]
-        self._cache = (time.time(), out)
-        obs.event("meta_read", accounts=len(out))
-        if self.on_read:
-            self.on_read(out)
+        out = []
+        for a in doc.get("data") or []:
+            if not isinstance(a, dict):
+                continue
+            aid = "".join(c for c in str(a.get("account_id") or a.get("id") or "") if c.isdigit())
+            status = _int(a.get("account_status"))
+            out.append(
+                {
+                    "id": aid,
+                    "name": str(a.get("name") or ""),
+                    "currency": str(a.get("currency") or "BRL"),
+                    "status": status,
+                    "status_label": ACCOUNT_STATUS.get(status, ""),
+                }
+            )
+        reads = []
+        for acc in out:
+            reads.append(
+                f"act_{acc['id']}/insights?date_preset=this_month&fields={INSIGHTS_FIELDS}"
+            )
+            reads.append(f"act_{acc['id']}?fields={BALANCE_FIELDS}")
+        answers: list = []
+        for i in range(0, len(reads), BATCH):
+            answers.extend(self._batch(reads[i : i + BATCH]))
+        for acc, i in zip(out, range(0, len(answers), 2), strict=True):
+            acc.update(self._numbers(answers[i]))
+            acc["balance"] = self._balance(answers[i + 1])
         return out
 
-    def _account(self, a: dict) -> dict:
-        aid = "".join(c for c in str(a.get("account_id") or a.get("id") or "") if c.isdigit())
-        status = _int(a.get("account_status"))
-        ins = self._graph(
-            f"/act_{aid}/insights",
-            {
-                "date_preset": "this_month",
-                "fields": "spend,impressions,reach,inline_link_clicks,cost_per_inline_link_click",
-            },
-            "insights",
+    def _batch(self, reads: list[str]) -> list[tuple[int | None, dict]]:
+        """One Graph batch request: each read's (code, JSON), in order; (None, {}) for a read
+        Meta gave up on (a null entry)."""
+        saved = self._saved() if self.enabled else None
+        if not saved:
+            raise MetaError(NOT_CONNECTED, 409)
+        items = [{"method": "GET", "relative_url": r} for r in reads]
+        status, doc = self._post(
+            "/",
+            {"batch": json.dumps(items), "include_headers": "false"},
+            saved["access_token"],
         )
+        if status != 200 or not isinstance(doc, list):
+            raise self._fail(status, doc if isinstance(doc, dict) else {}, "batch")
+        out: list[tuple[int | None, dict]] = []
+        for entry in list(doc)[: len(reads)] + [None] * (len(reads) - len(doc)):
+            if not isinstance(entry, dict):
+                out.append((None, {}))
+                continue
+            try:
+                body = json.loads(entry.get("body") or "{}")
+            except (ValueError, TypeError):
+                body = {}
+            code = entry.get("code")
+            out.append(
+                (code if isinstance(code, int) else None, body if isinstance(body, dict) else {})
+            )
+        return out
+
+    def _numbers(self, answer: tuple[int | None, dict]) -> dict:
+        """This month's numbers from an insights read. Meta not answering for this one
+        account is not the list's problem: `numbers: false` and a reason (the UI shows
+        dashes); a revoked token or a throttle is."""
+        status, ins = answer
+        if status != 200:
+            code = self._code(ins)
+            if code == 190 or self._throttle(code):
+                raise self._fail(status or 0, ins, "insights")
+            obs.event("meta_numbers_missing", logging.WARNING, status=status, code=code)
+            return {
+                "numbers": False,
+                "reason": NO_NUMBERS,
+                "spend_cents": None,
+                "impressions": None,
+                "reach": None,
+                "link_clicks": None,
+                "cpc_cents": None,
+            }
         row = next(iter(ins.get("data") or []), None) or {}
         return {
-            "id": aid,
-            "name": str(a.get("name") or ""),
-            "currency": str(a.get("currency") or "BRL"),
-            "status": status,
-            "status_label": ACCOUNT_STATUS.get(status, ""),
+            "numbers": True,
             "spend_cents": cents(row.get("spend")) or 0,
             "impressions": _int(row.get("impressions")),
             "reach": _int(row.get("reach")),
             "link_clicks": _int(row.get("inline_link_clicks")),
             "cpc_cents": cents(row.get("cost_per_inline_link_click")),
-            "balance": self._balance(aid),
         }
 
-    def _balance(self, aid: str) -> dict:
+    def _balance(self, answer: tuple[int | None, dict]) -> dict:
         """What is left on the account. Meta shows the funding details only to a token with
         more than ANALYZE on the account (decision 8, "Saldo"): a refusal is not an error."""
-        saved = self._saved()
-        if not saved:
-            raise MetaError(NOT_CONNECTED, 409)
-        status, doc = self._get(
-            f"/act_{aid}",
-            {"fields": "is_prepay_account,funding_source_details,spend_cap,amount_spent"},
-            saved["access_token"],
-        )
+        status, doc = answer
+        if status is None:  # Meta gave up on this read: the rest of the account still shows
+            obs.event("meta_balance_missing", logging.WARNING)
+            return {"available": False, "reason": NO_BALANCE_ANSWER}
         if status != 200:
             code = self._code(doc)
-            if code == 190 or code in THROTTLE_CODES or status >= 500 or code is None:
+            if code == 190 or self._throttle(code) or status >= 500 or code is None:
                 raise self._fail(status, doc, "balance")
             # 10, 100, 200-299: the token may not read these fields
             obs.event("meta_balance_refused", code=code)
