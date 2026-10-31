@@ -1,0 +1,56 @@
+# Pauta's test copy (acceptance) on du7: https://acc.pauta.cc, demo data only (decision 1).
+# It runs builds of branches that aren't released or reviewed (decision 9), so it has its
+# own user and data dir and no access to /home: production's database is out of its reach.
+# pauta-deploy-branch checks User=, ProtectHome= and ExecStart= before every deploy.
+# Installed by deploy/provision-acc.sh. Settings that aren't the same for every test copy
+# (the Meta app, decision 8) go in drop-ins: pauta-acc.service.d/*.conf.
+[Unit]
+Description=Pauta acceptance (pauta serve) on 127.0.0.1:8089
+Documentation=https://github.com/eduelias/pauta
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+TasksMax=128
+MemoryMax=192M
+User=pauta-acc
+Group=pauta-acc
+Environment=PYTHONUNBUFFERED=1
+Environment=PAUTA_STATE_DIR=/var/lib/pauta-acc
+WorkingDirectory=/var/lib/pauta-acc
+StateDirectory=pauta-acc
+StateDirectoryMode=0700
+Environment=PAUTA_AUTH=passkeys
+Environment=PAUTA_RP_ID=acc.pauta.cc
+Environment=PAUTA_ORIGIN=https://acc.pauta.cc
+# the same public OneDrive app registration as production; acceptance connects its own drive
+# and keeps its own token (pauta.db.onedrive-token in its state dir)
+Environment=PAUTA_ONEDRIVE_CLIENT_ID=a6a25189-1541-430b-ba90-be78b92a8e30
+# loopback only: Caddy (acc.pauta.cc) is the one way in
+ExecStart=/opt/pauta-acc/current/bin/pauta serve --host 127.0.0.1 --port 8089
+Restart=on-failure
+RestartSec=5
+
+# sandbox: read-only system, no /home at all, write access only to its state dir
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

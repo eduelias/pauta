@@ -7,6 +7,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Para testar: qualquer branch pode ir para https://acc.pauta.cc antes do merge (Actions →
+  *Deploy branch to acceptance*). Só o Eduardo pode disparar; a versão do ar não muda.
+
 ## [1.6.1] - 2026-10-31
 
 ### Changed

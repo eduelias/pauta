@@ -16,6 +16,7 @@ def guard(**env):
         "GITHUB_REPOSITORY": "eduelias/pauta",
         "GITHUB_JOB": "du7",
         "GITHUB_ACTOR": "someone",
+        "GITHUB_TRIGGERING_ACTOR": "someone",
         "PATH": os.environ["PATH"],
     }
     base.update(env)
@@ -83,6 +84,64 @@ def test_guard_refuses_everything_else(env, why):
         "GITHUB_WORKFLOW_REF": f"{WF}/release.yml@refs/tags/v1.2.3",
         "GITHUB_EVENT_NAME": "push",
     }
+    full.update(env)
+    r = guard(**full)
+    assert r.returncode == 1
+    assert "refusing this job on du7" in r.stderr and why in r.stderr
+
+
+BRANCH = f"{WF}/deploy-branch.yml@refs/heads/main"
+
+
+def test_guard_lets_the_owner_deploy_a_branch():
+    r = guard(
+        GITHUB_WORKFLOW_REF=BRANCH,
+        GITHUB_EVENT_NAME="workflow_dispatch",
+        GITHUB_ACTOR="eduelias",
+        GITHUB_TRIGGERING_ACTOR="eduelias",
+    )
+    assert r.returncode == 0, r.stderr
+    assert "may deploy" in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("env", "why"),
+    [
+        # anyone else, or a re-run by anyone else
+        ({}, "only eduelias may deploy a branch"),
+        ({"GITHUB_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
+        ({"GITHUB_TRIGGERING_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
+        # the owner, but the workflow from a branch (where anyone could have edited it)
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_WORKFLOW_REF": f"{WF}/deploy-branch.yml@refs/heads/feat/x",
+            },
+            "run by hand on main",
+        ),
+        # the owner, but not by hand
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_EVENT_NAME": "push",
+            },
+            "run by hand on main",
+        ),
+        # the owner, but another job of the workflow
+        (
+            {
+                "GITHUB_ACTOR": "eduelias",
+                "GITHUB_TRIGGERING_ACTOR": "eduelias",
+                "GITHUB_JOB": "build",
+            },
+            "only the deploy job",
+        ),
+    ],
+)
+def test_guard_refuses_other_branch_deploys(env, why):
+    full = {"GITHUB_WORKFLOW_REF": BRANCH, "GITHUB_EVENT_NAME": "workflow_dispatch"}
     full.update(env)
     r = guard(**full)
     assert r.returncode == 1
