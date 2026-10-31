@@ -1,9 +1,10 @@
-# 4. A domain of its own
+# 4. A domain of its own: pauta.cc
 
-- **Status:** accepted (2026-10-31): the owner chose `pauta.team`. Not bought yet (still
-  unregistered on 2026-10-31); nothing is built until it is.
+- **Status:** accepted (2026-10-31). The owner bought **`pauta.cc`** and **`pauta.team`** at
+  Cloudflare on 2026-10-31; both are delegated to the same Cloudflare account as `du7.dev`.
+  The move below is planned, not built.
 - **Blocks:** decision 5 (other teams) and decision 6 (billing). Decision 1 (acceptance)
-  should be built on the new domain directly.
+  moves with it (`acc.pauta.cc`).
 
 ## Context
 
@@ -12,51 +13,80 @@ team. Two things make it worth moving before anyone else joins:
 
 - **Passkeys are bound to their domain** (the WebAuthn RP ID, `PAUTA_RP_ID`). A passkey made
   on `pauta.genic.dev` never works anywhere else. Moving later means every person in every
-  team makes a new passkey, on an invite link, at the same time. Today that is three people.
+  team makes a new passkey at the same time. Today that is three people.
 - **Paddle approves the seller's website domain** before it takes payments (decision 6), and
   customers see that domain on their statement and receipts.
 
-The `.com`, `.com.br`, `.app`, `.io`, `.co`, `.dev` and `.ai` names for `pauta` are taken
-(checked 2026-10-28). These still showed no registration on 2026-10-30 (RDAP):
-
-| Domain | For | Against |
-|---|---|---|
-| **pauta.team** | Says what it is; room for `<team>.pauta.team` later | ~US$30/year; `.team` is less familiar in Brazil |
-| pauta.so | Short, notion.so feel | ~US$50–80/year |
-| napauta.app | "Tá na pauta" is natural Portuguese; cheapest (~US$15/year) | Reads oddly to non-Portuguese speakers; two words |
-
-Prices are rough; the registrar shows the real one.
+The `.com`, `.com.br`, `.app`, `.io`, `.co`, `.dev` and `.ai` names for `pauta` are taken.
+Of the free ones, the owner bought `pauta.cc` (short to type and to read out on WhatsApp)
+and `pauta.team` (says what it is).
 
 ## Decision
 
 | Topic | Decision |
 |---|---|
-| Domain | **`pauta.team`**, keeping the name Pauta. The owner weighed a new name too (see Alternatives) and kept the one the team already uses |
-| Registrar and DNS | Cloudflare (sold at cost; `.team` is on its TLD list), in the same account as `du7.dev`. Bought once in the dashboard with auto-renew and the registrar lock on: the Terraform/OpenTofu provider has no registrar resource, and the Registrar API (beta, 2026) can register but not renew. The zone and its records are code in `du7/dns-zone` (OpenTofu), like `du7.dev`. DNS there also lets du7's Caddy image (`du7/caddy-cloudflare`) get certificates by DNS challenge, which wildcard subdomains would need later |
-| Hosts | `pauta.team`: the public site (landing page, prices, terms, privacy, refunds, checkout page). `app.pauta.team`: the app. `acc.pauta.team`: acceptance (decision 1) |
-| Passkey RP ID | The apex, `pauta.team`, not the app host. A passkey made on `app.pauta.team` with RP ID `pauta.team` keeps working if teams later get their own subdomains. Acceptance keeps its own RP ID (`acc.pauta.team`) so its passkeys can't sign in to production |
-| The old address | `pauta.genic.dev` redirects to `app.pauta.team` for a year, then goes |
-| Moving the current team | A new kind of link: a one-time "new passkey for this account" link (today an invite always makes a *new* account, and a signed-in person can only add a passkey on the domain they're on). An admin makes one per person on the old address; each opens theirs on the new one and makes a passkey there. Accounts, requests and history stay; only the passkeys are new. Done together with the migration in decision 5. The same link later serves "I lost my phone" |
+| Hosts | **`pauta.cc`**: the app, at the apex, as `pauta.genic.dev` is today. **`acc.pauta.cc`**: acceptance (decision 1). **`pauta.team`** and the `www.` names: a 301 to `pauta.cc` for now. `pauta.team` is the natural home for the public site (landing page, prices, terms, checkout) when decision 6 is built |
+| Passkey RP ID | `pauta.cc`. Acceptance keeps its own RP ID (`acc.pauta.cc`), and production only accepts the origin `https://pauta.cc`, so an acceptance page can't sign in to production |
+| Registrar | Cloudflare, bought in the dashboard. Auto-renew and the registrar lock are switched on there: the Terraform/OpenTofu provider has no registrar resource, and the Registrar API (beta, 2026) can register but not renew |
+| DNS | Code in `du7/dns-zone` (OpenTofu), like `du7.dev`: an `import` block for each zone (Cloudflare created them at purchase), then the records. `pauta.cc` and `acc.pauta.cc` are a CNAME to `du7.sytes.net` (flattened at the apex), **DNS-only**: Cloudflare's free proxy caps request bodies at 100 MB while Pauta takes 200 MB uploads in one request, and the rate limits rely on the client address Caddy passes on. A CAA record for the CAs Caddy uses. Neither domain sends mail, so each gets a null MX, `v=spf1 -all` and a DMARC `p=reject` so nobody can send mail as them |
+| Certificates | Caddy on du7, as today (TLS-ALPN on 443; works because the records are DNS-only) |
+| Moving the current team | A "move to pauta.cc" hand-off instead of new invites (an invite always makes a *new* account, and a session cookie is host-only, so nobody is signed in on the new domain). On the old address, a banner and a button "Mudar para pauta.cc": Pauta makes a one-time token for that account (10 minutes, single use), sends the person to `https://pauta.cc/#/mudar/<token>`, they make a passkey there with Face ID or a fingerprint, and are signed in. Accounts, requests and history stay; only the passkeys are new. The same link, made by an admin, later serves "perdi meu celular" |
+| The old address | Keeps working unchanged until everyone has moved, then becomes a 301 to `pauta.cc` for at least a year (old links sit in WhatsApp chats), then goes |
+
+## The move, step by step
+
+1. **DNS** (`dns-zone`, ~1 hour, no effect on anyone): `pauta-cc.tf` and `pauta-team.tf`
+   with the imports and records above. `tofu plan`, then `apply`.
+2. **Code** (one PR, ~1 day, owner review: `auth.py`, `deploy/`):
+   - `PAUTA_RP_ID` and `PAUTA_ORIGIN` accept more than one domain during the move; the RP ID
+     for a ceremony is the configured one that the request's origin belongs to.
+   - `passkey.rp_id` (additive column; existing rows get `pauta.genic.dev`), so Pauta knows
+     who has moved: `pauta users` and the Equipe page show it.
+   - The hand-off token, the banner and the `#/mudar/` screen.
+   - Every `pauta.genic.dev` in the repo becomes `pauta.cc`: `index.html` link-preview tags
+     and `og.png` (`tools/render_images.py`), `pyproject.toml`, the CLI's `--base-url`,
+     `deploy/` (unit, Caddyfile, README), the `deploy.yml`, `release.yml` and `uptime.yml`
+     workflows, README, CLAUDE.md, CONTRIBUTING.md, SECURITY.md and the tests.
+   - Tests: RP ID choice, the token (single use, expiry, bound to one account), and a browser
+     test that moves an account between two `*.localhost` origins.
+3. **du7** (~1 hour, with the release): Caddy blocks for `pauta.cc`, `acc.pauta.cc` and the
+   redirects (mind the single-file bind mount: check that the container sees the new
+   Caddyfile before reloading), the unit with both domains, then `make release`.
+4. **The team moves** (a day of calendar time): a WhatsApp message to the three people:
+   open Pauta, tap "Mudar para pauta.cc", confirm with Face ID, and add the new address to
+   the home screen (an installed app belongs to its old address). Watch `pauta users`.
+5. **Close the old address** once everyone has moved: `pauta.genic.dev` becomes a 301 in
+   Caddy; the unit drops the old RP ID and origin. Acceptance moves the same way
+   (`acc.pauta.cc`, demo data, its software-passkey test account made again).
+6. **Monitoring**: du7's watchdog `pauta*` checks, the GitHub uptime check, the repo's
+   homepage link. OneDrive needs nothing (device-code sign-in has no redirect address).
+
+Until step 5, nothing about the old address changes, so a rollback is the usual one: the
+release before the move still runs (the new column is additive) and `pauta.genic.dev` still
+works.
 
 ## Consequences
 
-- About a day: DNS, a Caddy block per host, `PAUTA_RP_ID`/`PAUTA_ORIGIN` in the unit, the
-  redirect, and the re-enroll link (in `auth.py`, so it needs the owner's review).
-- Everyone re-enrolls once. That is the cost of doing it now instead of with twenty teams.
-- `.team` renews at roughly the same price yearly; the owner's registrar account becomes part
-  of what keeps Pauta online (enable auto-renew and the registrar's lock).
+- About a day of code plus a couple of hours on DNS and du7; the team taps one button each.
+- The hand-off stays as the "lost my phone" path, so it isn't throwaway code.
+- Two domains to renew (auto-renew on both). `pauta.cc` is a ccTLD (Cocos Islands) run by
+  Verisign; Cloudflare's Registrar API doesn't cover `.cc`, which doesn't matter for a
+  domain bought in the dashboard.
+- Cloudflare's security scan will keep flagging the DNS-only records as "unproxied"; that's
+  deliberate (see DNS).
 
 ## Alternatives considered
 
 - **Stay on `pauta.genic.dev`:** free, but every later move costs every customer a new
   passkey, and Paddle's domain review would look at an unrelated `genic.dev`.
-- **A `.com.br`:** needs a CPF or CNPJ (the owner's Brazilian ME has one), but every good
-  `pauta*.com.br` is taken; `pautadotime.com.br` and similar are clumsy. Worth buying later
-  as a redirect if Brazilian customers type it.
-- **A new name** (2026-10-31, about 90 names checked by RDAP/WHOIS): *Esteira*
-  (`esteira.app`; agencies' "esteira de produção"), *Tabelinha* (`tabelinha.team`/`.io`; the
-  football one-two between seller and campaign runner), *Toca o Job* (`tocajob.com` and
-  `.com.br` both free) and *Briefei* (all free). No product found under those names. Kept
-  Pauta: the team already knows it, and `pauta.team` says what it is.
-- **Teams on subdomains from day one** (`acme.pauta.team`): nicer, but needs wildcard
-  certificates and DNS-challenge setup now. The RP ID choice above keeps it possible later.
+- **The app on `pauta.team` (or `app.pauta.team`):** the first plan. `pauta.cc` is shorter to
+  type on a phone; `pauta.team` stays for the public site.
+- **Keep the old RP ID and allow the new origin** (WebAuthn related origins): no
+  re-enrollment, but Pauta would be tied to `genic.dev` forever, and browser support is
+  still uneven.
+- **Proxy through Cloudflare:** hides du7's address and adds DDoS protection, but the 100 MB
+  upload cap and the client-address handling make it a separate decision, best taken with
+  the move off du7 (decision 5).
+- **A new name** (2026-10-31, about 90 names checked by RDAP/WHOIS): *Esteira*, *Tabelinha*,
+  *Toca o Job*, *Briefei*, and `pauta.nl`. Kept Pauta: the team already knows it.
+- **A `.com.br`:** every good `pauta*.com.br` is taken.
