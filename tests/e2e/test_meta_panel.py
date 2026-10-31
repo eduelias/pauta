@@ -63,6 +63,32 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     expect(page.locator("#meta").get_by_role("button", name="Conectar Meta")).to_be_visible()
 
 
+def test_adding_a_new_clients_account(live, device, fake_meta):
+    """Piero picked one account; a new client means another trip through Meta's login, where
+    he ticks the old and the new account, and the table grows."""
+    base, auth, _ = live
+    fake_meta.accounts = fake_meta.accounts[:1]
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    page.goto(f"{base}/#/entrar/{token}")
+    page.fill("#join input[name=name]", "Piero Sales")
+    page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(page.locator("#mechip")).to_contain_text("Piero")
+    page.goto(f"{base}/#/equipe")
+    card = page.locator("#meta")
+    card.get_by_role("button", name="Conectar Meta").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    expect(page.locator("#metaaccounts tbody tr")).to_have_count(1)
+    expect(card).to_contain_text("Cliente novo?")
+
+    fake_meta.accounts = list(fake_meta.default_accounts)  # in Meta he ticks both
+    page.once("dialog", lambda d: d.accept())
+    card.get_by_role("button", name="Adicionar contas").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    expect(page.locator("#metaaccounts tbody tr")).to_have_count(2)
+    assert fake_meta.exchanges == 2
+
+
 def test_hidden_without_the_secret(live, device, meta):
     base, auth, _ = live
     meta.secret_file.unlink()  # no app secret on the server: Meta is off

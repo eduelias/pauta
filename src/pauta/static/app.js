@@ -1380,15 +1380,17 @@ async function loadMeta(refresh = false) {
   if (!box) return;  // left the page while waiting
   box.innerHTML = error
     ? `<p class="warnbox">${esc(error)}</p>
-      <div class="row-gap mt"><button class="btn primary" id="metaconnect">${icon("target")}Conectar de novo</button>
+      <div class="row-gap mt"><button class="btn primary" data-metaconnect>${icon("target")}Conectar de novo</button>
         <button class="btn ghost danger" id="metaoff">Desconectar</button></div>`
     : metaBody(doc);
-  $("#metaconnect")?.addEventListener("click", async (e) => {
+  // Conectar, Conectar de novo and Adicionar contas are the same trip through Meta's login
+  $$("[data-metaconnect]").forEach((b) => b.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
+    if (btn.dataset.metaconnect === "add" && !confirm("Na Meta, marque todas as contas de anúncios que a Pauta deve ler: as que já estão aqui e as novas. Uma conta que ficar desmarcada pode sair da lista.")) return;
     btn.disabled = true;
     try { location.href = (await api("POST", "/api/meta/connect")).url; }
     catch (err) { toast(err.message, true); btn.disabled = false; }
-  });
+  }));
   $("#metarefresh")?.addEventListener("click", (e) => { e.currentTarget.disabled = true; loadMeta(true); });
   $("#metaoff")?.addEventListener("click", async () => {
     if (!confirm("Desconectar a Meta? A Pauta esquece o acesso e para de ler os números. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio (Integrações → Apps conectados).")) return;
@@ -1400,7 +1402,7 @@ async function loadMeta(refresh = false) {
 function metaBody(d) {
   if (!d.connected) {
     return `<p class="muted">Conecte o portfólio empresarial da agência para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
-      <button class="btn primary" id="metaconnect">${icon("target")}Conectar Meta</button>`;
+      <button class="btn primary" data-metaconnect>${icon("target")}Conectar Meta</button>`;
   }
   const since = d.connected_at ? new Date(d.connected_at).toLocaleDateString("pt-BR") : "";
   const accs = d.accounts || [];
@@ -1414,12 +1416,14 @@ function metaBody(d) {
   return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
     <div class="member"><div class="who"><b>Conectado: ${esc(d.business_name || "portfólio")}${since ? ` desde ${esc(since)}` : ""}</b>
       <span>Números deste mês. A Pauta guarda por 10 minutos; Atualizar busca de novo.</span></div>
-      <div class="row-gap">${d.error ? `<button class="btn primary small" id="metaconnect">${icon("target")}Conectar de novo</button>` : ""}
+      <div class="row-gap">${d.error ? `<button class="btn primary small" data-metaconnect>${icon("target")}Conectar de novo</button>`
+        : `<button class="btn primary small" data-metaconnect="add">${icon("plus")}Adicionar contas</button>`}
         <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button>
         <button class="btn ghost small danger" id="metaoff">Desconectar</button></div></div>
     ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th class="r">Investido este mês</th><th class="r">Alcance</th><th class="r">Impressões</th><th class="r">Cliques no link</th><th class="r">Custo por clique</th><th class="r">Saldo</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
-    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta neste portfólio.</div>`}`;
+    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta neste portfólio.</div>`}
+    <p class="muted small mt">Cliente novo? Toque em <b>Adicionar contas</b> e marque, na Meta, todas as contas que a Pauta deve ler. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar.</p>`;
 }
 
 function metaBalance(a) {

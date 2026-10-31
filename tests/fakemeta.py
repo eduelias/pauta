@@ -98,6 +98,8 @@ class FakeMeta:
         self.token_n = 0
         self.token = ""
         self.business: str | None = BUSINESS  # what /me says client_business_id is
+        self.accounts = list(ACCOUNTS)  # what the token reads: the accounts picked in Meta
+        self.default_accounts = ACCOUNTS
         self.refuse_balance = False  # the token may not read funding details (code 200)
         self.token_invalid = False  # the token was revoked (code 190)
         self.down = False  # Meta answers 500
@@ -207,7 +209,7 @@ class FakeMeta:
             if "business" in q.get("fields", ""):  # what the real Meta says to ads_read
                 need = "Requires business_management permission to access the field."
                 return h._send(400, oauth_error(100, need))
-            return h._send(200, {"data": ACCOUNTS, "paging": {"cursors": {}}})
+            return h._send(200, {"data": self.accounts, "paging": {"cursors": {}}})
         m = re.fullmatch(r"/act_(\d+)(/insights)?", path)
         if not m or m.group(1) not in BALANCE:
             return h._send(400, oauth_error(100, "Unsupported get request"))
