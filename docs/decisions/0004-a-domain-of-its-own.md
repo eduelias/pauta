@@ -1,7 +1,7 @@
 # 4. A domain of its own
 
-- **Status:** proposed (2026-10-30). The owner picks and buys the domain; nothing is built
-  until then.
+- **Status:** accepted (2026-10-31): the owner chose `pauta.team`. Not bought yet (still
+  unregistered on 2026-10-31); nothing is built until it is.
 - **Blocks:** decision 5 (other teams) and decision 6 (billing). Decision 1 (acceptance)
   should be built on the new domain directly.
 
@@ -31,7 +31,7 @@ Prices are rough; the registrar shows the real one.
 
 | Topic | Decision |
 |---|---|
-| Domain | **`pauta.team`**, unless the owner prefers `napauta.app` for the Portuguese reading |
+| Domain | **`pauta.team`**, keeping the name Pauta. The owner weighed a new name too (see Alternatives) and kept the one the team already uses |
 | Registrar and DNS | Cloudflare (sold at cost). DNS there lets du7's Caddy image (`du7/caddy-cloudflare`) get certificates by DNS challenge, which wildcard subdomains would need later |
 | Hosts | `pauta.team`: the public site (landing page, prices, terms, privacy, refunds, checkout page). `app.pauta.team`: the app. `acc.pauta.team`: acceptance (decision 1) |
 | Passkey RP ID | The apex, `pauta.team`, not the app host. A passkey made on `app.pauta.team` with RP ID `pauta.team` keeps working if teams later get their own subdomains. Acceptance keeps its own RP ID (`acc.pauta.team`) so its passkeys can't sign in to production |
@@ -53,5 +53,10 @@ Prices are rough; the registrar shows the real one.
 - **A `.com.br`:** needs a CPF or CNPJ (the owner's Brazilian ME has one), but every good
   `pauta*.com.br` is taken; `pautadotime.com.br` and similar are clumsy. Worth buying later
   as a redirect if Brazilian customers type it.
+- **A new name** (2026-10-31, about 90 names checked by RDAP/WHOIS): *Esteira*
+  (`esteira.app`; agencies' "esteira de produção"), *Tabelinha* (`tabelinha.team`/`.io`; the
+  football one-two between seller and campaign runner), *Toca o Job* (`tocajob.com` and
+  `.com.br` both free) and *Briefei* (all free). No product found under those names. Kept
+  Pauta: the team already knows it, and `pauta.team` says what it is.
 - **Teams on subdomains from day one** (`acme.pauta.team`): nicer, but needs wildcard
   certificates and DNS-challenge setup now. The RP ID choice above keeps it possible later.
