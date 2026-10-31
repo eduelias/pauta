@@ -99,6 +99,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
+- **Link de nova passkey** em Equipe: o administrador gera, para qualquer pessoa do time, um
+  link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de
+  aceitação). Antes, esse link só aparecia durante a mudança de endereço.
 
 ## [1.6.1] - 2026-10-31
 
