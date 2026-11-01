@@ -55,6 +55,28 @@ When a browser test fails, `test-results/traces/<test>-<device>.<page>.png` is a
 each page it had open. `PAUTA_TRACE=1 make e2e` records a full Playwright trace instead (open it with
 `uv run playwright show-trace <zip>`); CI always records one and uploads it on failure.
 
+## Two features at once
+
+Each screen area is its own file, server side and browser side, so two branches that work
+on different areas don't meet in a merge:
+
+| Area | API routes | Screens |
+|---|---|---|
+| requests and their files | `src/pauta/routes/requests.py` | `static/app-requests.js` |
+| clients | `routes/clients.py` | `app-clients.js` |
+| Campanhas and the Meta connection | `routes/campaigns.py` | `app-campanhas.js` |
+| Financeiro | `routes/finance.py` | `app-financeiro.js` |
+| Equipe, Configurações, OneDrive, option lists | `routes/team.py` | `app-team.js` |
+| Perfil, invites, passkeys, moving house | `routes/account.py` | `app-perfil.js`, `app-team.js` |
+| plumbing, `/api/me`, `/api/boot`, `/api/export` | `server.py` | `app.js` (helpers, shell), `app-router.js` |
+
+A new area is a new pair: a `routes/<area>.py` with `install(route, store, auth, drive, meta)`
+added to the tuple at the end of `make_handler`, and an `app-<area>.js` added to
+`index.html` before `app-router.js` (and to the wheel check in `ci.yml`). What the areas
+share (`Reply`, `SENT`, the id patterns, the Meta texts) is in `routes/__init__.py`. `db.py`
+is still one file: keep schema changes additive and your `Store` methods in their table's
+section.
+
 ## Ground rules
 
 - Keep schema changes additive (new tables and columns, with a migration for existing
