@@ -97,6 +97,28 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Fixed
 
+- **Atualizar agora** (Campanhas) responde na hora e sincroniza em segundo plano: a página
+  mostra "Sincronizando com a Meta…", acompanha a linha "Dados da Meta de…" e avisa quando
+  terminou (ou o problema que a passagem encontrou; se o servidor reiniciou no meio e nada
+  foi sincronizado, "A sincronização não terminou; tente de novo", não "atualizados"). Só
+  uma sincronização roda por vez: um segundo toque, ou a passagem automática de hora em
+  hora chegando no meio, recebe "a Meta já está sincronizando" em vez de ler a Meta duas
+  vezes (a automática tenta de novo no minuto seguinte; a página só espera a passagem que
+  já roda acabar). Sair de Campanhas no meio não avisa nada em outra tela. API: `POST
+  /api/meta/sync` passa a responder **202** `{"started": true, "last_sync": <anterior>}` e
+  **409** `{"error", "reason": "busy"}` enquanto uma passagem roda (os erros da Meta
+  trazem `reason`, o código fixo); `GET /api/campaigns` e `/metrics` trazem `sync_error`
+  e `syncing`.
+- Com dois ou mais portfólios conectados, uma conta vinculada a um cliente que nenhuma
+  leitura ainda tinha colocado no seu portfólio ficava sem sincronizar, sem erro e sem
+  aviso. A sincronização agora lê a lista de contas de cada portfólio antes (o que coloca
+  quase todas), e a que ainda assim ficar sem portfólio (sumiu da Meta, ou o portfólio dela
+  foi desconectado) aparece nos erros da passagem e no log: "conta *id* sem portfólio:
+  desvincule a conta em Configurações → Meta ou reconecte o portfólio". O aviso, e o toast
+  de Campanhas, saem uma vez; nas passagens seguintes a conta fica só no log, e a lista de
+  contas só é relida quando o conjunto de contas sem portfólio muda, não de hora em hora.
+- Um portfólio com mais de cem contas de anúncios agora lista todas em Configurações → Meta:
+  a leitura segue as páginas da Meta (antes parava na primeira).
 - Campanhas lista todo cliente com conta vinculada, mesmo sem campanha ativa (sumia como se
   a conexão tivesse falhado), e mostra o Saldo da conta em cada bloco; `GET /api/campaigns`
   traz `accounts` por cliente e `campaigns: []` para esses.
@@ -122,6 +144,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Changed
 
+- Voltar para uma versão anterior ao esquema 10 (antes de "uma conexão por portfólio")
+  mostra a Meta como "não conectada" até a próxima atualização: o arquivo do token passou a
+  ser um por portfólio, e a versão antiga não o encontra pelo nome. Nada se perde; a
+  atualização seguinte volta a ler os arquivos.
+- Custo por resultado e Custo por lead arredondam a metade para cima, como o Gerenciador
+  de Anúncios (antes a metade exata ia para o par mais próximo).
+- Um arquivo de token antigo ilegível é posto de lado com um aviso no log em vez de ser
+  tentado a cada início; com dois ou mais portfólios, o Alcance de uma conta ainda sem
+  portfólio conhecido fica em traço sem derrubar o dos outros; um acesso revogado chegando
+  no meio de Desconectar não ressuscita a conexão.
 - A aba **Equipe** agora se chama **Configurações** (ícone de engrenagem): é onde ficam o
   time, os convites, a Meta, o Financeiro, as listas e os Arquivos (o OneDrive dos pedidos),
   em seções com esse nome e nessa ordem. O endereço `#/equipe` (e qualquer link antigo que

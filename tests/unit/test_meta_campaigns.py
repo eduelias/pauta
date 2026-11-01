@@ -4,12 +4,13 @@ Resultados in Meta's shapes and the objective fallback, the 37-month clamp, a fi
 campaign ids), the period's reach with its hour-long cache, the account's day, and the
 error mapping."""
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from test_meta import connect
 
-from fakemeta import CONVERSATIONS, TODAY, expected
+from fakemeta import BUSINESS, CONVERSATIONS, OTHER_BUSINESS, TODAY, expected
 from pauta import meta as meta_mod
 from pauta.meta import (
     DEFAULT_TZ,
@@ -244,6 +245,25 @@ def test_reach_one_account_failing_is_left_out(linked, fake_meta):
     fake_meta.accounts[:] = []  # /act_222 still exists in BALANCE, insights answer rows
     out = linked.reach([("111", "23850001"), ("333", "1")], since, until, today=TODAY)
     assert out == {"23850001": 500 * 11}  # 333 is unknown to Meta (#100): skipped
+
+
+def test_reach_skips_an_account_no_portfolio_placed(linked, fake_meta, caplog):
+    """Two portfolios and an account no read has placed under one: its campaigns get no
+    reach (a dash) and the others still do, instead of the whole read failing with "este
+    portfólio não está conectado"."""
+    caplog.set_level(logging.INFO, logger="pauta")
+    fake_meta.business = OTHER_BUSINESS
+    connect(linked, fake_meta, account=8)
+    since, until = date(2026, 10, 10), TODAY
+    linked.business_of["111"] = BUSINESS  # as a read, or the server's seed, would
+    out = linked.reach([("111", "23850001"), ("999", "1")], since, until, today=TODAY)
+    assert out == {"23850001": 500 * 11}
+    assert sum('"meta_reach_unplaced"' in r.getMessage() for r in caplog.records) == 1
+    # nothing connected at all is still the read's error
+    linked.disconnect()
+    with pytest.raises(MetaError) as e:
+        linked.reach([("999", "1")], since, until, today=TODAY)
+    assert e.value.status == 409
 
 
 def test_errors_map_like_the_other_reads(linked, fake_meta):

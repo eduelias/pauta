@@ -14,7 +14,15 @@ from .. import (
     server,  # for the settings the tests patch there
     sync,
 )
-from ..db import CAMPAIGN_STATES, TRACKED_STATES, Invalid, NotFound, period_results, valid_date
+from ..db import (
+    CAMPAIGN_STATES,
+    TRACKED_STATES,
+    Invalid,
+    NotFound,
+    cents_per,
+    period_results,
+    valid_date,
+)
 from ..meta import NOT_CONNECTED, MetaError, local_today
 from . import DEFAULT_PERIOD_DAYS, ID, MAX_PERIOD_DAYS, SENT, Reply, _stale
 
@@ -82,7 +90,9 @@ def install(route, store, auth, drive, meta):
         `accounts` is the client's linked ad accounts with the balance from Meta's
         cached list (null when Meta won't say). `include_skipped=1` adds the campaigns
         marked Não acompanhar (so an admin can bring one back); `client=<id>` keeps one
-        client's. `last_sync` says how fresh the stored numbers are. `seen` counts the
+        client's. `last_sync` says how fresh the stored numbers are, `sync_error` what
+        the last pass ran into ("" when it went well) and `syncing` whether a pass is
+        under way (Atualizar agora polls this until it ends). `seen` counts the
         clients with campaigns only: Visto hoje needs an active one."""
         since, until, today = _period(self)
         q = parse_qs(urlparse(self.path).query)
@@ -124,8 +134,7 @@ def install(route, store, auth, drive, meta):
                 if r["client"]["id"] == c["id"]
             ]
             for k in c["campaigns"]:
-                clicks = k["link_clicks"]
-                k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
+                k["cpl_cents"] = cents_per(k["spend_cents"], k["link_clicks"])
                 k["reach"] = reach.get(k["meta_id"])
         checkable = [c for c in clients if c["campaigns"]]
         return {
@@ -133,6 +142,8 @@ def install(route, store, auth, drive, meta):
             "until": until,
             "today_included": until >= today,
             "last_sync": meta.last_sync,
+            "sync_error": meta.sync_error,
+            "syncing": sync.running(),
             # the daily check: how many of the clients with something to check someone
             # has been through today
             "seen": {
@@ -172,9 +183,7 @@ def install(route, store, auth, drive, meta):
                     "until": until,
                     "spend_cents": k["spend_cents"],
                     "link_clicks": k["link_clicks"],
-                    "cpl_cents": round(k["spend_cents"] / k["link_clicks"])
-                    if k["link_clicks"]
-                    else None,
+                    "cpl_cents": cents_per(k["spend_cents"], k["link_clicks"]),
                     "results": k["results"],
                     "result_indicator": k["result_indicator"],
                     "cost_per_result_cents": k["cost_per_result_cents"],
@@ -210,8 +219,7 @@ def install(route, store, auth, drive, meta):
         k["result_indicator"] = next(
             (d["result_indicator"] for d in reversed(days) if d["result_indicator"]), ""
         )
-        clicks = k["link_clicks"]
-        k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
+        k["cpl_cents"] = cents_per(k["spend_cents"], k["link_clicks"])
         pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
         k["reach"] = _reach(self, pairs, since, until).get(k["meta_id"])
         return {
@@ -228,16 +236,23 @@ def install(route, store, auth, drive, meta):
 
     @route("POST", "/api/meta/sync", "admin")
     def meta_sync(self, viewer, _body):
-        """Atualizar agora: the hourly pass, at most once every 15 minutes."""
+        """Atualizar agora: the hourly pass on its own thread, at most once every 15
+        minutes. Answers 202 `{started, last_sync}` at once (`last_sync` is the one
+        before: the UI polls GET /api/campaigns until it moves) instead of holding a
+        server slot for the tens of seconds a pass takes; 409 `{error, reason: "busy"}`
+        while a pass (this one's or the scheduler's) is still running (the page then
+        waits for that one), 409 with another reason when Meta isn't connected."""
         if not meta.connected:
             raise MetaError(NOT_CONNECTED, 409)
         with manual_lock:
             wait = manual_sync["at"] + server.MANUAL_SYNC_SECONDS - time.time()
             if wait > 0:
                 raise Reply(429, {"error": server.SYNC_TOO_SOON, "retry_in_s": round(wait)})
+            previous = meta.last_sync
+            sync.start(store, meta, days=sync.HOURLY_DAYS)  # 409 when one is running
             manual_sync["at"] = time.time()
         obs.event("meta_sync_requested", account=viewer["account"])
-        return sync.run(store, meta, days=sync.HOURLY_DAYS)
+        raise Reply(202, {"started": True, "last_sync": previous})
 
     # ---- Meta (decision 8, phase 2): read-only ad account numbers ---------------------
 

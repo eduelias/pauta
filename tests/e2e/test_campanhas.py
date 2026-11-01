@@ -9,14 +9,16 @@ The browsers here live in São Paulo (`timezone_id`), like Piero's phone and the
 accounts, so the dates the picker computes agree with the day the sync wrote, whatever
 the hour the suite runs at on a CET machine."""
 
+import json
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from playwright.sync_api import expect
 
 from fakemeta import EMPTY_ACCOUNT, TZ, expected
 from pauta import sync
+from pauta.db import cents_per
 from pauta.meta import local_today
 
 pytestmark = pytest.mark.e2e
@@ -124,7 +126,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(limpeza.locator(".km-results b")).to_have_text(str(want["results"]))
     expect(limpeza.locator(".km-results .ksub")).to_have_text(CONVERSATIONS)
     expect(limpeza.locator(".km-cpr b")).to_contain_text(
-        brl(round(want["spend_cents"] / want["results"]))
+        brl(cents_per(want["spend_cents"], want["results"]))
     )
     expect(limpeza.locator(".km-cpr .ksub")).to_have_text(CONVERSATIONS)
     expect(limpeza.locator(".km-spend b")).to_have_text(
@@ -165,6 +167,10 @@ def test_list_with_the_period_picker(synced, live, device):
     bakery_total = blocks.nth(1).locator(".ktotal")
     expect(bakery_total.locator(".km-results b")).to_have_text(str(pan["results"]))
     expect(bakery_total.locator(".km-results .ksub")).to_have_text("Cliques no link")
+    # the totals' costs round as the server's cents_per does: half up (5 ÷ 2 is 3, not 2)
+    for a, b in [(5, 2), (7, 2), (1005, 10), (1, 3), (2, 3), (3033, 33), (0, 4)]:
+        assert page.evaluate(f"centsPer({a}, {b})") == cents_per(a, b), (a, b)
+    assert page.evaluate("centsPer(10, 0)") is None and cents_per(10, 0) is None
 
     # Este mês includes today, and says so
     page.get_by_role("button", name="Este mês").click()
@@ -234,12 +240,91 @@ def test_skip_follow_again_and_sync_now(synced):
     expect(page.locator("#toast")).to_contain_text("de volta à lista")
     expect(page.locator(".krow.skipped")).to_have_count(0)
     expect(page.locator(".krow[data-id]")).to_have_count(3)
-    # Atualizar agora: the sync's summary in a toast; a second tap hits the 15-minute limit
+    # Atualizar agora: the server answers at once and syncs on its thread; the page polls
+    # until it ends and says so in a toast, the "Dados da Meta" line following; a second
+    # tap hits the 15-minute limit
     page.get_by_role("button", name="Atualizar agora").click()
-    expect(page.locator("#toast")).to_contain_text("2 contas lidas")
+    expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
+    expect(page.locator("#syncline")).to_have_text("Dados da Meta de agora")
     laptop.expected.add((429, "/api/meta/sync"))
     page.get_by_role("button", name="Atualizar agora").click()
     expect(page.locator("#toast")).to_contain_text("menos de 15 minutos")
+
+
+def test_sync_now_lost_to_a_restart_is_not_a_success(synced):
+    """The server restarting mid-pass: its lock is fresh, `last_sync` comes back from the
+    database (the previous one) and `sync_error` is "", so the first poll looks exactly
+    like a pass that ended. Here the POST starts nothing (the route answers 202 with the
+    previous `last_sync` and the server never hears of it), so every poll answers as a
+    server that restarted: the page must not toast "Dados da Meta atualizados" over
+    nothing, and the button comes back for another try."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    previous = store.sync_state()["last_sync"]
+    assert previous
+    body = json.dumps({"started": True, "last_sync": previous})
+    page.route(
+        "**/api/meta/sync",
+        lambda r: r.fulfill(status=202, content_type="application/json", body=body),
+    )
+    page.get_by_role("button", name="Atualizar agora").click()
+    expect(page.locator("#syncline")).to_contain_text("Sincronizando com a Meta")
+    toast = page.locator("#toast")
+    expect(toast).to_have_text("A sincronização não terminou; tente de novo", timeout=10_000)
+    expect(toast).to_have_class(re.compile(r"\berr\b"))
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")  # the line is back
+    expect(page.get_by_role("button", name="Atualizar agora")).to_be_enabled()
+    assert store.sync_state()["last_sync"] == previous  # nothing ran, nothing was claimed
+
+
+def test_sync_now_while_a_pass_runs_waits_for_it(synced, meta, fake_meta, monkeypatch):
+    """Atualizar agora while the hourly pass (or another admin's tap) is on it: the server
+    answers 409 "já está sincronizando" and the page, instead of a red toast, says
+    "Sincronizando com a Meta…" and waits for that pass like its own."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    previous = store.sync_state()["last_sync"]
+    # the stamp has whole seconds: the running pass gets one after the fixture's for sure
+    later = datetime.strptime(previous, "%Y-%m-%dT%H:%M:%SZ") + timedelta(seconds=1)
+    monkeypatch.setattr(sync, "_stamp", lambda: later.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    fake_meta.hold()
+    thread = sync.start(store, meta, days=sync.HOURLY_DAYS)  # the hourly pass, held open
+    laptop.expected.add((409, "/api/meta/sync"))
+    with page.expect_response(lambda r: r.url.endswith("/api/meta/sync")) as answered:
+        page.get_by_role("button", name="Atualizar agora").click()
+    assert answered.value.status == 409 and answered.value.json()["reason"] == "busy"
+    expect(page.locator("#syncline")).to_contain_text("Sincronizando com a Meta")
+    expect(page.get_by_role("button", name="Atualizar agora")).to_be_disabled()
+    expect(page.locator("#toast")).to_be_hidden()  # no "já está sincronizando" in red
+    fake_meta.release()
+    thread.join(timeout=30)
+    expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
+    expect(page.locator("#syncline")).to_have_text("Dados da Meta de agora")
+
+
+def test_leaving_campanhas_mid_sync_says_nothing_elsewhere(synced):
+    """The poll after Atualizar agora ends quietly when the person moves to another screen:
+    no "ainda não terminou" toast over the Painel."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    body = json.dumps({"started": True, "last_sync": store.sync_state()["last_sync"]})
+    page.route(
+        "**/api/meta/sync",
+        lambda r: r.fulfill(status=202, content_type="application/json", body=body),
+    )
+    page.get_by_role("button", name="Atualizar agora").click()
+    expect(page.locator("#syncline")).to_contain_text("Sincronizando com a Meta")
+    page.locator("#nav a[data-nav='#/']").click()
+    expect(page.locator("#syncline")).to_have_count(0)
+    page.wait_for_timeout(1500)  # past the poll's first look (1 s), which finds no screen
+    expect(page.locator("#toast")).to_be_hidden()
+    expect(page.locator("#syncline")).to_have_count(0)
 
 
 def test_visto_hoje(synced):

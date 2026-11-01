@@ -7,15 +7,29 @@ stopped delivering end), then the last `days` days of per-campaign insights are 
 keeps 37 months). Finally done "Criar/Reativar campanha" requests whose Ads Manager link
 names a campaign are tied to it.
 
-One account's trouble doesn't stop the others; a revoked token stops only its own
-connection's accounts (the other portfolios still sync); a throttle stops the pass (nothing
-retries in a loop: the next scheduled pass tries again). Each connection gets its
+One account's trouble doesn't stop the others; a linked account no connection has placed
+under its portfolio is reported rather than skipped in silence, after one account list per
+connection tried to place it (`UNCLAIMED` when that read failed, `ORPHAN` when it ran and
+the account is still nobody's: it vanished from Meta, or its portfolio was disconnected).
+That read is not cheap (it pages the accounts and batch-reads every one's insights and
+balance), so it runs again only when the set of unplaced accounts changes (`meta.orphans`
+remembers it); a permanent orphan is reported once with a WARNING and `sync_error`, then
+at INFO in the pass's `errors` only, so Campanhas doesn't toast the same problem on every
+Atualizar agora. A revoked token stops only its own connection's accounts (the other
+portfolios still sync); a throttle stops the pass (nothing retries in a loop: the next
+scheduled pass tries again). Each connection gets its
 `last_sync` and the first error met under it. `Scheduler` runs it in a daemon
 thread from `pauta serve`: a first pass a minute after start, then hourly over today and
 yesterday, and nightly after 03:10 over the last 28 days (conversions keep arriving for up
 to 28 days after a click). "Today" is each ad account's own day (`timezone_name` from
 Meta, `meta.local_today`), not the server's: du7 runs on CET, and in the evening in Brazil
 a server-local today is already tomorrow. `pauta meta sync` runs one pass from the shell.
+
+One pass at a time: `run` takes a module lock without waiting and a second caller (the
+scheduler's tick while "Atualizar agora" runs, or the other way round) gets `BUSY` (409)
+instead of doubling every Graph read. `start` is the manual route's way in: it takes the
+lock and runs the pass on a daemon thread, so the request answers at once and the UI polls
+`last_sync` for the end.
 """
 
 from __future__ import annotations
@@ -34,8 +48,21 @@ HOURLY_DAYS = 2
 NIGHTLY_DAYS = 28
 HOURLY_MINUTES = 60
 NIGHTLY_AFTER = dtime(3, 10)
+SYNC_FAILED = "a sincronização falhou; veja o log"
 FIRST_RUN_SECONDS = 60
 TICK_SECONDS = 60
+BUSY = "a Meta já está sincronizando; espere essa passagem terminar"
+UNCLAIMED = "conta sem portfólio conhecido; abra Configurações → Meta para a Pauta ler as contas"
+ORPHAN = (
+    "conta {id} sem portfólio: desvincule a conta em Configurações → Meta ou reconecte o portfólio"
+)
+
+_lock = threading.Lock()  # one pass at a time, whoever asks
+
+
+def running() -> bool:
+    """A pass is under way (the lock is held)."""
+    return _lock.locked()
 
 
 def _stamp() -> str:
@@ -50,7 +77,44 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
     `last_sync` is written; `meta.last_sync`/`sync_error` sum the pass up for /metrics.
     The window is the last `days` days up to `today`, which is each account's own day
     (its time zone) unless given. Raises MetaError when nothing is connected at all
-    (nothing to sync)."""
+    (nothing to sync), or `BUSY` (409) when another pass is still running."""
+    if not _lock.acquire(blocking=False):
+        raise MetaError(BUSY, 409, "busy")
+    try:
+        return _run(store, meta, days=days, today=today)
+    finally:
+        _lock.release()
+
+
+def start(store: Store, meta: Meta, *, days: int) -> threading.Thread:
+    """`run` on a daemon thread, for "Atualizar agora": the lock is taken here, so by the
+    time this returns a second caller already gets `BUSY`; the thread releases it when the
+    pass ends. Raises `BUSY` (409) when a pass is under way. Whatever the pass meets is
+    logged and shown as `meta.sync_error`, as the scheduler does: no thread dies loudly.
+    A thread that can't start (the OS refusing) gives the lock back before raising: held
+    forever, every later pass would get `BUSY` until a restart."""
+    if not _lock.acquire(blocking=False):
+        raise MetaError(BUSY, 409, "busy")
+
+    def work():
+        try:
+            _run(store, meta, days=days)
+        except Exception as e:  # noqa: BLE001 - the thread must outlive any surprise
+            meta.sync_error = str(e) if isinstance(e, MetaError) else SYNC_FAILED
+            obs.event("meta_sync_failed", logging.ERROR, error=type(e).__name__)
+        finally:
+            _lock.release()
+
+    thread = threading.Thread(target=work, name="meta-sync-now", daemon=True)
+    try:
+        thread.start()
+    except BaseException:  # can't start new thread: the lock must not stay held forever
+        _lock.release()
+        raise
+    return thread
+
+
+def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> dict:
     conns = [c for c in meta.connections() if c["business_id"] != LEGACY]
     if not conns:
         raise MetaError(NOT_CONNECTED, 409)
@@ -63,12 +127,14 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
         "errors": [],
     }
     fetched = _stamp()
-    accounts = [a for a in store.meta_accounts() if a["client"]]
+    known = meta.orphans  # unplaced after the last placing read: reported before
+    accounts, placed = _linked(store, meta, conns)
+    first_error = ""  # what `sync_error` says: Meta's errors, and an orphan the first time
     throttled = False
     for conn in conns:
         bid = conn["business_id"]
         mine = [a for a in accounts if _business(a, meta, conns) == bid]
-        first_error = ""
+        conn_error = ""
         for account in mine:
             aid = account["id"]
             out["accounts"] += 1
@@ -80,17 +146,32 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
                 out["errors"].append(
                     {"account": aid, "business_id": bid, "error": str(e), "status": e.status}
                 )
+                conn_error = conn_error or str(e)
                 first_error = first_error or str(e)
                 obs.event("meta_sync_account_failed", logging.WARNING, status=e.status)
                 if e.status == 503:  # Meta asked for a pause: stop the whole pass
                     throttled = True
                 if e.status in (409, 503):  # revoked: the rest of this connection would too
                     break
-        store.set_connection_sync(bid, fetched, first_error)
+        store.set_connection_sync(bid, fetched, conn_error)
         if throttled:
             break
+    # linked, and still no connection's: never synced, so say so. Once per change loudly
+    # (WARNING, and the pass's `sync_error`); a repeat is in `errors` and the log at INFO
+    unplaced = [a for a in accounts if not _business(a, meta, conns)]
+    for account in unplaced:
+        aid = account["id"]
+        repeat = aid in known
+        msg = ORPHAN.format(id=aid) if repeat or placed else UNCLAIMED
+        out["errors"].append({"account": aid, "business_id": "", "error": msg, "status": 0})
+        level = logging.INFO if repeat else logging.WARNING
+        obs.event("meta_account_unclaimed", level, account=aid, repeat=repeat)
+        if not repeat:
+            first_error = first_error or msg
+    if placed or not unplaced:  # a failed read decides nothing: the next pass reads again
+        meta.orphans = frozenset(a["id"] for a in unplaced)
     out["linked"] = store.link_requests_to_campaigns()
-    error = out["errors"][0]["error"] if out["errors"] else ""
+    error = first_error
     meta.last_sync, meta.sync_error = fetched, error
     store.set_sync_state(fetched, error)
     obs.event(
@@ -104,6 +185,27 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
         errors=len(out["errors"]),
     )
     return out
+
+
+def _linked(store: Store, meta: Meta, conns: list[dict]) -> tuple[list[dict], bool]:
+    """The ad accounts linked to a client, and whether a placing read ran. With several
+    connections, a linked row that no read has placed under a portfolio yet (written
+    before v10, or linked before any read) would be nobody's: one account list per
+    connection (cached ten minutes) tags what it can first, through `meta.business_of`
+    and, on the server, the rows (`on_read`). That read pages every account's insights
+    and balance, so it runs only when the unplaced set differs from the one the last read
+    left behind (`meta.orphans`): a permanent orphan doesn't cost every hourly pass a
+    read. Meta refusing the read is the pass's business, not this step's."""
+    accounts = [a for a in store.meta_accounts() if a["client"]]
+    unplaced = frozenset(a["id"] for a in accounts if not _business(a, meta, conns))
+    if len(conns) < 2 or not unplaced or unplaced == meta.orphans:
+        return accounts, False
+    try:
+        meta.accounts()
+    except MetaError as e:
+        obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
+        return accounts, False
+    return [a for a in store.meta_accounts() if a["client"]], True
 
 
 def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
@@ -188,12 +290,18 @@ class Scheduler:
         if not what or not self.meta.connected:
             return None
         days = NIGHTLY_DAYS if "nightly" in what else HOURLY_DAYS
+        before = self.last_hourly, self.last_nightly
         self.last_hourly = now
         if "nightly" in what:
             self.last_nightly = now
         try:
             return run(self.store, self.meta, days=days)
         except Exception as e:  # noqa: BLE001 - the thread must outlive any surprise
-            self.meta.sync_error = "a sincronização falhou; veja o log"
+            if isinstance(e, MetaError) and e.reason == "busy":
+                # Atualizar agora is on it: this pass is due again at the next tick
+                self.last_hourly, self.last_nightly = before
+                obs.event("meta_sync_busy")
+                return None
+            self.meta.sync_error = SYNC_FAILED
             obs.event("meta_sync_failed", logging.ERROR, error=type(e).__name__)
             return None

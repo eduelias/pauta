@@ -84,6 +84,27 @@ function bindPeriod(st, onChange) {
   $("#puntil").addEventListener("change", custom);
 }
 const syncLine = (last) => last ? `Dados da Meta de ${esc(ago(last))}` : "A Meta ainda não foi lida; os números chegam na primeira sincronização.";
+const SYNC_POLL_MS = 3000, SYNC_POLL_MAX = 40; // every 3 s for up to ~2 min
+const SYNC_LOST = "lost";  // nothing syncing and nothing new: the pass never ended
+const SYNC_LEFT = "left";  // the person is on another screen: nothing to say there
+const SYNC_UNFINISHED = "A sincronização não terminou; tente de novo";
+async function waitForSync(previous, since, until) {
+  // After Atualizar agora: GET /api/campaigns until the pass ends (a newer `last_sync`);
+  // the "Dados da Meta" line follows. SYNC_LOST when nothing is syncing and `last_sync`
+  // is still the previous one with no error: the server restarted mid-pass (the lock is
+  // fresh, `last_sync` comes back from the database), so nothing was synced. SYNC_LEFT
+  // when the person has left the screen; null when it is still running after the last poll.
+  for (let i = 0; i < SYNC_POLL_MAX; i++) {
+    await new Promise((r) => setTimeout(r, i ? SYNC_POLL_MS : 1000));
+    if (!document.contains($("#syncline"))) return SYNC_LEFT;
+    const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}`);
+    if (doc.syncing && doc.last_sync === previous) continue;
+    $("#syncline").textContent = syncLine(doc.last_sync);
+    if (doc.last_sync === previous && !doc.sync_error) return SYNC_LOST;
+    return doc;
+  }
+  return null;
+}
 
 // Ativa / Encerrada em dd/mm / Pausada / Ignorada, Meta's own status on hover
 function stateTag(k) {
@@ -141,18 +162,21 @@ function metricCells(k, total = false) {
     return `<div class="km km-${key}"><span class="kl">${label}</span><b>${main}</b>${sub ? `<span class="ksub" title="${esc(sub)}">${esc(sub)}</span>` : ""}</div>`;
   }).join("");
 }
+// spend ÷ n in whole cents, half up as Ads Manager and the server's db.cents_per round
+// (integer arithmetic: floor((2a + b) / 2b) is exact where a float quotient may not be)
+const centsPer = (spendCents, n) => n ? Math.floor((2 * spendCents + n) / (2 * n)) : null;
 function clientTotals(c) {
   const live = c.campaigns.filter((x) => x.state !== "skipped");
   const t = { spend_cents: 0, link_clicks: 0, impressions: 0, currency: c.campaigns[0]?.currency, results: null, result_indicator: "", cost_per_result_cents: null, mixed: false };
   for (const k of live) { t.spend_cents += k.spend_cents; t.link_clicks += k.link_clicks; t.impressions += k.impressions; }
-  t.cpl_cents = t.link_clicks ? Math.round(t.spend_cents / t.link_clicks) : null;
+  t.cpl_cents = centsPer(t.spend_cents, t.link_clicks);
   // results add up only when every campaign counts the same thing
   const kinds = new Set(live.map((k) => k.result_indicator).filter(Boolean));
   const counted = live.filter((k) => k.results != null);
   if (kinds.size === 1 && counted.length) {
     t.result_indicator = [...kinds][0];
     t.results = counted.reduce((a, k) => a + k.results, 0);
-    t.cost_per_result_cents = t.results ? Math.round(t.spend_cents / t.results) : null;
+    t.cost_per_result_cents = centsPer(t.spend_cents, t.results);
   } else t.mixed = kinds.size > 1;
   return t;
 }
@@ -208,18 +232,32 @@ async function viewCampaigns(query) {
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
-    <p class="synced" id="synced"><span class="muted small">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
+    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
   bindPeriod(st, redraw);
   $("#showskipped")?.addEventListener("change", (e) => { campState.skipped = e.target.checked; redraw(); });
   $("#syncnow")?.addEventListener("click", async (e) => {
+    // the server answers 202 at once and syncs on its own thread: poll the list until the
+    // pass ends, keeping the "Dados da Meta" line honest meanwhile. 409 "busy" means one
+    // is already running (another admin's tap, the hourly one): wait for that one instead
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
-      const out = await api("POST", "/api/meta/sync", {});
-      toast(`${out.accounts} ${out.accounts === 1 ? "conta lida" : "contas lidas"}, ${out.campaigns_new} ${out.campaigns_new === 1 ? "campanha nova" : "campanhas novas"}, ${out.insight_rows} ${out.insight_rows === 1 ? "dia atualizado" : "dias atualizados"}${out.errors?.length ? ` · ${out.errors.length} com erro` : ""}`, Boolean(out.errors?.length));
+      let previous = doc.last_sync;
+      try {
+        previous = (await api("POST", "/api/meta/sync", {})).last_sync;
+      } catch (err) {
+        if (err.reason !== "busy") throw err;
+      }
+      const line = $("#syncline");
+      if (line) line.textContent = previous ? `Sincronizando com a Meta… (dados de ${ago(previous)})` : "Sincronizando com a Meta…";
+      const done = await waitForSync(previous, since, until);
+      if (done === SYNC_LEFT) return;
+      if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
+      if (done === SYNC_LOST) { toast(SYNC_UNFINISHED, true); btn.disabled = false; return; }
+      toast(done.sync_error ? `Sincronização com problema: ${done.sync_error}` : "Dados da Meta atualizados", Boolean(done.sync_error));
       redraw();
     } catch (err) { toast(err.message, true); btn.disabled = false; }
   });
@@ -250,10 +288,10 @@ async function viewCampaigns(query) {
 // `sub` names what Resultados count, under the value, as Ads Manager does.
 const METRICS = {
   results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta" },
-  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => d.results ? d.spend_cents / d.results : null, sub: (k) => resultLabel(k.result_indicator) },
+  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => centsPer(d.spend_cents, d.results), sub: (k) => resultLabel(k.result_indicator) },
   spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
   leads: { label: "Leads (cliques)", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks },
-  cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => d.link_clicks ? d.spend_cents / d.link_clicks : null },
+  cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => centsPer(d.spend_cents, d.link_clicks) },
   reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia" },
   impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions },
   ctr: { label: "CTR", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões" },

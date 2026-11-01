@@ -19,6 +19,7 @@ def test_off_by_default(team):
         "error": "",
         "last_sync": None,
         "sync_error": "",
+        "syncing": False,
     }
 
 

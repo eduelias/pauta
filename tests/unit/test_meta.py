@@ -354,6 +354,28 @@ def test_a_cold_read_is_two_calls_and_batches_of_fifty(linked, fake_meta):
     assert len(accs) == 26 and accs[25]["id"] == "925" and accs[25]["status_label"] == ""
 
 
+def test_the_account_list_is_paged(linked, fake_meta):
+    """A portfolio with more than a hundred ad accounts: the list is followed page by page
+    (Meta's `paging.cursors.after`), like the campaign list, so none is left out."""
+    fake_meta.accounts = [
+        {
+            "id": f"act_{1000 + i}",
+            "account_id": str(1000 + i),
+            "name": f"Conta {i:03d}",
+            "currency": "BRL",
+            "account_status": 1,
+        }
+        for i in range(101)
+    ]
+    before = len(fake_meta.calls)
+    accs = linked.accounts(refresh=True)
+    assert len(accs) == 101 and [a["id"] for a in accs][::100] == ["1000", "1100"]
+    assert len({a["id"] for a in accs}) == 101
+    # two pages of the list, then 202 reads in five batches
+    assert fake_meta.calls[before:] == ["GET /me/adaccounts"] * 2 + ["POST /"] * 5
+    assert all(linked.business_of[a["id"]] == BUSINESS for a in accs)
+
+
 def test_concurrent_cold_readers_share_one_read(linked, fake_meta):
     before = len(fake_meta.calls)
     results, errors = [], []

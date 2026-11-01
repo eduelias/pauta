@@ -23,6 +23,11 @@ connect it. `fake.revoke(business)` kills that business's tokens only (190). `EM
 (555, "Estúdio Pilates Leve") has a balance and no campaigns at all, as Piero's second
 portfolio had: `fake.accounts.append(EMPTY_ACCOUNT)` before the login lists it.
 
+A test that needs a pass to stay open (the lock held, `syncing` on) calls `fake.hold()`:
+from then on every Graph answer waits at a gate, `fake.held` is set once one is waiting,
+and `fake.release()` lets them all through. No timing: the test asserts the "while it
+runs" state between the two calls and the "after" state once the pass has ended.
+
 Tests never talk to the real Meta. Point a Meta at it with
 `Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake.graph, dialog=fake.dialog)` and
 write SECRET to `<db>.meta-secret` (see `secret()`).
@@ -264,6 +269,9 @@ def oauth_error(code: int, message: str = "fake") -> dict:
     return {"error": {"message": message, "type": "OAuthException", "code": code}}
 
 
+GATE_SECONDS = 10  # a held answer goes through anyway before Pauta's own 15 s timeout
+
+
 class FakeMeta:
     def __init__(self):
         self.codes: dict[str, str] = {}  # code -> the redirect_uri it was issued for
@@ -284,6 +292,8 @@ class FakeMeta:
         self.fail_campaigns: set[str] = set()  # account ids whose campaign list answers 400
         self.throttle = False  # every read answers code 4 (too many calls)
         self.down = False  # Meta answers 500
+        self.gate: threading.Event | None = None  # hold(): Graph answers wait for release()
+        self.held = threading.Event()  # set once an answer is waiting at the gate
         self.deny = False  # the person cancels in the dialog
         self.exchanges = 0
         self.seen: list[str] = []  # Graph paths asked for, with the token (batch items too)
@@ -323,6 +333,18 @@ class FakeMeta:
     def close(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+
+    def hold(self) -> None:
+        """Every Graph answer waits from now on, until `release()`: a pass stays open (lock
+        held, `syncing` on) for as long as the test needs, with no sleeping anywhere."""
+        self.held.clear()
+        self.gate = threading.Event()
+
+    def release(self) -> None:
+        """Let the held answers through; later ones don't wait."""
+        gate, self.gate = self.gate, None
+        if gate is not None:
+            gate.set()
 
     def revoke(self, business: str) -> None:
         """The portfolio's owner removed Pauta in Business Settings: its tokens die."""
@@ -366,6 +388,10 @@ class FakeMeta:
             return h._send(404, oauth_error(803))
         path = path[len("/v26.0") :]
         self.calls.append(f"{method} {path}")
+        gate = self.gate
+        if gate is not None:
+            self.held.set()
+            gate.wait(GATE_SECONDS)
         if self.down:
             return h._send(500, oauth_error(2, "Service temporarily unavailable"))
         if path == "/oauth/access_token":
@@ -434,7 +460,7 @@ class FakeMeta:
                 need = "Requires business_management permission to access the field."
                 return 400, oauth_error(100, need)
             accounts = self.accounts_by_business.get(business, self.accounts)
-            return 200, {"data": accounts, "paging": {"cursors": {}}}
+            return self._page(accounts, q)  # the Graph pages this list too (limit, after)
         if self.throttle:
             return 400, oauth_error(4, "Application request limit reached")
         m = re.fullmatch(r"/act_(\d+)(/insights|/campaigns)?", path)

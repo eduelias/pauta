@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import __version__, obs
+from . import __version__, obs, sync
 from .auth import Auth, AuthError
 from .db import (
     Invalid,
@@ -349,8 +349,10 @@ def make_handler(
                 self._json(400, {"error": str(e)})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
-            except (DriveError, MetaError) as e:
+            except DriveError as e:
                 self._json(e.status, {"error": str(e)})
+            except MetaError as e:  # `reason` is the fixed code: the UI waits on "busy"
+                self._json(e.status, {"error": str(e), "reason": e.reason})
 
         def _health(self, method: str):
             """For the deploy and uptime checks: no auth, no data, just "the DB answers"."""
@@ -400,6 +402,7 @@ def make_handler(
                 "error": next((c["error"] for c in conns if c["error"]), ""),
                 "last_sync": meta.last_sync,
                 "sync_error": meta.sync_error,
+                "syncing": sync.running(),
             }
 
         def do_GET(self):  # noqa: N802

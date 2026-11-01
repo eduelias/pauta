@@ -7,7 +7,15 @@ import sqlite3
 
 import pytest
 
-from pauta.db import SCHEMA_VERSION, Invalid, NotFound, Store, campaign_id_in, period_results
+from pauta.db import (
+    SCHEMA_VERSION,
+    Invalid,
+    NotFound,
+    Store,
+    campaign_id_in,
+    cents_per,
+    period_results,
+)
 
 ACTIVE = {
     "id": "23850001",
@@ -382,6 +390,17 @@ def test_period_results_like_ads_manager(store, linked):
     assert period_results(None, 100) == {"results": None, "cost_per_result_cents": None}
     assert period_results(4, 3433) == {"results": 4, "cost_per_result_cents": 858}
     assert period_results(0, 3433) == {"results": 0, "cost_per_result_cents": None}
+
+
+def test_per_unit_costs_round_half_up():
+    """Ads Manager rounds half up; Python's round() is half-even (5 / 2 -> 2). The cost
+    per result and per lead go through the same helper."""
+    assert cents_per(5, 2) == 3 and round(5 / 2) == 2  # the case round() gets "wrong"
+    assert cents_per(7, 2) == 4 and cents_per(1, 2) == 1 and cents_per(25, 10) == 3
+    assert cents_per(3433, 4) == 858 and cents_per(100, 3) == 33 and cents_per(200, 3) == 67
+    assert cents_per(0, 3) == 0
+    assert cents_per(100, 0) is None and cents_per(100, None) is None
+    assert period_results(2, 5) == {"results": 2, "cost_per_result_cents": 3}
 
 
 def test_export_tables_and_sync_state(store, linked):

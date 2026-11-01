@@ -33,7 +33,12 @@ async function api(method, path, body) {
     showGate();
   }
   if (nav !== null && nav !== NAV_SEQ) throw new Stale(path);
-  if (!res.ok) throw new Error(doc.error || res.statusText);
+  if (!res.ok) {
+    const err = new Error(doc.error || res.statusText);
+    err.status = res.status;
+    err.reason = doc.reason;  // Meta's fixed code ("busy", "revoked"...), when the server gives one
+    throw err;
+  }
   return doc;
 }
 

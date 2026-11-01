@@ -5,6 +5,7 @@ overwriting the first, and the Store's side: schema v9 → v10, the `meta_connec
 following the files, and the `meta_log` history."""
 
 import json
+import logging
 import os
 import sqlite3
 import stat
@@ -113,6 +114,31 @@ def test_the_old_file_without_a_business_waits_for_a_reconnect(store, fake_meta)
     assert [c["business_id"] for c in meta.connections()] == [BUSINESS]
 
 
+def test_an_unreadable_old_file_is_moved_aside_with_a_warning(store, fake_meta, caplog):
+    """The old single file holding something that isn't a token document (half a write,
+    say) used to stay put, tried again at every start: it goes to `.legacy` with a
+    warning, is not a connection, and the next start is quiet."""
+    caplog.set_level(logging.INFO, logger="pauta")
+    secret(store.path)
+    old = store.path.with_name("pauta.db.meta-token")
+    old.write_text("{not json")
+    meta = build(store, fake_meta)
+    assert not old.exists() and meta.token_file(LEGACY).read_text() == "{not json"
+    assert meta.connections() == [] and not meta.connected
+    warnings = [r for r in caplog.records if '"meta_token_unreadable"' in r.getMessage()]
+    assert len(warnings) == 1 and warnings[0].levelno == logging.WARNING
+    assert not any('"meta_token_migrated"' in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    build(store, fake_meta)
+    assert not any("meta_token" in r.getMessage() for r in caplog.records)
+    # a readable `.legacy` already there (an older leftover) is kept; the junk goes
+    meta.token_file(LEGACY).write_text(json.dumps(legacy_doc(business_id="")))
+    old.write_text("")
+    build(store, fake_meta)
+    assert not old.exists()
+    assert json.loads(meta.token_file(LEGACY).read_text())["access_token"] == "EAAold"
+
+
 def test_a_newer_per_business_file_wins_over_the_old_one(store, fake_meta):
     secret(store.path)
     meta = build(store, fake_meta)
@@ -197,6 +223,34 @@ def test_a_revoked_token_marks_only_its_connection(meta_on, fake_meta):
     connect(meta_on, fake_meta, account=9)
     assert [c["state"] for c in meta_on.connections()] == ["revoked", "ok"]
     assert [a["id"] for a in meta_on.accounts()] == ["444"]
+
+
+def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, monkeypatch):
+    """Desconectar unlinks the file while a read is out; Meta's 190 for that read arrives
+    after. Marking "revoked" reads and writes under the lock and only a file still there,
+    so the token stays gone (it used to be written back, state "revoked")."""
+    connect_two(meta_on, fake_meta)
+    real = Meta._saved
+
+    def read_then_disconnected(self, business_id):
+        doc = real(self, business_id)
+        self.token_file(business_id).unlink()  # Desconectar, between the read and the save
+        return doc
+
+    monkeypatch.setattr(Meta, "_saved", read_then_disconnected)
+    changes = []
+    meta_on.on_change = changes.append
+    meta_on._mark(OTHER_BUSINESS, "revoked", REVOKED)
+    assert not meta_on.token_file(OTHER_BUSINESS).exists()
+    assert [c["business_id"] for c in meta_on.connections()] == [BUSINESS]
+    assert changes == [meta_on.connections()]
+    monkeypatch.undo()
+    # the plain case still writes the state
+    meta_on._mark(BUSINESS, "revoked", REVOKED)
+    assert json.loads(meta_on.token_file(BUSINESS).read_text())["state"] == "revoked"
+    # and _save with create off never makes a file
+    assert meta_on._save({"business_id": "999", "access_token": "x"}, create=False) is False
+    assert not meta_on.token_file("999").exists()
 
 
 def test_meta_down_for_one_portfolio_is_not_a_state(meta_on, fake_meta, monkeypatch):
