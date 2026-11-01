@@ -1,5 +1,5 @@
 # The same checks CI runs, for before you push. `make help` lists them.
-.PHONY: help setup lint fmt test e2e check run demo release
+.PHONY: help setup lint fmt test test-fast e2e check run demo release
 
 help:  ## this list
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
@@ -20,13 +20,16 @@ fmt:  ## fix what ruff can fix
 	uv run --extra dev ruff check --fix src tests scripts tools
 	uv run --extra dev ruff format src tests scripts tools
 
-test:  ## unit and API tests with coverage (fails under 90%)
-	uv run --extra dev pytest --cov
+test:  ## unit and API tests with coverage (fails under 90%), in parallel
+	uv run --extra dev pytest -n auto --cov
 
-e2e:  ## browser journeys in Chromium (make setup once)
-	uv run --extra dev --extra e2e pytest -m e2e
+test-fast:  ## the inner loop: unit and API tests in parallel, no coverage (~5 s)
+	uv run --extra dev pytest -n auto
 
-check: lint test e2e  ## everything CI checks
+e2e:  ## browser journeys in Chromium, in parallel (make setup once)
+	uv run --extra dev --extra e2e pytest -m e2e -n auto
+
+check: lint test e2e  ## everything CI checks (~1 min; run before you push)
 
 run:  ## the app on http://localhost:8088, open mode, data in ./state
 	uv run pauta serve
