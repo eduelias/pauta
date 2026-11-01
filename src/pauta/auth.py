@@ -510,6 +510,8 @@ class Auth:
         return [dict(r) for r in rows]
 
     def relabel_passkey(self, account_id: int, cred_id: str, label) -> None:
+        if not isinstance(label, str):
+            raise AuthError("nome inválido")
         with self.store.db() as db:
             done = db.execute(
                 "UPDATE passkey SET label=? WHERE id=? AND account=?",
@@ -522,15 +524,20 @@ class Auth:
         """Take a passkey off the account, as long as another one stays: without any, the
         person could never sign in again and nobody else could make them a link. The
         account's sessions end with it (the removed device is usually the point), so the
-        caller re-issues the cookie of the device doing the removing."""
+        caller re-issues the cookie of the device doing the removing. Only a passkey that
+        still signs in counts as "another one": a leftover for a domain Pauta left (decision
+        4) can't be the one that stays."""
+        cred_id = str(cred_id or "")
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")  # two removals at once can't both see "two left"
-            mine = [
-                r[0] for r in db.execute("SELECT id FROM passkey WHERE account=?", (account_id,))
-            ]
-            if str(cred_id or "") not in mine:
+            mine = {
+                r[0]: r[1]
+                for r in db.execute("SELECT id, rp_id FROM passkey WHERE account=?", (account_id,))
+            }
+            if cred_id not in mine:
                 raise NotFound("passkey não encontrada")
-            if len(mine) < 2:
+            usable = [k for k, rp in mine.items() if k != cred_id and (not rp or rp in self.rp_ids)]
+            if not usable:
                 raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
             db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))

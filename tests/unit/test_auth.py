@@ -291,6 +291,10 @@ def test_passkeys_are_listed_labelled_and_removed_while_one_stays(store, auth):
     assert len(auth.passkeys(acc["id"])[1]["label"]) == 40
     with pytest.raises(NotFound):
         auth.relabel_passkey(acc["id"], "nope", "x")
+    for bad in (None, 5, ["Mac"], {"label": "Mac"}):
+        with pytest.raises(AuthError, match="nome inválido"):  # JSON that isn't a string
+            auth.relabel_passkey(acc["id"], keys[1]["id"], bad)
+    assert auth.passkeys(acc["id"])[1]["label"].startswith("Mac do trabalho x")
     other = add_account(store, "Bia")
     with pytest.raises(NotFound):  # someone else's passkey is not found, not forbidden
         auth.relabel_passkey(other, keys[0]["id"], "x")
@@ -307,3 +311,34 @@ def test_passkeys_are_listed_labelled_and_removed_while_one_stays(store, auth):
         auth.remove_passkey(acc["id"], keys[1]["id"])
     assert auth.account_from_cookie(cookie)["id"] == acc["id"]  # a refusal ends nothing
     assert store.members()[0]["passkeys"] == 1
+
+
+def test_a_passkey_for_a_domain_pauta_left_is_not_the_one_that_stays(store, auth):
+    """After a move (decision 4) the old domain's passkeys linger on the account. They don't
+    sign in anywhere any more, so they can't count as "another one" when the person removes
+    the real last passkey; a leftover itself goes as long as a real one stays."""
+    token, _ = auth.create_invite()
+    opts = auth.register_options(invite=token, name="Ana")
+    acc = auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))
+    for _ in range(2):
+        opts = auth.register_options(account=acc)
+        auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))
+    real, old1, old2 = [k["id"] for k in auth.passkeys(acc["id"])]
+    with store.db() as db:
+        db.execute("UPDATE passkey SET rp_id='pauta.example'")  # all from the domain we left
+    for k in (real, old1, old2):
+        with pytest.raises(AuthError, match="única passkey"):  # none would sign in after
+            auth.remove_passkey(acc["id"], k)
+    with store.db() as db:
+        db.execute("UPDATE passkey SET rp_id='' WHERE id=?", (real,))  # as 1.5 made them
+    with pytest.raises(AuthError, match="única passkey"):
+        auth.remove_passkey(acc["id"], real)  # two would be left, neither of them usable
+    auth.remove_passkey(acc["id"], old1)  # the leftovers go while the real one stays
+    auth.remove_passkey(acc["id"], old2)
+    assert [k["id"] for k in auth.passkeys(acc["id"])] == [real]
+    with pytest.raises(AuthError, match="única passkey"):
+        auth.remove_passkey(acc["id"], real)
+    opts = auth.register_options(account=acc)
+    auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))  # on localhost
+    auth.remove_passkey(acc["id"], real)
+    assert [k["rp_id"] for k in auth.passkeys(acc["id"])] == ["localhost"]

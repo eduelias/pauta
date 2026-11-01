@@ -62,6 +62,9 @@ def test_my_passkeys_label_remove_and_the_last_one_stays(team):
     assert len(keys) == 2 and keys[0]["id"] == first
     status, keys, _ = call(f"{base}/api/me/passkeys/{first}", {"label": "iPhone"}, nato, "PATCH")
     assert status == 200 and [k["label"] for k in keys] == ["iPhone", "Este aparelho"]
+    for bad in ({}, {"label": None}, {"label": 7}, {"label": ["x"]}):
+        status, err, _ = call(f"{base}/api/me/passkeys/{first}", bad, nato, "PATCH")
+        assert (status, err["error"]) == (400, "nome inválido"), bad
 
     # someone else's passkey is not found, for the label and for the removal
     piero_key = call(f"{base}/api/me/passkeys", cookie=piero)[1][0]["id"]

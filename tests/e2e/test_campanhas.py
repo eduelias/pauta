@@ -282,7 +282,7 @@ def test_client_with_a_linked_account_and_no_campaigns(live, device, meta, fake_
     token, _ = auth.create_invite(admin=True)
     page = device(timezone_id=TZ).page
     join(page, base, token, "Renato Lima")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     expect(page.locator("#metaaccounts tbody tr")).to_have_count(3)
@@ -322,7 +322,7 @@ def test_client_with_a_linked_account_and_no_campaigns(live, device, meta, fake_
     expect(page.locator(".cblock").nth(1)).to_contain_text("Estúdio Pilates Leve")
     # a balance Meta refuses says what to do, here too
     fake_meta.refuse_balance = True
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Atualizar").click()
     expect(page.locator("#metaaccounts tbody tr").first).to_contain_text("sem permissão")
     page.goto(f"{base}/#/campanhas?p=this_month")
