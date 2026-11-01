@@ -18,7 +18,7 @@ import sqlite3
 import threading
 import time
 import traceback
-from datetime import date
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -32,9 +32,10 @@ from .db import (
     Invalid,
     NotFound,
     Store,
+    period_results,
     valid_date,
 )
-from .meta import ACCOUNT_STATUS, NOT_CONNECTED, Meta, MetaError
+from .meta import ACCOUNT_STATUS, NOT_CONNECTED, Meta, MetaError, local_today
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
 
@@ -71,6 +72,7 @@ SENT = object()  # a route that wrote its own response (a redirect, an image)
 # what a member sees when Meta fails: the real reason ("conecte de novo") is the admin's
 META_DOWN = "os números da Meta estão indisponíveis no momento"
 MAX_PERIOD_DAYS = 400  # /api/campaigns refuses a longer range
+DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default: "Últimos 30 dias", yesterday back
 MANUAL_SYNC_SECONDS = 15 * 60  # "Atualizar agora" (POST /api/meta/sync) at most this often
 SYNC_TOO_SOON = "a última atualização foi há menos de 15 minutos; espere um pouco"
 
@@ -623,13 +625,24 @@ def make_handler(
 
         # ---- campaign tracking (decision 8): per campaign, tracked ones only, by day --------
 
+        def _today(self) -> date:
+            """The team's today: the first linked ad account's day (its time zone), else the
+            default zone's. Never the server's own date (du7 runs on CET, Brazil is behind)."""
+            tz = next((a["timezone_name"] for a in store.meta_accounts() if a["client"]), "")
+            return local_today(tz)
+
         def _period(self) -> tuple[str, str, str]:
-            """`since` and `until` from the query (this month so far by default, in the
-            server's local date) as ISO strings, plus today's."""
+            """`since` and `until` from the query (Ads Manager's default when absent: the
+            last 30 days, yesterday back, today excluded) as ISO strings, plus today's, all
+            in the team's time zone."""
             q = parse_qs(urlparse(self.path).query)
-            today = date.today()
-            since = valid_date(q.get("since", [""])[0]) or today.replace(day=1).isoformat()
-            until = valid_date(q.get("until", [""])[0]) or today.isoformat()
+            today = self._today()
+            yesterday = today - timedelta(days=1)
+            since = (
+                valid_date(q.get("since", [""])[0])
+                or (yesterday - timedelta(days=DEFAULT_PERIOD_DAYS - 1)).isoformat()
+            )
+            until = valid_date(q.get("until", [""])[0]) or yesterday.isoformat()
             if since > until:
                 raise Invalid("o início do período vem depois do fim")
             if (date.fromisoformat(until) - date.fromisoformat(since)).days >= MAX_PERIOD_DAYS:
@@ -648,11 +661,13 @@ def make_handler(
 
         @route("GET", "/api/campaigns")
         def campaigns(self, viewer, _body):
-            """Every tracked campaign by client with the period's sums; `reach` comes from
-            Meta for the period as a whole (null when Meta won't say: never the list's
-            problem). `include_skipped=1` adds the campaigns marked Não acompanhar (so an
-            admin can bring one back); `client=<id>` keeps one client's. `last_sync` says
-            how fresh the stored numbers are."""
+            """Every tracked campaign by client with the period's sums, Ads Manager's
+            Resultados (`results`, `result_indicator`, `cost_per_result_cents`), the lead
+            cost (`cpl_cents`: spend ÷ link clicks) and the campaign's budget; `reach`
+            comes from Meta for the period as a whole (null when Meta won't say: never the
+            list's problem). `include_skipped=1` adds the campaigns marked Não acompanhar
+            (so an admin can bring one back); `client=<id>` keeps one client's. `last_sync`
+            says how fresh the stored numbers are."""
             since, until, today = self._period()
             q = parse_qs(urlparse(self.path).query)
             states = CAMPAIGN_STATES if q.get("include_skipped", [""])[0] == "1" else TRACKED_STATES
@@ -673,8 +688,8 @@ def make_handler(
             for c in clients:
                 c["seen_today"] = seen.get(c["id"])
                 for k in c["campaigns"]:
-                    results = k["results"]
-                    k["cpl_cents"] = round(k["spend_cents"] / results) if results else None
+                    clicks = k["link_clicks"]
+                    k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
                     k["reach"] = reach.get(k["meta_id"])
             return {
                 "since": since,
@@ -691,13 +706,14 @@ def make_handler(
 
         @route("POST", f"/api/clients/{ID}/reviews")
         def review_client(self, viewer, body, cid):
-            """Visto hoje: one `review` per active campaign of the client, dated today, with
-            this month's numbers as the snapshot (so the note sits next to the numbers it
-            was about). Returns the client's check status."""
+            """Visto hoje: one `review` per active campaign of the client, dated today (the
+            team's day, not the server's), with this month's numbers as the snapshot (so
+            the note sits next to the numbers it was about). Returns the client's check
+            status."""
             cid = int(cid)
             store.client(cid)
             note = str(body.get("note") or "").strip()[:500]
-            today = date.today()
+            today = self._today()
             since, until = today.replace(day=1).isoformat(), today.isoformat()
             rows = [
                 k
@@ -718,9 +734,12 @@ def make_handler(
                         "until": until,
                         "spend_cents": k["spend_cents"],
                         "link_clicks": k["link_clicks"],
-                        "cpl_cents": round(k["spend_cents"] / k["results"])
-                        if k["results"]
+                        "cpl_cents": round(k["spend_cents"] / k["link_clicks"])
+                        if k["link_clicks"]
                         else None,
+                        "results": k["results"],
+                        "result_indicator": k["result_indicator"],
+                        "cost_per_result_cents": k["cost_per_result_cents"],
                         "reach": reach.get(k["meta_id"]),
                         "impressions": k["impressions"],
                     },
@@ -734,8 +753,9 @@ def make_handler(
         @route("GET", f"/api/campaigns/{ID}")
         def campaign(self, viewer, _body, cid):
             """One campaign for the period: the row, its daily rows (`days`), the period's
-            sums and cost per lead, and the period's reach from Meta (null when it won't
-            say)."""
+            sums, cost per lead and Ads Manager's Resultados (summed over the days that had
+            a count; the latest indicator), and the period's reach from Meta (null when it
+            won't say)."""
             since, until, today = self._period()
             k = store.campaign(int(cid), since, until)
             days = k["days"]
@@ -747,8 +767,13 @@ def make_handler(
                 for name, n in d["actions"].items():
                     actions[name] = actions.get(name, 0) + int(n)
             k["actions"] = actions
-            k["results"] = k["link_clicks"]
-            k["cpl_cents"] = round(k["spend_cents"] / k["results"]) if k["results"] else None
+            counted = [d["results"] for d in days if d["results"] is not None]
+            k.update(period_results(sum(counted) if counted else None, k["spend_cents"]))
+            k["result_indicator"] = next(
+                (d["result_indicator"] for d in reversed(days) if d["result_indicator"]), ""
+            )
+            clicks = k["link_clicks"]
+            k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
             pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
             k["reach"] = self._reach(pairs, since, until).get(k["meta_id"])
             return {

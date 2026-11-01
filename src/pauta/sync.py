@@ -13,7 +13,9 @@ retries in a loop: the next scheduled pass tries again). Each connection gets it
 `last_sync` and the first error met under it. `Scheduler` runs it in a daemon
 thread from `pauta serve`: a first pass a minute after start, then hourly over today and
 yesterday, and nightly after 03:10 over the last 28 days (conversions keep arriving for up
-to 28 days after a click). `pauta meta sync` runs one pass from the shell.
+to 28 days after a click). "Today" is each ad account's own day (`timezone_name` from
+Meta, `meta.local_today`), not the server's: du7 runs on CET, and in the evening in Brazil
+a server-local today is already tomorrow. `pauta meta sync` runs one pass from the shell.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from datetime import time as dtime
 
 from . import obs
 from .db import Store
-from .meta import LEGACY, NOT_CONNECTED, Meta, MetaError
+from .meta import LEGACY, NOT_CONNECTED, Meta, MetaError, local_today
 
 HOURLY_DAYS = 2
 NIGHTLY_DAYS = 28
@@ -46,13 +48,13 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
     errors are collected, not raised. A revoked token (409) ends that connection's part and
     the next connection goes on; a throttle (503) ends the pass. Each connection's
     `last_sync` is written; `meta.last_sync`/`sync_error` sum the pass up for /metrics.
-    Raises MetaError when nothing is connected at all (nothing to sync)."""
+    The window is the last `days` days up to `today`, which is each account's own day
+    (its time zone) unless given. Raises MetaError when nothing is connected at all
+    (nothing to sync)."""
     conns = [c for c in meta.connections() if c["business_id"] != LEGACY]
     if not conns:
         raise MetaError(NOT_CONNECTED, 409)
-    today = today or date.today()
     days = max(1, int(days))
-    since = today - timedelta(days=days - 1)
     out: dict = {
         "connections": len(conns),
         "accounts": 0,
@@ -70,8 +72,10 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
         for account in mine:
             aid = account["id"]
             out["accounts"] += 1
+            day = today or local_today(account.get("timezone_name") or "")
+            since = day - timedelta(days=days - 1)
             try:
-                _sync_account(store, meta, aid, bid, since, today, fetched, out)
+                _sync_account(store, meta, aid, bid, since, day, fetched, out)
             except MetaError as e:
                 out["errors"].append(
                     {"account": aid, "business_id": bid, "error": str(e), "status": e.status}
@@ -115,7 +119,10 @@ def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
 def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
     metas = meta.campaigns(aid, business_id=bid)
     res = store.sync_campaigns(aid, metas, today.isoformat())
-    rows = meta.daily_insights(aid, since, today, today=today, business_id=bid)
+    objectives = {m["id"]: m.get("objective") or "" for m in metas}
+    rows = meta.daily_insights(
+        aid, since, today, today=today, business_id=bid, objectives=objectives
+    )
     out["insight_rows"] += store.store_insights(rows, fetched)
     starts = {m["id"]: m.get("started") for m in metas}
     for mid in res["new"]:
@@ -130,13 +137,15 @@ def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
             meta_ids=[mid],
             today=today,
             business_id=bid,
+            objectives=objectives,
         )
         out["insight_rows"] += store.store_insights(history, fetched)
 
 
 def due(now: datetime, last_hourly: datetime | None, last_nightly: datetime | None) -> set[str]:
-    """Which passes are due at `now` (local time): 'hourly' an hour after the last one (or
-    never run), 'nightly' once a day after 03:10."""
+    """Which passes are due at `now` (the server's local time): 'hourly' an hour after the
+    last one (or never run), 'nightly' once a day after 03:10. The trigger is server-local;
+    the days each pass covers are the accounts' own (`run` without `today`)."""
     out = set()
     if last_hourly is None or now - last_hourly >= timedelta(minutes=HOURLY_MINUTES):
         out.add("hourly")

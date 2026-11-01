@@ -2,14 +2,15 @@
 tick."""
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from test_meta import connect
 
-from fakemeta import BUSINESS, OTHER_BUSINESS, TODAY, expected
+from fakemeta import BUSINESS, CONVERSATIONS, OTHER_BUSINESS, TODAY, TZ, expected
+from pauta import meta as meta_mod
 from pauta import sync
-from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError
+from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError, local_today
 
 
 @pytest.fixture()
@@ -61,9 +62,21 @@ def test_run_syncs_linked_accounts_and_fetches_history(team, caplog):
     ]
     want = expected("23850001", date(2026, 10, 1), TODAY, date(2026, 10, 3))
     limpeza = rows[0]["campaigns"][1]
-    assert (
-        limpeza["spend_cents"] == want["spend_cents"] and limpeza["results"] == want["link_clicks"]
-    )
+    assert limpeza["spend_cents"] == want["spend_cents"]
+    assert limpeza["link_clicks"] == want["link_clicks"]
+    # Ads Manager's Resultados, per objective: conversations for Limpeza, "—" for Botox (an
+    # indicator, no values), link clicks for Panetone (no entry: the objective's fallback)
+    assert limpeza["results"] == want["results"] == 2 * want["days"]
+    assert limpeza["result_indicator"] == CONVERSATIONS
+    assert limpeza["cost_per_result_cents"] == round(want["spend_cents"] / want["results"])
+    assert limpeza["daily_budget_cents"] == 1500 and limpeza["lifetime_budget_cents"] is None
+    botox = rows[0]["campaigns"][0]
+    assert botox["results"] is None and botox["result_indicator"] == "lead"
+    assert botox["cost_per_result_cents"] is None and botox["lifetime_budget_cents"] == 45000
+    panetone = rows[1]["campaigns"][0]
+    want = expected("23850004", date(2026, 10, 1), TODAY, date(2026, 10, 15))
+    assert panetone["results"] == want["results"] == panetone["link_clicks"]
+    assert panetone["result_indicator"] == "link_click"
     # the unlinked 333 was never asked about; the paused one never appeared
     assert "GET /act_333/campaigns" not in fake.calls
     assert meta.last_sync and meta.sync_error == ""
@@ -141,7 +154,7 @@ def test_run_defaults_to_today_and_at_least_one_day(team):
     store, meta, fake, *_ = team
     out = sync.run(store, meta, days=0)
     assert out["accounts"] == 2
-    today = date.today().isoformat()
+    today = local_today("").isoformat()  # the fixture rows carry no zone: the default's day
     assert store.campaign(campaign_of(store, "23850001"))["last_seen"] == today
     # a campaign whose start Meta doesn't know gets no history call
     fake.campaigns["222"].append(
@@ -151,6 +164,29 @@ def test_run_defaults_to_today_and_at_least_one_day(team):
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["campaigns_new"] == 1
     assert sum("/insights" in c for c in fake.calls) == 2  # the two windows, no history
+
+
+def test_run_uses_each_accounts_day(team, monkeypatch):
+    """01:30 CET on 1 Nov is 21:30 on 31 Oct in São Paulo: the hourly pass reads 30 and 31
+    Oct for a São Paulo account, never 1 Nov; an account in another zone gets its own pair."""
+    store, meta, fake, *_ = team
+    monkeypatch.setattr(meta_mod, "_now", lambda: datetime(2026, 11, 1, 0, 30, tzinfo=UTC))
+    store.sync_meta_accounts(
+        [{"id": "111", "timezone_name": TZ}, {"id": "222", "timezone_name": "Europe/Amsterdam"}]
+    )
+    fake.calls.clear()
+    out = sync.run(store, meta, days=2)
+    assert out["accounts"] == 2 and out["errors"] == []
+    assert days(store, "23850001")[-2:] == ["2026-10-30", "2026-10-31"]
+    assert days(store, "23850001")[0] == "2026-10-03"  # the history still runs to the start
+    assert store.campaign(campaign_of(store, "23850001"))["last_seen"] == "2026-10-31"
+    assert days(store, "23850004")[-1] == "2026-11-01"  # the bakery's Dutch day
+    assert store.campaign(campaign_of(store, "23850004"))["last_seen"] == "2026-11-01"
+    # the Scheduler's tick never passes a day: the accounts' own (a nightly window too)
+    s = sync.Scheduler(store, meta, clock=lambda: datetime(2026, 11, 1, 3, 11))
+    s.last_nightly = None
+    s.tick()
+    assert days(store, "23850001")[-1] == "2026-10-31"
 
 
 def test_due():

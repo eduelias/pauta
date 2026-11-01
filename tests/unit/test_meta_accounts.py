@@ -33,6 +33,7 @@ def test_sync_upserts_and_keeps_rows_no_longer_listed(store):
         "seen": "2026-10-31 10:00:00",
         "created": rows[0]["created"],
         "business_id": "",
+        "timezone_name": "",
     }
     # the clinic was renamed and the bakery unticked in Meta: the row stays, seen is old
     store.sync_meta_accounts(
@@ -174,3 +175,18 @@ def test_schema_v7_gains_the_meta_account_table(tmp_path):
     store.sync_meta_accounts([CLINIC])
     assert store.meta_accounts()[0]["client"]["name"] == "Antigo"
     assert store.clients()[0]["ad_account"] == "act_111"  # the field is never rewritten
+
+
+def test_sync_keeps_the_time_zone_meta_reported(store):
+    """The account's `timezone_name` ("today" is its day) is written when Meta sends it and
+    kept when a later entry (an older caller) doesn't."""
+    store.sync_meta_accounts([{**CLINIC, "timezone_name": "America/Sao_Paulo"}, BAKERY])
+    rows = {r["id"]: r for r in store.meta_accounts()}
+    assert rows["111"]["timezone_name"] == "America/Sao_Paulo"
+    assert rows["222"]["timezone_name"] == ""
+    store.sync_meta_accounts([CLINIC, {**BAKERY, "timezone_name": "Europe/Lisbon"}])
+    rows = {r["id"]: r for r in store.meta_accounts()}
+    assert rows["111"]["timezone_name"] == "America/Sao_Paulo"
+    assert rows["222"]["timezone_name"] == "Europe/Lisbon"
+    store.sync_meta_accounts([{**CLINIC, "timezone_name": "x" * 80}])
+    assert len(store.meta_accounts()[0]["timezone_name"]) == 60

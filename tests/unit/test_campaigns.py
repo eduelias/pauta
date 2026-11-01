@@ -1,12 +1,13 @@
-"""Campaign tracking in the Store (decision 8, phase 2): the v8 → v9 migration, campaigns
-following Meta's list, daily numbers, requests linked by their Ads Manager link, the period
-sums, Não acompanhar / Acompanhar, and the export tables."""
+"""Campaign tracking in the Store (decision 8, phase 2): the v8 → v9 and v10 → v11
+migrations, campaigns following Meta's list (with their budgets), daily numbers with Ads
+Manager's Resultados, requests linked by their Ads Manager link, the period sums, Não
+acompanhar / Acompanhar, and the export tables."""
 
 import sqlite3
 
 import pytest
 
-from pauta.db import SCHEMA_VERSION, Invalid, NotFound, Store, campaign_id_in
+from pauta.db import SCHEMA_VERSION, Invalid, NotFound, Store, campaign_id_in, period_results
 
 ACTIVE = {
     "id": "23850001",
@@ -44,11 +45,43 @@ def test_schema_v8_gains_the_tracking_tables(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "10"
-        assert SCHEMA_VERSION == 10
+        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "11"
+        assert SCHEMA_VERSION == 11
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"campaign", "review", "insight"} <= tables
     assert store.campaign_rows("2026-01-01", "2026-12-31") == []
+
+
+def test_schema_v10_gains_the_ads_manager_columns(tmp_path):
+    """v11 adds the account's time zone, the campaign's budget and Resultados per day; a v10
+    database (the previous release) gets them on open, its rows kept."""
+    Store(tmp_path / "old.db")
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript(
+        "ALTER TABLE meta_account DROP COLUMN timezone_name;"
+        "ALTER TABLE campaign DROP COLUMN daily_budget_cents;"
+        "ALTER TABLE campaign DROP COLUMN lifetime_budget_cents;"
+        "ALTER TABLE insight DROP COLUMN results;"
+        "ALTER TABLE insight DROP COLUMN result_indicator;"
+        "UPDATE meta SET value='10' WHERE key='schema';"
+        "INSERT INTO meta_account(account_id, name) VALUES ('111', 'Clínica');"
+        "INSERT INTO campaign(meta_id, name, account_id) VALUES ('1', 'Zebra', '111');"
+        "INSERT INTO insight(meta_id, day, spend_cents, fetched) "
+        "VALUES ('1', '2026-10-01', 7, 'x');"
+    )
+    conn.commit()
+    conn.close()
+    store = Store(tmp_path / "old.db")
+    with store.db() as db:
+        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "11"
+    assert store.meta_accounts()[0]["timezone_name"] == ""
+    row = store.table("campaign")[0]
+    assert row["daily_budget_cents"] is None and row["lifetime_budget_cents"] is None
+    day = store.table("insight")[0]
+    assert day["results"] is None and day["result_indicator"] == "" and day["spend_cents"] == 7
+    # opened again: nothing to do, nothing lost
+    Store(tmp_path / "old.db")
+    assert store.table("insight")[0]["spend_cents"] == 7
 
 
 def test_unlinked_account_is_not_tracked(store, linked):
@@ -79,6 +112,34 @@ def test_new_active_campaigns_appear_paused_ones_do_not(store, linked):
     # no start date known: today
     store.sync_campaigns("111", [{**ACTIVE, "id": "5", "started": None}], TODAY)
     assert campaigns(store)["5"]["started"] == TODAY
+
+
+def test_budgets_follow_meta(store, linked):
+    """The campaign's own budget (CBO) is kept and follows Meta: a daily one, a lifetime one,
+    none (the ad sets carry theirs), junk and zero as none."""
+    store.sync_campaigns(
+        "111",
+        [
+            {**ACTIVE, "id": "1", "daily_budget_cents": 1500},
+            {**ACTIVE, "id": "2", "lifetime_budget_cents": "45000"},
+            {**ACTIVE, "id": "3"},
+            {**ACTIVE, "id": "4", "daily_budget_cents": "0", "lifetime_budget_cents": "x"},
+        ],
+        TODAY,
+    )
+    rows = campaigns(store)
+    assert (rows["1"]["daily_budget_cents"], rows["1"]["lifetime_budget_cents"]) == (1500, None)
+    assert (rows["2"]["daily_budget_cents"], rows["2"]["lifetime_budget_cents"]) == (None, 45000)
+    assert (rows["3"]["daily_budget_cents"], rows["3"]["lifetime_budget_cents"]) == (None, None)
+    assert (rows["4"]["daily_budget_cents"], rows["4"]["lifetime_budget_cents"]) == (None, None)
+    # Piero raised the budget, then moved it to the ad sets
+    store.sync_campaigns("111", [{**ACTIVE, "id": "1", "daily_budget_cents": 2000}], TODAY)
+    assert campaigns(store)["1"]["daily_budget_cents"] == 2000
+    store.sync_campaigns("111", [{**ACTIVE, "id": "1"}], TODAY)
+    assert campaigns(store)["1"]["daily_budget_cents"] is None
+    out = store.campaign_rows("2026-10-01", "2026-10-31")[0]["campaigns"]
+    by = {k["meta_id"]: k for k in out}
+    assert by["2"]["lifetime_budget_cents"] == 45000 and by["2"]["daily_budget_cents"] is None
 
 
 def test_campaigns_follow_metas_status(store, linked):
@@ -137,7 +198,9 @@ def test_set_state_transitions(store, linked):
         store.campaign(999)
 
 
-def rows_for(meta_id, days, spend=1000):
+def rows_for(meta_id, days, spend=1000, results=lambda d: d, indicator="link_click"):
+    """Daily rows like the Meta client's: by default a traffic campaign whose Resultados are
+    its link clicks; `results=None` for days Meta counted nothing (an indicator, no values)."""
     return [
         {
             "meta_id": meta_id,
@@ -147,6 +210,8 @@ def rows_for(meta_id, days, spend=1000):
             "reach": 80 * d,
             "link_clicks": d,
             "actions": {"link_click": d, "lead": 1},
+            "results": results(d) if results else None,
+            "result_indicator": indicator,
         }
         for d in days
     ]
@@ -163,6 +228,15 @@ def test_store_insights_is_idempotent(store):
     assert rows[2]["spend_cents"] == 2003 and rows[2]["fetched"] == "2026-10-21T10:00:00Z"
     assert rows[0]["fetched"] == "2026-10-20T10:00:00Z"
     assert rows[0]["actions"] == '{"lead":1,"link_click":1}'
+    assert rows[0]["results"] == 1 and rows[0]["result_indicator"] == "link_click"
+    # a day Meta counted nothing for stays NULL (not zero); a row without the keys too
+    store.store_insights(rows_for("1", [1], results=None, indicator="lead"))
+    store.store_insights([{"meta_id": "1", "day": "2026-10-09", "spend_cents": 5}])
+    with store.db() as db:
+        rows = {r["day"]: dict(r) for r in db.execute("SELECT * FROM insight")}
+    first, ninth = rows["2026-10-01"], rows["2026-10-09"]
+    assert first["results"] is None and first["result_indicator"] == "lead"
+    assert ninth["results"] is None and ninth["result_indicator"] == ""
 
 
 def test_campaign_id_in_links():
@@ -253,9 +327,12 @@ def test_campaign_rows_sums_and_order(store, linked):
     zebra = clinic[1]
     assert zebra["spend_cents"] == (1002 + 1003 + 1004) and zebra["impressions"] == 900
     assert zebra["link_clicks"] == 9 and zebra["results"] == 9
+    assert zebra["result_indicator"] == "link_click"
+    assert zebra["cost_per_result_cents"] == round((1002 + 1003 + 1004) / 9)
     assert zebra["actions"] == {"link_click": 9, "lead": 3}
     assert clinic[0]["spend_cents"] == 1005 and clinic[2]["spend_cents"] == 0
-    assert clinic[2]["actions"] == {} and clinic[2]["results"] == 0
+    assert clinic[2]["actions"] == {} and clinic[2]["results"] is None
+    assert clinic[2]["result_indicator"] == "" and clinic[2]["cost_per_result_cents"] is None
     assert clinic[2]["state"] == "ended" and clinic[2]["ended"] == TODAY
     assert out[1]["campaigns"][0]["spend_cents"] == 1002  # the 30th is outside the range
     assert out[1]["campaigns"][0]["account_id"] == "222"
@@ -264,11 +341,46 @@ def test_campaign_rows_sums_and_order(store, linked):
     assert [d["day"] for d in one["days"]] == ["2026-10-02", "2026-10-03"]
     assert one["days"][0]["actions"] == {"link_click": 2, "lead": 1}
     assert len(store.campaign(zebra["id"])["days"]) == 4
+    assert one["days"][0]["results"] == 2 and one["days"][0]["result_indicator"] == "link_click"
     # a client that is gone takes its campaigns along
     store.delete_client(bakery["id"])
     assert [c["name"] for c in store.campaign_rows("2026-10-01", "2026-10-31")] == [
         "Clínica Bem Estar"
     ]
+
+
+def by_meta(clients):
+    return {k["meta_id"]: k for c in clients for k in c["campaigns"]}
+
+
+def test_period_results_like_ads_manager(store, linked):
+    """Resultados over a period: the sum of the days that had a count; None when no day did
+    (Ads Manager's "—"), never zero for "Meta said nothing"; the indicator is the latest
+    one in the range (a campaign whose objective changed shows the new one); the cost is
+    spend ÷ results."""
+    store.sync_campaigns("111", [{**ACTIVE, "id": "1"}, {**ACTIVE, "id": "2"}], TODAY)
+    # days 1-3 no values; days 4-5 counted (lead), day 6 counted under another indicator
+    store.store_insights(rows_for("1", [1, 2, 3], results=None, indicator="lead"))
+    store.store_insights(rows_for("1", [4, 5], results=lambda d: 3, indicator="lead"))
+    store.store_insights(rows_for("1", [6], results=lambda d: 1, indicator="purchase"))
+    store.store_insights(rows_for("2", [1, 2], results=None, indicator=""))
+    rows = by_meta(store.campaign_rows("2026-10-01", "2026-10-31"))
+    one, two = rows["1"], rows["2"]
+    assert one["results"] == 7 and one["result_indicator"] == "purchase"
+    assert one["cost_per_result_cents"] == round(one["spend_cents"] / 7)
+    assert two["results"] is None and two["result_indicator"] == ""
+    assert two["cost_per_result_cents"] is None and two["spend_cents"] == 1001 + 1002
+    # only the NULL days in range: None, with the indicator Meta named
+    rows = by_meta(store.campaign_rows("2026-10-01", "2026-10-03"))
+    assert rows["1"]["results"] is None and rows["1"]["result_indicator"] == "lead"
+    assert rows["1"]["cost_per_result_cents"] is None
+    # zero counted is zero (a cost needs results)
+    store.store_insights(rows_for("2", [3], results=lambda d: 0, indicator="lead"))
+    rows = by_meta(store.campaign_rows("2026-10-01", "2026-10-31"))
+    assert rows["2"]["results"] == 0 and rows["2"]["cost_per_result_cents"] is None
+    assert period_results(None, 100) == {"results": None, "cost_per_result_cents": None}
+    assert period_results(4, 3433) == {"results": 4, "cost_per_result_cents": 858}
+    assert period_results(0, 3433) == {"results": 0, "cost_per_result_cents": None}
 
 
 def test_export_tables_and_sync_state(store, linked):
@@ -277,6 +389,7 @@ def test_export_tables_and_sync_state(store, linked):
     assert store.table("campaign")[0]["meta_id"] == "23850001"
     assert store.table("review") == []
     assert store.table("insight")[0]["actions"] == {"link_click": 1, "lead": 1}
+    assert store.table("insight")[0]["results"] == 1
     with pytest.raises(Invalid):
         store.table("account")
     assert store.sync_state() == {"last_sync": None, "sync_error": ""}

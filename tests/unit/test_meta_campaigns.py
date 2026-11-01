@@ -1,15 +1,28 @@
 """The Meta client's campaign tracking reads against the fake: an account's campaigns with
-paging, daily insights by campaign (cents, actions as a map, the 37-month clamp, a filter on
-campaign ids), the period's reach with its hour-long cache, and the error mapping."""
+paging and budgets, daily insights by campaign (cents, actions as a map, Ads Manager's
+Resultados in Meta's shapes and the objective fallback, the 37-month clamp, a filter on
+campaign ids), the period's reach with its hour-long cache, the account's day, and the
+error mapping."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from test_meta import connect
 
-from fakemeta import TODAY, expected
+from fakemeta import CONVERSATIONS, TODAY, expected
 from pauta import meta as meta_mod
-from pauta.meta import REVOKED, THROTTLED, Meta, MetaError, actions_map, clamp_since, earliest
+from pauta.meta import (
+    DEFAULT_TZ,
+    REVOKED,
+    THROTTLED,
+    Meta,
+    MetaError,
+    actions_map,
+    clamp_since,
+    earliest,
+    local_today,
+    results_of,
+)
 
 
 @pytest.fixture()
@@ -30,6 +43,79 @@ def test_helpers():
     assert clamp_since(date(2026, 10, 1), date(2026, 10, 20)) == date(2026, 10, 1)
 
 
+def test_results_of_in_metas_shapes():
+    """`results` as the Graph sends it: an indicator with values is a count; one without
+    values is "—" (None) under that indicator; no entry at all falls back to the campaign's
+    objective and reads `actions`."""
+    values = [{"value": "4", "attribution_windows": ["default"]}]
+    row = {"results": [{"indicator": f"actions:{CONVERSATIONS}", "values": values}]}
+    assert results_of(row, "OUTCOME_ENGAGEMENT") == (4, CONVERSATIONS)
+    # several windows: the default one counts
+    row = {
+        "results": [
+            {
+                "indicator": "actions:lead",
+                "values": [
+                    {"value": "9", "attribution_windows": ["7d_click"]},
+                    {"value": "6", "attribution_windows": ["default"]},
+                ],
+            }
+        ]
+    }
+    assert results_of(row) == (6, "lead")
+    row = {"results": [{"indicator": "actions:lead", "values": [{"value": "9"}]}]}
+    assert results_of(row) == (9, "lead")
+    # an indicator and no values (a view-content campaign without pixel events)
+    row = {"results": [{"indicator": "actions:offsite_conversion.fb_pixel_view_content"}]}
+    assert results_of(row, "OUTCOME_SALES") == (None, "offsite_conversion.fb_pixel_view_content")
+    row = {"results": [{"indicator": "actions:lead", "values": []}]}
+    assert results_of(row) == (None, "lead")
+    row = {"results": [{"indicator": "actions:lead", "values": [{"value": ""}]}]}
+    assert results_of(row) == (None, "lead")
+    # no entry: the objective names the action type, the count comes from `actions`
+    acts = [{"action_type": "link_click", "value": "12"}, {"action_type": "lead", "value": "3"}]
+    assert results_of({"actions": acts}, "OUTCOME_TRAFFIC") == (12, "link_click")
+    assert results_of({"actions": acts}, "LINK_CLICKS") == (12, "link_click")
+    assert results_of({"actions": acts}, "OUTCOME_LEADS") == (3, "lead")
+    assert results_of({"actions": acts}, "OUTCOME_SALES") == (None, "purchase")
+    assert results_of({"actions": acts}, "OUTCOME_ENGAGEMENT") == (None, "post_engagement")
+    assert results_of({"actions": acts}, "MESSAGES") == (None, CONVERSATIONS)
+    assert results_of({"actions": acts, "results": []}, "OUTCOME_MESSAGES") == (None, CONVERSATIONS)
+    # an objective not mapped, or none: no result at all
+    assert results_of({"actions": acts}, "OUTCOME_AWARENESS") == (None, "")
+    assert results_of({"actions": acts}) == (None, "")
+    # junk never breaks the row
+    assert results_of({"results": "x"}, "OUTCOME_LEADS") == (None, "lead")
+    assert results_of({"results": [None, {"values": [{"value": "1"}]}, {"indicator": ""}]}) == (
+        None,
+        "",
+    )
+    assert results_of({"results": [{"indicator": "actions:x", "values": "nope"}]}) == (None, "x")
+
+
+def test_local_today_is_the_accounts_day(monkeypatch):
+    """2026-11-01 01:30 CET is still 2026-10-31 in São Paulo. An empty or unknown zone falls
+    back to PAUTA_TZ, then DEFAULT_TZ, then UTC."""
+    at = datetime(2026, 11, 1, 0, 30, tzinfo=UTC)  # 01:30 CET
+    assert local_today("America/Sao_Paulo", at) == date(2026, 10, 31)
+    assert local_today("Europe/Amsterdam", at) == date(2026, 11, 1)
+    assert DEFAULT_TZ == "America/Sao_Paulo"
+    monkeypatch.delenv("PAUTA_TZ", raising=False)
+    assert local_today("", at) == date(2026, 10, 31)
+    assert local_today("Mars/Olympus", at) == date(2026, 10, 31)
+    monkeypatch.setenv("PAUTA_TZ", "Europe/Amsterdam")
+    assert local_today("", at) == date(2026, 11, 1)
+    assert local_today("America/Sao_Paulo", at) == date(2026, 10, 31)  # the account still wins
+    monkeypatch.setenv("PAUTA_TZ", "Nowhere/AtAll")
+    monkeypatch.setattr(meta_mod, "DEFAULT_TZ", "Also/Unknown")
+    assert local_today("", at) == date(2026, 11, 1)  # UTC
+    # the clock is the module's, so tests can freeze it
+    monkeypatch.setattr(meta_mod, "_now", lambda: at)
+    assert local_today("America/Sao_Paulo") == date(2026, 10, 31)
+    monkeypatch.setattr(meta_mod, "DEFAULT_TZ", DEFAULT_TZ)
+    assert isinstance(local_today(""), date)
+
+
 def test_campaigns_with_paging(linked, fake_meta, monkeypatch):
     out = linked.campaigns("act_111")
     assert [c["id"] for c in out] == ["23850001", "23850002", "23850003"]
@@ -41,7 +127,11 @@ def test_campaigns_with_paging(linked, fake_meta, monkeypatch):
         "status": "ACTIVE",
         "started": "2026-10-03",
         "stopped": None,
+        "daily_budget_cents": 1500,
+        "lifetime_budget_cents": None,
     }
+    assert out[1]["daily_budget_cents"] is None and out[1]["lifetime_budget_cents"] == 45000
+    assert out[2]["daily_budget_cents"] is None and out[2]["lifetime_budget_cents"] is None
     assert out[2]["effective_status"] == "PAUSED" and out[2]["stopped"] == "2026-09-30"
     # no start_time: the creation date
     assert linked.campaigns("222")[0]["started"] == "2026-10-15"
@@ -96,9 +186,23 @@ def test_daily_insights(linked, fake_meta):
         "reach": 800,
         "link_clicks": 10,
         "actions": {"link_click": 10, "onsite_conversion.messaging_conversation_started_7d": 2},
+        "results": 2,
+        "result_indicator": CONVERSATIONS,
     }
     want = expected("23850001", since, until, date(2026, 10, 3))
     assert sum(r["spend_cents"] for r in by["23850001"]) == want["spend_cents"]
+    assert sum(r["results"] for r in by["23850001"]) == want["results"] == 22
+    # Botox: Meta names the indicator and counts nothing (Ads Manager shows "—")
+    assert all(r["results"] is None and r["result_indicator"] == "lead" for r in by["23850002"])
+    # Panetone has no `results` entry: with the objective, the fallback reads `actions`
+    rows = linked.daily_insights("222", since, until, today=TODAY)
+    assert rows[0]["results"] is None and rows[0]["result_indicator"] == ""
+    rows = linked.daily_insights(
+        "222", since, until, today=TODAY, objectives={"23850004": "OUTCOME_TRAFFIC"}
+    )
+    assert rows[0] == {**rows[0], "day": "2026-10-15", "results": 15}
+    assert rows[0]["result_indicator"] == "link_click"
+    assert "results,cost_per_result" in meta_mod.DAILY_FIELDS
     # narrowed to one campaign
     rows = linked.daily_insights("111", since, until, meta_ids=["23850002"], today=TODAY)
     assert {r["meta_id"] for r in rows} == {"23850002"}

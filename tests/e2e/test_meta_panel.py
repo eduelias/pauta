@@ -157,7 +157,7 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     # the client page: no campaign synced yet, the linked account's balance
     page.goto(f"{base}/#/cliente/{clinic['id']}")
     card = page.locator("#clientmeta")
-    expect(card).to_contain_text("Nenhuma campanha acompanhada este mês")
+    expect(card).to_contain_text("Nenhuma campanha acompanhada nos últimos 30 dias")
     expect(card).to_contain_text("Saldo · Clínica Bem Estar")
     expect(card).to_contain_text("3.765,44")
     expect(card.locator(".row")).to_have_count(1)

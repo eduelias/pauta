@@ -277,8 +277,8 @@ def test_schema_v9_gains_connections_and_the_log(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "10"
-        assert SCHEMA_VERSION == 10
+        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "11"
+        assert SCHEMA_VERSION == 11
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"meta_connection", "meta_log"} <= tables
     assert store.meta_accounts()[0]["business_id"] == ""

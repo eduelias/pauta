@@ -206,6 +206,7 @@ def test_accounts_this_month_in_cents(linked, fake_meta):
         "currency": "BRL",
         "status": 1,
         "status_label": "Ativa",
+        "timezone_name": "America/Sao_Paulo",
         "business_id": BUSINESS,
         "business_name": "Agência Exemplo",
         "numbers": True,

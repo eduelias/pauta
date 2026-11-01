@@ -1219,7 +1219,9 @@ function financeSettingsPanel(fin) {
 
 // The period picker means what Ads Manager means: "últimos N dias" run from yesterday back
 // and never include today (today's numbers are still moving); "este mês" is the 1st to today.
-// Dates are computed here, in the browser's local date, and sent as since/until.
+// The default is Ads Manager's own, "Últimos 30 dias". Dates are computed here, in the
+// browser's local date, and sent as since/until (the server's own default, when a caller
+// sends none, is the same 30 days in the ad account's time zone).
 const PERIODS = [
   ["today", "Hoje"], ["yesterday", "Ontem"], ["last_7", "Últimos 7 dias"], ["last_30", "Últimos 30 dias"],
   ["this_month", "Este mês"], ["last_month", "Mês passado"], ["custom", "Personalizado"],
@@ -1243,13 +1245,11 @@ function periodDates(p, custom = {}) {
     default: return [first, t];
   }
 }
-// "1 nov – 1 nov", "25 out – 31 out"; the year only when it isn't this one
-function periodLabel(since, until) {
-  const y0 = new Date().getFullYear();
-  const f = (iso) => { const [y, m, d] = iso.split("-").map(Number); return `${d} ${MONTHS[m - 1]}${y !== y0 ? ` ${y}` : ""}`; };
-  return `${f(since)} – ${f(until)}`;
-}
-// the hash query wins (a reload keeps it), then the last choice on this browser, then this month
+// "3 out", "25 out 2025": the year only when it isn't this one
+const shortDay = (iso) => { const [y, m, d] = iso.split("-").map(Number); return `${d} ${MONTHS[m - 1]}${y !== new Date().getFullYear() ? ` ${y}` : ""}`; };
+// "1 nov – 1 nov", "25 out – 31 out"
+const periodLabel = (since, until) => `${shortDay(since)} – ${shortDay(until)}`;
+// the hash query wins (a reload keeps it), then the last choice on this browser, then the last 30 days
 function readPeriod(query) {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem("pauta.period") || "{}") || {}; } catch { saved = {}; }
@@ -1257,10 +1257,10 @@ function readPeriod(query) {
   let p = query.get("p") || "", since = query.get("since") || "", until = query.get("until") || "";
   if (isISO(since) && isISO(until)) p = "custom";
   else if (!known(p) || p === "custom") {
-    p = known(saved.p) ? saved.p : "this_month";
+    p = known(saved.p) ? saved.p : "last_30";
     since = saved.since || "";
     until = saved.until || "";
-    if (p === "custom" && !(isISO(since) && isISO(until))) p = "this_month";
+    if (p === "custom" && !(isISO(since) && isISO(until))) p = "last_30";
   }
   return { p, since, until };
 }
@@ -1307,25 +1307,71 @@ function stateTag(k) {
   return `<span class="state ${cls}" title="${esc(k.effective_status || "")}">${esc(txt)}</span>`;
 }
 
-// the five numbers of a row; a client's total shows "—" for reach because it doesn't add up
-const METRIC_COLS = [["spend", "Investido"], ["leads", "Leads (cliques)"], ["cpl", "Custo por lead"], ["reach", "Alcance"], ["impressions", "Impressões"]];
+// Ads Manager's own words for what a campaign's Resultados count (the action type Meta names
+// in `result_indicator`); a type not here reads as its name with dots and underscores as spaces
+const RESULT_LABELS = {
+  "onsite_conversion.messaging_conversation_started_7d": "Conversas por mensagem iniciadas",
+  lead: "Cadastros", "onsite_conversion.lead_grouped": "Cadastros", link_click: "Cliques no link",
+  landing_page_view: "Visualizações da página de destino",
+  purchase: "Compras", omni_purchase: "Compras", "onsite_conversion.purchase": "Compras",
+  post_engagement: "Engajamentos com a publicação",
+  "offsite_conversion.fb_pixel_view_content": "Conteúdo de visualização",
+  video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
+  "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
+};
+const resultLabel = (type) => RESULT_LABELS[type] || String(type || "").replace(/[._]+/g, " ");
+const NO_RESULTS = "sem resultados registrados para o objetivo da campanha";
+const MIXED_RESULTS = "resultados de objetivos diferentes não somam";
 const NO_REACH = "a Meta não respondeu";
 const SUM_REACH = "alcance não soma entre campanhas: a mesma pessoa pode ver mais de uma";
+const NO_BUDGET = "orçamento definido nos conjuntos de anúncios, não na campanha";
+const SUM_BUDGET = "o orçamento é de cada campanha";
+
+// the six numbers of a row, Ads Manager's columns in its order; a client's total shows "—"
+// for reach (it doesn't add up), for the budget (each campaign's own) and for results when
+// its campaigns count different things
+const METRIC_COLS = [["results", "Resultados"], ["cpr", "Custo por resultado"], ["spend", "Valor gasto"], ["impressions", "Impressões"], ["reach", "Alcance"], ["budget", "Orçamento"]];
+const dash = (title) => `<span class="muted" title="${esc(title)}">—</span>`;
+// "R$ 15,00 · diário", "R$ 450,00 · total", "" when the ad sets carry the budget
+function budgetText(k) {
+  if (k.daily_budget_cents != null) return `${centsMoney(k.daily_budget_cents, k.currency)} · diário`;
+  if (k.lifetime_budget_cents != null) return `${centsMoney(k.lifetime_budget_cents, k.currency)} · total`;
+  return "";
+}
 function metricCells(k, total = false) {
-  const reach = total ? `<span class="muted" title="${SUM_REACH}">—</span>`
-    : k.reach == null ? `<span class="muted" title="${NO_REACH}">—</span>` : esc(count(k.reach));
+  const label = resultLabel(k.result_indicator);
+  const none = total && k.mixed ? MIXED_RESULTS : NO_RESULTS;
   const v = {
-    spend: esc(centsMoney(k.spend_cents, k.currency)), leads: esc(count(k.link_clicks)),
-    cpl: esc(centsMoney(k.cpl_cents, k.currency)), reach, impressions: esc(count(k.impressions)),
+    results: k.results == null ? [dash(none)] : [esc(count(k.results)), label],
+    cpr: k.results ? [esc(centsMoney(k.cost_per_result_cents, k.currency)), label] : [dash(none)],
+    spend: [esc(centsMoney(k.spend_cents, k.currency))],
+    impressions: [esc(count(k.impressions))],
+    reach: [total ? dash(SUM_REACH) : k.reach == null ? dash(NO_REACH) : esc(count(k.reach))],
+    budget: [total ? dash(SUM_BUDGET) : budgetText(k) ? esc(budgetText(k)) : dash(NO_BUDGET)],
   };
-  return METRIC_COLS.map(([key, label]) => `<div class="km km-${key}"><span class="kl">${label}</span><b>${v[key]}</b></div>`).join("");
+  return METRIC_COLS.map(([key, label]) => {
+    const [main, sub] = v[key];
+    return `<div class="km km-${key}"><span class="kl">${label}</span><b>${main}</b>${sub ? `<span class="ksub" title="${esc(sub)}">${esc(sub)}</span>` : ""}</div>`;
+  }).join("");
 }
 function clientTotals(c) {
-  const t = { spend_cents: 0, link_clicks: 0, impressions: 0, currency: c.campaigns[0]?.currency };
-  for (const k of c.campaigns.filter((x) => x.state !== "skipped")) { t.spend_cents += k.spend_cents; t.link_clicks += k.link_clicks; t.impressions += k.impressions; }
+  const live = c.campaigns.filter((x) => x.state !== "skipped");
+  const t = { spend_cents: 0, link_clicks: 0, impressions: 0, currency: c.campaigns[0]?.currency, results: null, result_indicator: "", cost_per_result_cents: null, mixed: false };
+  for (const k of live) { t.spend_cents += k.spend_cents; t.link_clicks += k.link_clicks; t.impressions += k.impressions; }
   t.cpl_cents = t.link_clicks ? Math.round(t.spend_cents / t.link_clicks) : null;
+  // results add up only when every campaign counts the same thing
+  const kinds = new Set(live.map((k) => k.result_indicator).filter(Boolean));
+  const counted = live.filter((k) => k.results != null);
+  if (kinds.size === 1 && counted.length) {
+    t.result_indicator = [...kinds][0];
+    t.results = counted.reduce((a, k) => a + k.results, 0);
+    t.cost_per_result_cents = t.results ? Math.round(t.spend_cents / t.results) : null;
+  } else t.mixed = kinds.size > 1;
   return t;
 }
+// "ativa desde 3 out" next to the name, so a short period isn't read as missing data
+const sinceTag = (k) => k.state === "active" && k.started
+  ? `<span class="ksince" title="ativa desde ${esc(fmtDate(k.started, { day: "2-digit", month: "2-digit", year: "numeric" }))}: antes disso não há números">ativa desde ${esc(shortDay(k.started))}</span>` : "";
 
 const campState = { skipped: false };  // "ver ignoradas", for the session
 async function viewCampaigns(query) {
@@ -1336,6 +1382,8 @@ async function viewCampaigns(query) {
   savePeriod(st);
   history.replaceState(null, "", `#/campanhas?${periodQuery(st)}`);
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
+  // a campaign younger than the period has numbers only from its "ativa desde" on
+  const late = doc.clients.some((c) => c.campaigns.some((k) => k.state !== "skipped" && k.started && k.started > since));
   // the daily check (Visto hoje): clients still to see first, the seen ones sink
   const clients = [...doc.clients.filter((c) => !c.seen_today), ...doc.clients.filter((c) => c.seen_today)];
   const seen = doc.seen || { done: 0, total: clients.length };
@@ -1348,7 +1396,7 @@ async function viewCampaigns(query) {
     <div class="krows">${head}
       <div class="krow ktotal"><div class="kname"><b>Total do cliente</b></div>${metricCells(clientTotals(c), true)}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>
       ${c.campaigns.map((k) => `<div class="krow ${k.state === "skipped" ? "skipped" : ""}" data-id="${k.id}">
-        <div class="kname"><a href="#/campanha/${k.id}"><b>${esc(k.name)}</b></a>${stateTag(k)}</div>
+        <div class="kname"><a href="#/campanha/${k.id}"><b>${esc(k.name)}</b></a>${stateTag(k)}${sinceTag(k)}</div>
         ${metricCells(k)}
         ${ME.is_admin ? `<div class="kact">${k.state === "skipped"
           ? `<button class="btn small" data-follow="${k.id}" data-name="${esc(k.name)}">${icon("check")}Acompanhar</button>`
@@ -1361,7 +1409,7 @@ async function viewCampaigns(query) {
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
-    <p class="synced" id="synced"><span class="muted small">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}</p>
+    <p class="synced" id="synced"><span class="muted small">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
@@ -1399,9 +1447,12 @@ async function viewCampaigns(query) {
 
 // One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
 // period value from the campaign's sums, `day` one day's from an insight row; a metric
-// without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart.
+// without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart;
+// `sub` names what Resultados count, under the value, as Ads Manager does.
 const METRICS = {
-  spend: { label: "Investido", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
+  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta" },
+  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => d.results ? d.spend_cents / d.results : null, sub: (k) => resultLabel(k.result_indicator) },
+  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
   leads: { label: "Leads (cliques)", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks },
   cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => d.link_clicks ? d.spend_cents / d.link_clicks : null },
   reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia" },
@@ -1410,14 +1461,14 @@ const METRICS = {
   cpm: { label: "CPM", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "custo por mil impressões" },
   freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período" },
 };
+// the action chips: Ads Manager's words, told apart where two types would read the same
 const ACTION_LABELS = {
-  link_click: "Cliques no link", "onsite_conversion.messaging_conversation_started_7d": "Conversas iniciadas",
-  lead: "Cadastros", purchase: "Compras", landing_page_view: "Visualizações da página", post_engagement: "Engajamento",
-  page_engagement: "Engajamento da página", video_view: "Visualizações de vídeo", comment: "Comentários", like: "Curtidas",
+  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
+  "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
-  initiate_checkout: "Finalizações iniciadas", "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
+  initiate_checkout: "Finalizações iniciadas",
 };
-const DEFAULT_METRICS = ["spend", "leads", "cpl"];
+const DEFAULT_METRICS = ["results", "cpr", "spend"];
 function metricDefs(k) {
   const defs = { ...METRICS };
   for (const type of Object.keys(k.actions || {}).sort()) {
@@ -1484,9 +1535,11 @@ async function viewCampaign(query, id) {
     if (!shown.length) return `<div class="panel empty">Escolha uma métrica acima.</div>`;
     return shown.map((key) => {
       const m = defs[key];
+      const v = m.period(k), sub = m.sub ? m.sub(k) : "";
       return `<section class="panel mcard" data-card="${esc(key)}">
         <div class="panel-head"><h3>${esc(m.label)}</h3>${m.note ? `<span class="muted small">${esc(m.note)}</span>` : ""}</div>
-        <div class="mval">${esc(fmtMetric(m.period(k), m.fmt, k.currency))}</div>
+        <div class="mval" ${m.sub && v == null ? `title="${NO_RESULTS}"` : ""}>${esc(fmtMetric(v, m.fmt, k.currency))}</div>
+        ${sub ? `<div class="msub muted small">${esc(sub)}</div>` : ""}
         ${m.day ? chart(dayPoints(k, since, until, m), m.fmt, k.currency) : `<p class="muted small">Só no período: não há valor por dia.</p>`}
       </section>`;
     }).join("");
@@ -1795,9 +1848,9 @@ function metaBody(d, clients = [], log = []) {
     ${log.length ? `<details class="mt" id="metalog"><summary class="muted small">Histórico</summary><ul class="metalog">${log.map(metaLogLine).join("")}</ul></details>` : ""}`;
 }
 
-// The Meta card on a client's page: this month's tracked campaigns (name, Investido, Leads,
-// Custo por lead; decision 8) and the balance of each linked account. Loaded after the page
-// draws; never blocks it.
+// The Meta card on a client's page: the last 30 days' tracked campaigns (name, Resultados,
+// Custo por resultado, Valor gasto, like Ads Manager; decision 8) and the balance of each
+// linked account. Loaded after the page draws; never blocks it.
 async function loadClientMeta(c) {
   const box = $("#clientmeta");
   if (!box || !BOOT.meta?.enabled) return;
@@ -1823,12 +1876,12 @@ async function loadClientMeta(c) {
   }
   const line = (label, value) => `<div class="row"><span class="grow muted">${label}</span><b>${value}</b></div>`;
   const list = camps === null ? `<p class="muted small">não foi possível ler as campanhas</p>`
-    : !camps.length ? `<p class="muted small">Nenhuma campanha acompanhada este mês.</p>`
+    : !camps.length ? `<p class="muted small">Nenhuma campanha acompanhada nos últimos 30 dias.</p>`
     : camps.map((k) => `<div class="metaacc kcard" data-id="${k.id}"><a class="row" href="#/campanha/${k.id}"><b class="grow">${esc(k.name)}</b>${stateTag(k)}</a>
-      ${line("Investido", esc(centsMoney(k.spend_cents, k.currency)))}
-      ${line("Leads (cliques)", esc(count(k.link_clicks)))}
-      ${line("Custo por lead", esc(centsMoney(k.cpl_cents, k.currency)))}</div>`).join("");
-  box.innerHTML = card(`<div class="muted small">Campanhas acompanhadas · este mês</div>${list}
+      ${line("Resultados", k.results == null ? dash(NO_RESULTS) : `${esc(count(k.results))}<span class="muted small"> ${esc(resultLabel(k.result_indicator))}</span>`)}
+      ${line("Custo por resultado", k.results ? esc(centsMoney(k.cost_per_result_cents, k.currency)) : dash(NO_RESULTS))}
+      ${line("Valor gasto", esc(centsMoney(k.spend_cents, k.currency)))}</div>`).join("");
+  box.innerHTML = card(`<div class="muted small">Campanhas acompanhadas · últimos 30 dias</div>${list}
     ${doc.accounts.length ? `<div class="metaacc balances">${doc.accounts.map((a) => line(`Saldo · ${esc(a.name)}`, a.stale ? `<span class="muted small">não aparece mais na Meta</span>` : metaBalance(a))).join("")}</div>` : ""}`);
 }
 

@@ -91,9 +91,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import obs
 
@@ -110,8 +111,28 @@ BATCH = 50  # the Graph batch API's maximum per request
 MAX_PENDING = 20
 INSIGHTS_FIELDS = "spend,impressions,reach,inline_link_clicks,cost_per_inline_link_click"
 BALANCE_FIELDS = "is_prepay_account,funding_source_details,spend_cap,amount_spent"
-CAMPAIGN_FIELDS = "id,name,objective,effective_status,status,start_time,stop_time,created_time"
-DAILY_FIELDS = "campaign_id,spend,impressions,reach,inline_link_clicks,actions"
+ACCOUNT_FIELDS = "name,account_id,currency,account_status,timezone_name"
+CAMPAIGN_FIELDS = (
+    "id,name,objective,effective_status,status,start_time,stop_time,created_time,"
+    "daily_budget,lifetime_budget"
+)
+DAILY_FIELDS = (
+    "campaign_id,spend,impressions,reach,inline_link_clicks,actions,results,cost_per_result"
+)
+# Ads Manager's Resultados when Meta's `results` entry is missing: the campaign's objective
+# names the action type that counts (read from `actions`). Objectives not here get no result.
+OBJECTIVE_RESULTS = {
+    "OUTCOME_LEADS": "lead",
+    "OUTCOME_SALES": "purchase",
+    "OUTCOME_TRAFFIC": "link_click",
+    "LINK_CLICKS": "link_click",
+    "OUTCOME_ENGAGEMENT": "post_engagement",
+    "MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
+    "OUTCOME_MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
+}
+# "today" is the ad account's day, not the server's (du7 runs on CET; Piero's accounts are
+# in São Paulo): the team's default when an account doesn't say, PAUTA_TZ overrides it
+DEFAULT_TZ = "America/Sao_Paulo"
 REACH_SECONDS = 3600  # a period's reach per campaign is kept this long
 HISTORY_MONTHS = 37  # Meta keeps this much insight history
 MAX_PAGES = 200  # paging stops here whatever Meta says: never loop forever
@@ -192,6 +213,50 @@ def earliest(today: date) -> date:
 
 def clamp_since(since: date, today: date | None = None) -> date:
     return max(since, earliest(today or date.today()))
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def local_today(tz_name: str, now: datetime | None = None) -> date:
+    """Today in the ad account's time zone (`timezone_name` as Meta reports it, e.g.
+    "America/Sao_Paulo"); an empty or unknown name falls back to `PAUTA_TZ`, then
+    `DEFAULT_TZ`, then UTC."""
+    now = now or _now()
+    for name in (tz_name, os.environ.get("PAUTA_TZ", ""), DEFAULT_TZ):
+        if not name:
+            continue
+        try:
+            return now.astimezone(ZoneInfo(str(name))).date()
+        except (KeyError, ValueError, OSError):
+            continue
+    return now.astimezone(UTC).date()
+
+
+def results_of(row: dict, objective: str = "") -> tuple[int | None, str]:
+    """Ads Manager's Resultados for one insights row: (count, indicator), the indicator
+    being the action type after `actions:`. Meta's `results` entry is
+    [{"indicator": "actions:<type>", "values": [{"value": "4", "attribution_windows":
+    ["default"]}]}]; one without `values` has no events (Ads Manager shows "—"): None.
+    With no entry at all, the campaign's `objective` names the type (OBJECTIVE_RESULTS)
+    and the count comes from `actions`, None when the type isn't there; an objective not
+    mapped gives (None, "")."""
+    for entry in row.get("results") if isinstance(row.get("results"), list) else []:
+        if not isinstance(entry, dict) or not entry.get("indicator"):
+            continue
+        indicator = str(entry["indicator"]).removeprefix("actions:")
+        values = entry.get("values") if isinstance(entry.get("values"), list) else []
+        values = [v for v in values if isinstance(v, dict) and v.get("value") not in (None, "")]
+        if not values:
+            return None, indicator
+        default = [v for v in values if "default" in (v.get("attribution_windows") or [])]
+        return _int((default or values)[0].get("value")), indicator
+    kind = OBJECTIVE_RESULTS.get(str(objective or ""))
+    if not kind:
+        return None, ""
+    actions = actions_map(row.get("actions"))
+    return actions.get(kind), kind
 
 
 def actions_map(items) -> dict[str, int]:
@@ -685,7 +750,7 @@ class Meta:
             {
                 # not business{name}: that field needs business_management, which this
                 # read-only login doesn't ask for (Meta answers #100 for the whole list)
-                "fields": "name,account_id,currency,account_status",
+                "fields": ACCOUNT_FIELDS,
                 "limit": "100",
             },
             "adaccounts",
@@ -704,6 +769,7 @@ class Meta:
                     "currency": str(a.get("currency") or "BRL"),
                     "status": status,
                     "status_label": ACCOUNT_STATUS.get(status, ""),
+                    "timezone_name": str(a.get("timezone_name") or ""),
                     "business_id": business_id,
                     "business_name": business_name,
                 }
@@ -827,8 +893,10 @@ class Meta:
 
     def campaigns(self, account_id: str, business_id: str | None = None) -> list[dict]:
         """Every campaign of one ad account, as {id, name, objective, effective_status,
-        status, started, stopped}: dates are `YYYY-MM-DD` (the start date, or the creation
-        date when Meta has no start). Read with the account's portfolio's token."""
+        status, started, stopped, daily_budget_cents, lifetime_budget_cents}: dates are
+        `YYYY-MM-DD` (the start date, or the creation date when Meta has no start); the
+        budgets are the campaign's own (CBO; minor units, None when set on the ad sets).
+        Read with the account's portfolio's token."""
         aid = _digits(account_id)
         rows = self._pages(
             f"/act_{aid}/campaigns",
@@ -850,6 +918,8 @@ class Meta:
                     "status": str(c.get("status") or ""),
                     "started": _day(c.get("start_time")) or _day(c.get("created_time")),
                     "stopped": _day(c.get("stop_time")),
+                    "daily_budget_cents": _minor(c.get("daily_budget")),
+                    "lifetime_budget_cents": _minor(c.get("lifetime_budget")),
                 }
             )
         return out
@@ -862,10 +932,13 @@ class Meta:
         meta_ids: list[str] | None = None,
         today: date | None = None,
         business_id: str | None = None,
+        objectives: dict[str, str] | None = None,
     ) -> list[dict]:
         """One row per campaign per day in the range: {meta_id, day, spend_cents, impressions,
-        reach, link_clicks, actions}. `since` is clamped to what Meta still keeps; an empty
-        range asks nothing. `meta_ids` narrows the read to those campaigns."""
+        reach, link_clicks, actions, results, result_indicator}. `since` is clamped to what
+        Meta still keeps; an empty range asks nothing. `meta_ids` narrows the read to those
+        campaigns; `objectives` ({meta_id: objective}) feeds the Resultados fallback
+        (`results_of`) for rows Meta sends without a `results` entry."""
         aid = _digits(account_id)
         since = clamp_since(since, today)
         if since > until:
@@ -886,6 +959,7 @@ class Meta:
             day = _day(r.get("date_start"))
             if not mid or not day:
                 continue
+            results, indicator = results_of(r, (objectives or {}).get(mid, ""))
             out.append(
                 {
                     "meta_id": mid,
@@ -895,6 +969,8 @@ class Meta:
                     "reach": _int(r.get("reach")),
                     "link_clicks": _int(r.get("inline_link_clicks")),
                     "actions": actions_map(r.get("actions")),
+                    "results": results,
+                    "result_indicator": indicator,
                 }
             )
         return out

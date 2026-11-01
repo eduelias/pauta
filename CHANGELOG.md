@@ -9,6 +9,24 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- **Campanhas igual ao Gerenciador de Anúncios.** O período padrão passa a ser **Últimos 30
+  dias** (o do próprio Gerenciador: de ontem para trás, sem o dia de hoje), sempre com as
+  datas exatas; o navegador continua lembrando a última escolha e o endereço manda. As
+  colunas são as dele, na ordem dele: **Resultados** (o que o objetivo da campanha conta,
+  com o nome que o Gerenciador usa embaixo do número: "Conversas por mensagem iniciadas",
+  "Cadastros", "Cliques no link"...; "—" quando a Meta não registrou resultado para o
+  objetivo), **Custo por resultado**, **Valor gasto** (antes "Investido"), **Impressões**,
+  **Alcance** e **Orçamento** da campanha ("R$ 15,00 · diário" ou "R$ 450,00 · total").
+  Cada campanha mostra "ativa desde *dia*" ao lado do nome, para um período curto não
+  parecer falta de dados. Na página da campanha os cartões padrão são Resultados, Custo por
+  resultado e Valor gasto; Leads (cliques), Custo por lead, CTR, CPM e frequência seguem
+  no seletor. "Hoje" é o dia da conta de anúncios (fuso horário que a Meta informa; São
+  Paulo quando não há conta), não o do servidor: o período padrão, o "hoje incluso", a data
+  do Visto hoje e os dias que a sincronização relê seguem o fuso da conta. API:
+  `GET /api/campaigns` e `GET /api/campaigns/{id}` trazem `results`, `result_indicator`,
+  `cost_per_result_cents`, `daily_budget_cents` e `lifetime_budget_cents`; `results` deixa
+  de ser os cliques no link (`link_clicks` e `cpl_cents` continuam); sem `since`/`until` o
+  período é os últimos 30 dias e `today_included` vem `false`. Esquema v11 (aditivo).
 - **Equipe → Meta** passa a ter **uma conexão por portfólio empresarial** (o Login para
   Empresas da Meta conecta um portfólio por vez, e o usuário do sistema da Pauta pode viver
   no portfólio de um cliente): cada portfólio conectado aparece num bloco próprio,

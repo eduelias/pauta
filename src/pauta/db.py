@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS meta_account (
     account_id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '',
     currency TEXT NOT NULL DEFAULT 'BRL', status INTEGER NOT NULL DEFAULT 0,
     client INTEGER REFERENCES client(id) ON DELETE SET NULL, seen TEXT,
-    created TEXT NOT NULL DEFAULT (datetime('now'))
+    created TEXT NOT NULL DEFAULT (datetime('now')),
+    business_id TEXT NOT NULL DEFAULT '', timezone_name TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS meta_account_client ON meta_account(client);
 CREATE TABLE IF NOT EXISTS campaign (
@@ -123,7 +124,8 @@ CREATE TABLE IF NOT EXISTS campaign (
     every_days INTEGER, note TEXT NOT NULL DEFAULT '', last_seen TEXT,
     created_by INTEGER REFERENCES account(id),
     created TEXT NOT NULL DEFAULT (datetime('now')),
-    updated TEXT NOT NULL DEFAULT (datetime('now'))
+    updated TEXT NOT NULL DEFAULT (datetime('now')),
+    daily_budget_cents INTEGER, lifetime_budget_cents INTEGER
 );
 CREATE INDEX IF NOT EXISTS campaign_client ON campaign(client);
 CREATE INDEX IF NOT EXISTS campaign_account ON campaign(account_id);
@@ -140,6 +142,7 @@ CREATE TABLE IF NOT EXISTS insight (
     spend_cents INTEGER NOT NULL DEFAULT 0, impressions INTEGER NOT NULL DEFAULT 0,
     reach INTEGER NOT NULL DEFAULT 0, link_clicks INTEGER NOT NULL DEFAULT 0,
     actions TEXT NOT NULL DEFAULT '{}', fetched TEXT NOT NULL,
+    results INTEGER, result_indicator TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (meta_id, day)
 );
 CREATE TABLE IF NOT EXISTS meta_connection (
@@ -507,6 +510,25 @@ def suggest(name: str, clients: list) -> int | None:
     return None
 
 
+def _budget(value) -> int | None:
+    """A campaign budget in minor units, or None (unset: the ad sets carry their own)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def period_results(results, spend_cents: int) -> dict:
+    """Ads Manager's Resultados and Custo por resultado over a period: `results` is the sum
+    of the days that had a count (None when none did), the cost is spend ÷ results."""
+    n = int(results) if results is not None else None
+    return {
+        "results": n,
+        "cost_per_result_cents": round(spend_cents / n) if n else None,
+    }
+
+
 def gravatar(email: str | None) -> str:
     """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
     email = (email or "").strip().lower()
@@ -554,6 +576,23 @@ class Store:
             if "business_id" not in cols:
                 db.execute(
                     "ALTER TABLE meta_account ADD COLUMN business_id TEXT NOT NULL DEFAULT ''"
+                )
+            # v11: Ads Manager parity. The account's time zone ("today" is its day); the
+            # campaign's own budget; Resultados per day with the action type they count
+            if "timezone_name" not in cols:
+                db.execute(
+                    "ALTER TABLE meta_account ADD COLUMN timezone_name TEXT NOT NULL DEFAULT ''"
+                )
+            cols = {r[1] for r in db.execute("PRAGMA table_info(campaign)")}
+            for col in ("daily_budget_cents", "lifetime_budget_cents"):
+                if col not in cols:
+                    db.execute(f"ALTER TABLE campaign ADD COLUMN {col} INTEGER")
+            cols = {r[1] for r in db.execute("PRAGMA table_info(insight)")}
+            if "results" not in cols:
+                db.execute("ALTER TABLE insight ADD COLUMN results INTEGER")
+            if "result_indicator" not in cols:
+                db.execute(
+                    "ALTER TABLE insight ADD COLUMN result_indicator TEXT NOT NULL DEFAULT ''"
                 )
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
@@ -730,18 +769,20 @@ class Store:
         with self.db() as db:
             rows = db.execute(
                 "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
-                "m.created, m.business_id, c.name AS client_name FROM meta_account m "
+                "m.created, m.business_id, m.timezone_name, c.name AS client_name "
+                "FROM meta_account m "
                 "LEFT JOIN client c ON c.id=m.client ORDER BY m.name COLLATE NOCASE, m.account_id"
             ).fetchall()
         return [self._meta_row(r) for r in rows]
 
     def sync_meta_accounts(self, accounts: list[dict], now: str | None = None) -> None:
         """What Meta listed just now: upsert name, currency, status, `seen` and, when the
-        entry carries one, the `business_id` of the portfolio whose token read it; rows for
-        accounts no longer listed stay. An account seen for the first time whose id is some
-        client's `ad_account` is linked to that client (the field seeded the match, decision
-        8). Only new rows: an admin's unlink stays unlinked on the next sync, even though
-        linking filled the client's `ad_account` with this very id."""
+        entry carries them, the `business_id` of the portfolio whose token read it and the
+        account's `timezone_name`; rows for accounts no longer listed stay. An account seen
+        for the first time whose id is some client's `ad_account` is linked to that client
+        (the field seeded the match, decision 8). Only new rows: an admin's unlink stays
+        unlinked on the next sync, even though linking filled the client's `ad_account` with
+        this very id."""
         now = now or time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         with self.db() as db:
             known = {r["account_id"] for r in db.execute("SELECT account_id FROM meta_account")}
@@ -751,10 +792,13 @@ class Store:
                     continue
                 db.execute(
                     "INSERT INTO meta_account(account_id, name, currency, status, seen, "
-                    "business_id) VALUES (?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET "
+                    "business_id, timezone_name) VALUES (?,?,?,?,?,?,?) "
+                    "ON CONFLICT(account_id) DO UPDATE SET "
                     "name=excluded.name, currency=excluded.currency, status=excluded.status, "
                     "seen=excluded.seen, business_id=CASE WHEN excluded.business_id<>'' "
-                    "THEN excluded.business_id ELSE meta_account.business_id END",
+                    "THEN excluded.business_id ELSE meta_account.business_id END, "
+                    "timezone_name=CASE WHEN excluded.timezone_name<>'' "
+                    "THEN excluded.timezone_name ELSE meta_account.timezone_name END",
                     (
                         aid,
                         str(a.get("name") or ""),
@@ -762,6 +806,7 @@ class Store:
                         int(a.get("status") or 0),
                         now,
                         digits(a.get("business_id")),
+                        str(a.get("timezone_name") or "")[:60],
                     ),
                 )
             by_field: dict[str, int] = {}
@@ -796,7 +841,8 @@ class Store:
             db.execute("UPDATE meta_account SET client=? WHERE account_id=?", (cid, aid))
             row = db.execute(
                 "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
-                "m.created, m.business_id, c.name AS client_name FROM meta_account m "
+                "m.created, m.business_id, m.timezone_name, c.name AS client_name "
+                "FROM meta_account m "
                 "LEFT JOIN client c ON c.id=m.client WHERE m.account_id=?",
                 (aid,),
             ).fetchone()
@@ -954,21 +1000,24 @@ class Store:
                     today,
                     aid,
                     cid,
+                    _budget(m.get("daily_budget_cents")),
+                    _budget(m.get("lifetime_budget_cents")),
                 )
                 if not known:
                     if not active:
                         continue
                     db.execute(
                         "INSERT INTO campaign(name, objective, effective_status, last_seen, "
-                        "account_id, client, meta_id, state, started) "
-                        "VALUES (?,?,?,?,?,?,?,'active',?)",
+                        "account_id, client, daily_budget_cents, lifetime_budget_cents, "
+                        "meta_id, state, started) VALUES (?,?,?,?,?,?,?,?,?,'active',?)",
                         (*common, mid, m.get("started") or today),
                     )
                     out["new"].append(mid)
                     continue
                 db.execute(
                     "UPDATE campaign SET name=?, objective=?, effective_status=?, last_seen=?, "
-                    "account_id=?, client=?, updated=datetime('now') WHERE id=?",
+                    "account_id=?, client=?, daily_budget_cents=?, lifetime_budget_cents=?, "
+                    "updated=datetime('now') WHERE id=?",
                     (*common, known["id"]),
                 )
                 if known["state"] == "skipped":
@@ -995,7 +1044,9 @@ class Store:
         return out
 
     def store_insights(self, rows: list[dict], fetched: str | None = None) -> int:
-        """Daily numbers per campaign, upserted by (meta_id, day). Returns how many rows."""
+        """Daily numbers per campaign, upserted by (meta_id, day). `results` stays NULL when
+        Meta had no count for the campaign's objective that day (the UI shows "—");
+        `result_indicator` is the action type it counts. Returns how many rows."""
         fetched = fetched or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         n = 0
         with self.db() as db:
@@ -1004,13 +1055,16 @@ class Store:
                 if not mid or not DATE_RE.match(day):
                     continue
                 actions = r.get("actions") or {}
+                results = r.get("results")
                 db.execute(
                     "INSERT INTO insight(meta_id, day, spend_cents, impressions, reach, "
-                    "link_clicks, actions, fetched) VALUES (?,?,?,?,?,?,?,?) "
+                    "link_clicks, actions, fetched, results, result_indicator) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(meta_id, day) DO UPDATE SET spend_cents=excluded.spend_cents, "
                     "impressions=excluded.impressions, reach=excluded.reach, "
                     "link_clicks=excluded.link_clicks, actions=excluded.actions, "
-                    "fetched=excluded.fetched",
+                    "fetched=excluded.fetched, results=excluded.results, "
+                    "result_indicator=excluded.result_indicator",
                     (
                         mid,
                         day,
@@ -1020,6 +1074,8 @@ class Store:
                         int(r.get("link_clicks") or 0),
                         json.dumps(actions, sort_keys=True, separators=(",", ":")),
                         fetched,
+                        int(results) if results is not None else None,
+                        str(r.get("result_indicator") or "")[:120],
                     ),
                 )
                 n += 1
@@ -1061,14 +1117,18 @@ class Store:
     def campaign_rows(self, since: str, until: str, states: tuple = TRACKED_STATES) -> list[dict]:
         """Per client (by name), its campaigns (active first, then by name) with the period's
         sums from `insight`: spend, impressions, link clicks and actions by type, plus the
-        account's `currency` (money is in it). `results` is the link clicks (the team's lead
-        definition; a setting may change it later)."""
+        account's `currency` (money is in it). Ads Manager's Resultados: `results` sums the
+        days that had a count (None when none did), `result_indicator` is the latest action
+        type seen in the range, `cost_per_result_cents` is spend ÷ results (None without
+        results). The campaign's own budget comes along (`daily_budget_cents`,
+        `lifetime_budget_cents`)."""
         marks = ",".join("?" for _ in states)
         with self.db() as db:
             rows = db.execute(
                 "SELECT k.id, k.client, c.name AS client_name, k.account_id, k.meta_id, k.name, "
                 "k.objective, k.state, k.effective_status, k.started, k.ended, k.request, "
-                "k.every_days, k.note, k.last_seen, a.currency FROM campaign k "
+                "k.every_days, k.note, k.last_seen, k.daily_budget_cents, "
+                "k.lifetime_budget_cents, a.currency FROM campaign k "
                 "JOIN client c ON c.id=k.client "
                 "LEFT JOIN meta_account a ON a.account_id=k.account_id "
                 f"WHERE k.state IN ({marks}) "
@@ -1076,10 +1136,15 @@ class Store:
                 "k.name COLLATE NOCASE, k.id",
                 states,
             ).fetchall()
-            sums = db.execute(
+            sums = db.execute(  # SUM over NULLs only is NULL: exactly "no results"
                 "SELECT meta_id, SUM(spend_cents) AS spend_cents, SUM(impressions) AS impressions, "
-                "SUM(link_clicks) AS link_clicks FROM insight WHERE day BETWEEN ? AND ? "
-                "GROUP BY meta_id",
+                "SUM(link_clicks) AS link_clicks, SUM(results) AS results FROM insight "
+                "WHERE day BETWEEN ? AND ? GROUP BY meta_id",
+                (since, until),
+            ).fetchall()
+            kinds = db.execute(
+                "SELECT meta_id, result_indicator FROM insight WHERE day BETWEEN ? AND ? "
+                "AND result_indicator<>'' ORDER BY day",
                 (since, until),
             ).fetchall()
             acts = db.execute(
@@ -1087,6 +1152,7 @@ class Store:
                 (since, until),
             ).fetchall()
         totals = {r["meta_id"]: dict(r) for r in sums}
+        indicators = {r["meta_id"]: r["result_indicator"] for r in kinds}  # the latest wins
         actions: dict[str, dict[str, int]] = {}
         for r in acts:
             bag = actions.setdefault(r["meta_id"], {})
@@ -1101,8 +1167,9 @@ class Store:
                 impressions=int(t.get("impressions") or 0),
                 link_clicks=int(t.get("link_clicks") or 0),
                 actions=actions.get(d["meta_id"], {}),
+                result_indicator=indicators.get(d["meta_id"], ""),
             )
-            d["results"] = d["link_clicks"]
+            d.update(period_results(t.get("results"), d["spend_cents"]))
             cname = d.pop("client_name")
             if not out or out[-1]["id"] != d["client"]:
                 out.append({"id": d["client"], "name": cname, "campaigns": []})
@@ -1121,7 +1188,8 @@ class Store:
             if not row:
                 raise NotFound("campanha não encontrada")
             days = db.execute(
-                "SELECT day, spend_cents, impressions, reach, link_clicks, actions, fetched "
+                "SELECT day, spend_cents, impressions, reach, link_clicks, actions, fetched, "
+                "results, result_indicator "
                 "FROM insight WHERE meta_id=? AND day BETWEEN ? AND ? ORDER BY day",
                 (row["meta_id"], since or "0000-00-00", until or "9999-99-99"),
             ).fetchall()

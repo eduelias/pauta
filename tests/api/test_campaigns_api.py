@@ -1,17 +1,28 @@
-"""Campaign tracking over HTTP: the period list with sums, cost per lead and reach, Não
-acompanhar / Acompanhar, the admin's "Atualizar agora" and its 15-minute limit, /metrics
-and the export."""
+"""Campaign tracking over HTTP: the period list (Ads Manager's last 30 days by default, in
+the ad account's day) with sums, Resultados per objective, cost per lead, budgets and reach,
+Não acompanhar / Acompanhar, the admin's "Atualizar agora" and its 15-minute limit,
+/metrics and the export."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from test_meta_api import connected
 
-from fakemeta import BUSINESS, expected
+from fakemeta import BUSINESS, CONVERSATIONS, TZ, expected
+from pauta import meta as meta_mod
 from pauta import server as server_mod
-from pauta.meta import NOT_CONNECTED
+from pauta.meta import NOT_CONNECTED, local_today
 from softpasskey import call
+
+
+def today_in_sao_paulo() -> date:
+    """The team's today: the fixture accounts are in America/Sao_Paulo (as Piero's)."""
+    return local_today(TZ)
+
+
+def last_30_days(today: date) -> tuple[date, date]:
+    return today - timedelta(days=30), today - timedelta(days=1)
 
 
 @pytest.fixture()
@@ -35,22 +46,28 @@ def synced(team, fake_meta):
 def test_sync_then_the_list(team, fake_meta):
     base, nato, piero, out = synced(team, fake_meta)
     assert out["accounts"] == 2 and out["campaigns_new"] == 3 and out["errors"] == []
-    today = date.today()
+    today = today_in_sao_paulo()
+    since, until = last_30_days(today)
     status, doc, _ = call(f"{base}/api/campaigns", cookie=piero)
     assert status == 200
-    assert doc["since"] == today.replace(day=1).isoformat() and doc["until"] == today.isoformat()
-    assert doc["today_included"] is True
+    # Ads Manager's default: the last 30 days, yesterday back, today out
+    assert doc["since"] == since.isoformat() and doc["until"] == until.isoformat()
+    assert doc["today_included"] is False
     assert doc["last_sync"].endswith("Z")  # how fresh the stored numbers are
     assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Padaria Trigo de Ouro"]
     k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
     assert set(k) == {"23850001", "23850002", "23850004"}
     limpeza = k["23850001"]
-    want = expected("23850001", today.replace(day=1), today, date(2026, 10, 3))
+    want = expected("23850001", since, until, date(2026, 10, 3))
     assert limpeza["spend_cents"] == want["spend_cents"]
-    assert limpeza["results"] == want["link_clicks"] == limpeza["link_clicks"]
+    assert limpeza["link_clicks"] == want["link_clicks"]
     assert limpeza["cpl_cents"] == round(want["spend_cents"] / want["link_clicks"])
     assert limpeza["reach"] == 500 * want["days"]
     assert limpeza["actions"]["link_click"] == want["link_clicks"]
+    # Resultados as Ads Manager counts them for the campaign's objective
+    assert limpeza["results"] == want["results"] == 2 * want["days"]
+    assert limpeza["result_indicator"] == CONVERSATIONS
+    assert limpeza["cost_per_result_cents"] == round(want["spend_cents"] / want["results"])
     assert limpeza == {
         **limpeza,
         "name": "Limpeza de pele novembro",
@@ -60,7 +77,16 @@ def test_sync_then_the_list(team, fake_meta):
         "account_id": "111",
         "currency": "BRL",
         "request": None,
+        "daily_budget_cents": 1500,
+        "lifetime_budget_cents": None,
     }
+    # an indicator and no values: "—"; no entry: the objective's action from `actions`
+    botox, panetone = k["23850002"], k["23850004"]
+    assert botox["results"] is None and botox["result_indicator"] == "lead"
+    assert botox["cost_per_result_cents"] is None and botox["lifetime_budget_cents"] == 45000
+    assert panetone["results"] == panetone["link_clicks"] > 0
+    assert panetone["result_indicator"] == "link_click"
+    assert panetone["daily_budget_cents"] is None and panetone["lifetime_budget_cents"] is None
 
 
 def test_custom_and_invalid_periods(team, fake_meta):
@@ -68,10 +94,13 @@ def test_custom_and_invalid_periods(team, fake_meta):
     status, doc, _ = call(f"{base}/api/campaigns?since=2026-10-10&until=2026-10-12", cookie=piero)
     assert status == 200 and doc["today_included"] is False
     k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
-    assert k["23850001"]["spend_cents"] == 1010 + 1011 + 1012 and k["23850001"]["results"] == 33
+    assert k["23850001"]["spend_cents"] == 1010 + 1011 + 1012
+    assert k["23850001"]["link_clicks"] == 33 and k["23850001"]["results"] == 6
+    assert k["23850001"]["cost_per_result_cents"] == round(3033 / 6)
     assert k["23850001"]["reach"] == 500 * 3
     assert k["23850002"]["spend_cents"] == 1012  # started the 12th
     assert k["23850004"]["spend_cents"] == 0 and k["23850004"]["cpl_cents"] is None
+    assert k["23850004"]["results"] is None and k["23850004"]["cost_per_result_cents"] is None
     assert k["23850004"]["reach"] is None  # Meta had no row for it (not started yet)
     # a period with no numbers at all is still a list
     doc = call(f"{base}/api/campaigns?since=2025-01-01&until=2025-01-31", cookie=piero)[1]
@@ -137,23 +166,35 @@ def test_one_campaign_with_its_days(team, fake_meta):
             "link_click": 10,
             "onsite_conversion.messaging_conversation_started_7d": 2,
         },
+        "results": 2,
+        "result_indicator": CONVERSATIONS,
     }
     assert c["spend_cents"] == 1010 + 1011 + 1012 and c["impressions"] == 3300
-    assert c["link_clicks"] == c["results"] == 33
-    assert c["cpl_cents"] == round(3033 / 33)
+    assert c["link_clicks"] == 33 and c["cpl_cents"] == round(3033 / 33)
+    assert c["results"] == 6 and c["result_indicator"] == CONVERSATIONS
+    assert c["cost_per_result_cents"] == round(3033 / 6)
+    assert c["daily_budget_cents"] == 1500 and c["lifetime_budget_cents"] is None
     assert c["reach"] == 500 * 3
     assert c["actions"] == {
         "link_click": 33,
         "onsite_conversion.messaging_conversation_started_7d": 6,
     }
-    # the default period is this month so far, like the list's
-    today = date.today()
+    # the default period is the last 30 days, like the list's
+    since, until = last_30_days(today_in_sao_paulo())
     doc = call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]
-    assert doc["since"] == today.replace(day=1).isoformat() and doc["until"] == today.isoformat()
+    assert doc["since"] == since.isoformat() and doc["until"] == until.isoformat()
+    assert doc["today_included"] is False
     # a period before the campaign: no days, zero sums, no cost per lead, no reach
     doc = call(f"{base}/api/campaigns/{cid}?since=2025-01-01&until=2025-01-31", cookie=piero)[1]
     assert doc["campaign"]["days"] == [] and doc["campaign"]["spend_cents"] == 0
     assert doc["campaign"]["cpl_cents"] is None and doc["campaign"]["reach"] is None
+    assert doc["campaign"]["results"] is None and doc["campaign"]["result_indicator"] == ""
+    assert doc["campaign"]["cost_per_result_cents"] is None
+    # Botox: Meta names the indicator, counts nothing: "—" on every day and over the period
+    botox = k["23850002"]["id"]
+    doc = call(f"{base}/api/campaigns/{botox}?since=2026-10-12&until=2026-10-13", cookie=piero)[1]
+    assert doc["campaign"]["results"] is None and doc["campaign"]["result_indicator"] == "lead"
+    assert all(d["results"] is None for d in doc["campaign"]["days"])
     assert (
         call(f"{base}/api/campaigns/{cid}?since=2026-10-20&until=2026-10-19", cookie=piero)[0]
         == 400
@@ -206,19 +247,25 @@ def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
     assert doc["seen"] == {"done": 1, "total": 2}
     assert doc["clients"][0]["seen_today"]["by"] == "Piero"
     assert doc["clients"][1]["seen_today"] is None
-    # the rows: dated today, by Piero, the note next to this month's numbers
-    today = date.today()
+    # the rows: dated today (the account's day), by Piero, the note next to this month's numbers
+    today = today_in_sao_paulo()
     reviews = call(f"{base}/api/export", cookie=nato)[1]["review"]
     assert len(reviews) == 2 and {r["on"] for r in reviews} == {today.isoformat()}
     assert all(r["note"] == "subi a verba" for r in reviews)
     by_campaign = {r["campaign"]: json.loads(r["snapshot"]) for r in reviews}
-    limpeza = next(k for k in clinic["campaigns"] if k["meta_id"] == "23850001")
+    # the snapshot is this month's numbers (the list's default is the last 30 days)
+    first = today.replace(day=1).isoformat()
+    month = call(f"{base}/api/campaigns?since={first}&until={today.isoformat()}", cookie=piero)[1]
+    rows = {k["meta_id"]: k for c in month["clients"] for k in c["campaigns"]}
+    limpeza = rows["23850001"]
     snap = by_campaign[limpeza["id"]]
     assert snap["since"] == today.replace(day=1).isoformat() and snap["until"] == today.isoformat()
     assert snap["spend_cents"] == limpeza["spend_cents"]
     assert snap["link_clicks"] == limpeza["link_clicks"]
-    assert snap["cpl_cents"] == limpeza["cpl_cents"]
     assert snap["reach"] == limpeza["reach"] and snap["impressions"] == limpeza["impressions"]
+    assert snap["result_indicator"] == CONVERSATIONS and snap["results"] is not None
+    assert snap["cost_per_result_cents"] == round(snap["spend_cents"] / snap["results"])
+    assert snap["cpl_cents"] == round(snap["spend_cents"] / snap["link_clicks"])
     # a second tap the same day is another row, not an error; the status stays "seen"
     assert call(f"{base}/api/clients/{clinic['id']}/reviews", {}, piero)[0] == 200
     assert call(f"{base}/api/clients/999/reviews", {}, piero)[0] == 404
@@ -227,6 +274,40 @@ def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
     extra = call(f"{base}/api/clients", {"name": "Sem campanha"}, nato)[1]
     status, out, _ = call(f"{base}/api/clients/{extra['id']}/reviews", {}, piero)
     assert status == 400 and "campanha ativa" in out["error"]
+
+
+def test_today_is_the_ad_accounts_day(team, fake_meta, monkeypatch):
+    """A frozen clock at 2026-11-01 01:30 CET (00:30 UTC): still 31 Oct in São Paulo, where
+    the accounts are. The default range, `today_included` and the review's date follow
+    the account, not the server."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    monkeypatch.setattr(meta_mod, "_now", lambda: datetime(2026, 11, 1, 0, 30, tzinfo=UTC))
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["since"] == "2026-10-01" and doc["until"] == "2026-10-30"  # 30 days to yesterday
+    assert doc["today_included"] is False
+    doc = call(f"{base}/api/campaigns?since=2026-10-31&until=2026-10-31", cookie=piero)[1]
+    assert doc["today_included"] is True  # 31 Oct is today there...
+    doc = call(f"{base}/api/campaigns?since=2026-10-30&until=2026-10-30", cookie=piero)[1]
+    assert doc["today_included"] is False  # ...and 30 Oct is yesterday
+    cid = doc["clients"][0]["campaigns"][0]["id"]
+    doc = call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]
+    assert doc["since"] == "2026-10-01" and doc["until"] == "2026-10-30"
+    clinic = doc["campaign"]["client"]
+    out = call(f"{base}/api/clients/{clinic}/reviews", {"note": "noite"}, piero)[1]
+    assert out["seen_today"]["by"] == "Piero"
+    reviews = call(f"{base}/api/export", cookie=nato)[1]["review"]
+    assert {r["on"] for r in reviews} == {"2026-10-31"}
+    snap = json.loads(reviews[0]["snapshot"])
+    assert snap["since"] == "2026-10-01" and snap["until"] == "2026-10-31"
+    # the list's "seen today" is that day's too
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["seen"] == {"done": 1, "total": 2}
+    # with no account linked, the team's default zone (São Paulo as well) decides
+    call(f"{base}/api/meta/accounts/111", {"client": None}, nato, method="PATCH")
+    call(f"{base}/api/meta/accounts/222", {"client": None}, nato, method="PATCH")
+    monkeypatch.delenv("PAUTA_TZ", raising=False)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["since"] == "2026-10-01" and doc["until"] == "2026-10-30"
 
 
 def test_manual_sync_is_for_admins_once_in_15_minutes(team, fake_meta, monkeypatch):

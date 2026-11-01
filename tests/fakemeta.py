@@ -6,7 +6,13 @@ account's campaigns (paged) and campaign-level insights by day or for a whole ra
 Insights are deterministic from the day of month (spend 10.00 + day cents, impressions
 100 × day, reach 80 × day, link clicks = day) for every ACTIVE campaign that had started, so
 a test can predict any sum; a range without `time_increment` gives one row per campaign
-with reach 500 × days.
+with reach 500 × days. Ads Manager's Resultados come in the real `results` shape, one case
+per fixture campaign (`RESULTS`): 23850001 counts conversations started (2 a day, with
+`values`), 23850002 has an indicator and no `values` (Ads Manager shows "—"), the others
+have no `results` entry at all, so Pauta falls back to the campaign's objective (Panetone,
+OUTCOME_TRAFFIC, counts link clicks; Delta's OUTCOME_LEADS finds no `lead` action).
+Every ad account is in America/Sao_Paulo; 23850001 has a daily budget of R$ 15,00 and
+23850002 a lifetime one of R$ 450,00 (campaign-level, as Piero's).
 
 A token belongs to the business `fake.business` named when it was minted (Facebook Login
 for Business connects one portfolio per login): `/me` reports that business, and the token
@@ -41,6 +47,7 @@ BUSINESS = "300000000000003"
 OTHER_BUSINESS = "400000000000004"  # a client's own portfolio (where Piero's system user lives)
 BUSINESSES = {BUSINESS: "Agência Exemplo", OTHER_BUSINESS: "Delta Imóveis"}
 
+TZ = "America/Sao_Paulo"  # every fixture account's `timezone_name`, as Piero's
 ACCOUNTS = [
     {
         "id": "act_111",
@@ -48,6 +55,7 @@ ACCOUNTS = [
         "name": "Clínica Bem Estar",
         "currency": "BRL",
         "account_status": 1,
+        "timezone_name": TZ,
     },
     {
         "id": "act_222",
@@ -55,6 +63,7 @@ ACCOUNTS = [
         "name": "Padaria Trigo de Ouro",
         "currency": "BRL",
         "account_status": 2,
+        "timezone_name": TZ,
     },
 ]
 OTHER_ACCOUNTS = [
@@ -64,6 +73,7 @@ OTHER_ACCOUNTS = [
         "name": "Delta Imóveis",
         "currency": "BRL",
         "account_status": 1,
+        "timezone_name": TZ,
     },
 ]
 INSIGHTS = {
@@ -99,6 +109,7 @@ CAMPAIGNS = {
             "status": "ACTIVE",
             "start_time": "2026-10-03T00:00:00-0300",
             "created_time": "2026-10-02T18:12:00-0300",
+            "daily_budget": "1500",
         },
         {
             "id": "23850002",
@@ -108,6 +119,7 @@ CAMPAIGNS = {
             "status": "ACTIVE",
             "start_time": "2026-10-12T00:00:00-0300",
             "created_time": "2026-10-11T09:00:00-0300",
+            "lifetime_budget": "45000",
         },
         {
             "id": "23850003",
@@ -145,10 +157,21 @@ CAMPAIGNS = {
 }
 
 
+CONVERSATIONS = "onsite_conversion.messaging_conversation_started_7d"
+# Resultados per fixture campaign: (indicator, results per day or None for "no values");
+# a campaign not here gets no `results` entry (Pauta falls back to its objective)
+RESULTS: dict[str, tuple[str, int | None]] = {
+    "23850001": (CONVERSATIONS, 2),
+    "23850002": ("lead", None),
+}
+# what Pauta should count per day after the fallback (Panetone: link clicks = the day)
+RESULTS_PER_DAY = {"23850001": lambda d: 2, "23850004": lambda d: d.day}
+
+
 def day_row(meta_id: str, day: date) -> dict:
     """The fake's insight row for one campaign on one day (what the real Meta would send)."""
     n = day.day
-    return {
+    row = {
         "campaign_id": meta_id,
         "spend": f"10.{n:02d}",
         "impressions": str(100 * n),
@@ -156,21 +179,34 @@ def day_row(meta_id: str, day: date) -> dict:
         "inline_link_clicks": str(n),
         "actions": [
             {"action_type": "link_click", "value": str(n)},
-            {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "2"},
+            {"action_type": CONVERSATIONS, "value": "2"},
         ],
         "date_start": day.isoformat(),
         "date_stop": day.isoformat(),
     }
+    if meta_id in RESULTS:
+        indicator, per_day = RESULTS[meta_id]
+        row["results"] = [{"indicator": f"actions:{indicator}"}]
+        row["cost_per_result"] = [{"indicator": f"actions:{indicator}"}]
+        if per_day is not None:
+            windows = ["default"]
+            row["results"][0]["values"] = [{"value": str(per_day), "attribution_windows": windows}]
+            row["cost_per_result"][0]["values"] = [
+                {"value": f"{(1000 + n) / per_day / 100:.6f}", "attribution_windows": windows}
+            ]
+    return row
 
 
 def expected(meta_id: str, since: date, until: date, start: date) -> dict:
     """What Pauta should hold for a campaign over a range: the sums of `day_row`."""
     days = [since + timedelta(days=i) for i in range((until - since).days + 1)]
     days = [d for d in days if d >= start]
+    per_day = RESULTS_PER_DAY.get(meta_id)
     return {
         "spend_cents": sum(1000 + d.day for d in days),
         "impressions": sum(100 * d.day for d in days),
         "link_clicks": sum(d.day for d in days),
+        "results": sum(per_day(d) for d in days) if per_day and days else None,
         "days": len(days),
     }
 
