@@ -39,11 +39,15 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 
 ```
 make setup     # uv sync with dev + e2e extras, Chromium for Playwright
-make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what CI runs
-make test      # just unit and API tests (~3 s)
-make e2e       # just the browser tests (~10 s)
+make test-fast # the inner loop: unit and API tests in parallel, no coverage (~5 s)
+make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what CI runs (~30 s)
+make test      # just unit and API tests with coverage (~7 s)
+make e2e       # just the browser tests, parallel (~25 s)
+make acc       # owner only: push this branch and put it on https://acc.pauta.cc (~1-2 min)
 make run       # http://localhost:8088, open mode, data in ./state
 ```
+
+The loop (what to run when, and the measured timings) is in `CONTRIBUTING.md`, "The loop".
 
 Tests: `tests/unit` (no HTTP), `tests/api` (a real server on a free port, `SoftPasskey` in
 `tests/softpasskey.py` signs real WebAuthn responses), `tests/e2e` (Playwright + Chromium's
