@@ -39,7 +39,7 @@ jobs:
       - name: Ruff (format)
         run: uv run --extra dev ruff format --check src tests scripts tools
       - name: JavaScript parses
-        run: node --check src/pauta/static/app.js
+        run: for f in src/pauta/static/app*.js; do node --check "$f"; done
       - name: Deploy scripts (shellcheck)
         run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
       - name: Workflows (actionlint)
@@ -157,7 +157,8 @@ jobs:
       - name: The wheel carries the web app
         run: |
           wheel=$(ls dist/pauta-*.whl)
-          for f in index.html app.js style.css vendor/qrcode.js og.png manifest.json; do
+          for f in index.html app.js app-requests.js app-clients.js app-financeiro.js app-campanhas.js app-team.js app-perfil.js app-router.js \
+                   style.css vendor/qrcode.js og.png manifest.json; do
             unzip -l "$wheel" "pauta/static/$f" > /dev/null || { echo "missing static/$f"; exit 1; }
           done
       - name: Install it like du7 does, start it, ask /healthz
