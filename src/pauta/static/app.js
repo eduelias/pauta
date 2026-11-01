@@ -1770,7 +1770,8 @@ async function loadDrive(doc) {
     toast("OneDrive desconectado");
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
-  if (doc.state === "connected") { toast("OneDrive conectado"); await refreshBoot(); }
+  // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
+  if (doc.state === "connected") { await refreshBoot(); toast("OneDrive conectado"); }
   if (doc.state === "expired") toast("O código expirou; gere outro", true);
   if (doc.state === "denied") toast("A conexão foi recusada na conta Microsoft", true);
 }
