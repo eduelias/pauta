@@ -865,7 +865,7 @@ def make_handler(
 
         @route("GET", "/api/onedrive", "admin")
         def drive_status(self, viewer, _body):
-            """Also how the Equipe page waits for the code to be approved: each call while
+            """Also how the Configurações page waits for the code to be approved: each call while
             a connection is pending asks Microsoft once."""
             state = drive.poll() if drive.pending() else "idle"
             return {**drive.status(quota=state != "pending"), "state": state}
@@ -969,7 +969,7 @@ def make_handler(
                     raise MetaError("cancelado", 400, "cancelado")
                 conn = meta.finish_connect(state, code)
             except MetaError as e:
-                self._redirect(f"/#/equipe?meta=erro&motivo={e.reason}")
+                self._redirect(f"/#/configuracoes?meta=erro&motivo={e.reason}")
                 return SENT
             if conn:  # not a repeated callback
                 store.meta_log(
@@ -978,7 +978,7 @@ def make_handler(
                     conn["by"],
                     business_name=conn["business_name"],
                 )
-            self._redirect("/#/equipe?meta=conectado")
+            self._redirect("/#/configuracoes?meta=conectado")
             return SENT
 
         @route("DELETE", "/api/meta/connections/([0-9]{1,30}|legacy)", "admin")

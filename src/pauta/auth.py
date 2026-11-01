@@ -9,7 +9,7 @@ Moving to a new domain (decision 4): a passkey only works on the domain it was m
 during a move both domains are configured, the new one first. Each ceremony uses the domain
 its page is on, and on the old one a signed-in person gets a one-time link that lets them make
 a passkey for the same account on the new one. An admin can make the same link for someone
-else (Equipe, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
+else (Configurações → Time, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
 
 Configuration (environment):
   PAUTA_AUTH=passkeys     turn accounts on

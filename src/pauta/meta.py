@@ -1,6 +1,6 @@
 """The team's Meta business portfolios, read through the Marketing API (decision 8, phase 2).
 
-An admin clicks "Conectar Meta" on Equipe. Pauta sends them to Facebook Login for Business
+An admin clicks "Conectar Meta" on Configurações. Pauta sends them to Facebook Login for Business
 with Du7's app and its login configuration (a system-user token, MANAGE on the ad accounts,
 `ads_read` only); they pick ONE portfolio and its ad accounts and Meta sends them back to
 `/api/meta/callback` with a one-time code. Pauta exchanges the code, with the app secret, for
@@ -140,7 +140,7 @@ LEGACY = "legacy"  # the business "id" of a pre-connection token file without on
 
 UNAVAILABLE = "a Meta não respondeu; tente de novo"
 REVOKED = "a conexão com a Meta foi revogada ou expirou; conecte de novo"
-NOT_CONNECTED = "a Meta não está conectada; um administrador conecta em Equipe"
+NOT_CONNECTED = "a Meta não está conectada; um administrador conecta em Configurações → Meta"
 NO_BUSINESS = "a Meta não disse qual é o portfólio; tente de novo"
 UNKNOWN_BUSINESS = "este portfólio não está conectado"
 RECONNECT = "conexão antiga sem portfólio identificado; reconecte em Adicionar contas"
@@ -671,7 +671,7 @@ class Meta:
         self._changed()
 
     def status(self) -> dict:
-        """For the Equipe page and /metrics. Never the token."""
+        """For the Configurações page and /metrics. Never the token."""
         conns = self.connections()
         return {
             "enabled": self.enabled,

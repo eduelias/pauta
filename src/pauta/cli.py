@@ -64,7 +64,7 @@ def cmd_move_link(args) -> None:
         sys.exit(f"no single account matches {who!r}; see `pauta users`")
     m = found[0]
     if m["disabled"]:
-        sys.exit(f"{m['name']} is disabled; enable them on the Equipe page first")
+        sys.exit(f"{m['name']} is disabled; enable them on Configurações → Time first")
     token, expires = Auth(store, enabled=True).create_move(m["id"], args.days * 86400)
     until = time.strftime("%Y-%m-%d %H:%M", time.localtime(expires))
     print(f"{args.base_url.rstrip('/')}/#/mudar/{token}")
@@ -286,7 +286,7 @@ def cmd_onedrive(args) -> None:
     except DriveError as e:
         sys.exit(f"onedrive: {e}")
     if not st["connected"]:
-        sys.exit("not connected (pauta onedrive connect, or Equipe → OneDrive)")
+        sys.exit("not connected (pauta onedrive connect, or Configurações → Arquivos)")
     print(f"connected as {st['name']} <{st['account']}>")
     print(f"folder {st['folder']}, files up to {st['max_mb']} MB, token renewed {st['refreshed']}")
     q = st.get("quota") or {}
@@ -324,7 +324,7 @@ def cmd_meta(args) -> None:
         return
     conns = store.connections()
     if not conns:
-        sys.exit("not connected (Equipe → Meta → Conectar Meta)")
+        sys.exit("not connected (Configurações → Meta → Conectar Meta)")
     accounts = store.meta_accounts()
     problems = []
     for c in conns:

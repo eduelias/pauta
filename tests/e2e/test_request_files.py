@@ -1,5 +1,5 @@
-"""Files on a request in a real browser: connect OneDrive on Equipe, upload, share, remove.
-The OneDrive is the fake Graph (tests/fakegraph.py)."""
+"""Files on a request in a real browser: connect OneDrive on Configurações → Arquivos, upload,
+share, remove. The OneDrive is the fake Graph (tests/fakegraph.py)."""
 
 import pytest
 from playwright.sync_api import expect
@@ -25,7 +25,7 @@ def test_connect_upload_share_and_remove(live, device, fake):
     expect(page.locator("#mechip")).to_contain_text("Renato Lima")
 
     # connect: the page shows the code, then notices the approval by itself
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.get_by_role("button", name="Conectar OneDrive").click()
     expect(page.locator("#usercode")).to_have_text("ABCD-1234")
     expect(page.locator("#drive")).to_contain_text("microsoft.com/link")
@@ -65,7 +65,7 @@ def test_connect_upload_share_and_remove(live, device, fake):
     assert len(fake.deleted) == 1
 
     # disconnect: the request page says how to turn files back on
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Desconectar").click()
     expect(page.get_by_role("button", name="Conectar OneDrive")).to_be_visible()

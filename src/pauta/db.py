@@ -395,7 +395,7 @@ CLIENT_FIELDS = {
     "billed": _bool,
 }
 
-# Equipe → Financeiro (decision 7); the defaults are in finance.DEFAULTS
+# Configurações → Financeiro (decision 7); the defaults are in finance.DEFAULTS
 FINANCE_FIELDS = {
     "enabled": _bool,
     "currency": _choice(finance.CURRENCIES),
@@ -861,7 +861,8 @@ class Store:
     # One row per connected portfolio, mirroring the token files `meta.py` owns (it knows no
     # SQLite): the server calls sync_connections with meta.connections() at startup and on
     # every change. The row adds `last_sync`, written by the sync pass. `meta_log` is the
-    # short history Equipe shows: who connected, disconnected, linked or unlinked what.
+    # short history Configurações → Meta shows: who connected, disconnected, linked or
+    # unlinked what.
 
     LOG_KINDS = ("connected", "disconnected", "linked", "unlinked", "revoked")
 

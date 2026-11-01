@@ -99,9 +99,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
-- **Link de nova passkey** em Equipe: o administrador gera, para qualquer pessoa do time, um
+- **Link de nova passkey** em Configurações → Time: o administrador gera, para qualquer pessoa do time, um
   link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de
   aceitação). Antes, esse link só aparecia durante a mudança de endereço.
+
+### Changed
+
+- A aba **Equipe** agora se chama **Configurações** (ícone de engrenagem): é onde ficam o
+  time, os convites, a Meta, o Financeiro, as listas e os Arquivos (o OneDrive dos pedidos),
+  em seções com esse nome e nessa ordem. O endereço `#/equipe` (e qualquer link antigo que
+  comece com ele, inclusive a volta do login da Meta) abre `#/configuracoes` sozinho. As
+  mensagens que mandavam para "Equipe → Meta" ou "Equipe" agora dizem "Configurações → ...".
 
 ## [1.6.1] - 2026-10-31
 

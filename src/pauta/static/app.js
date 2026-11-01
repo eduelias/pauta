@@ -83,6 +83,7 @@ const ICONS = {
   money: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>',
   sparkle: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
   chart: '<path d="M3 3v18h18"/><path d="m7 15 4-5 4 3 5-7"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -194,7 +195,7 @@ const NAV = [
   ["#/quadro", "board", "Quadro"],
   ["#/pedidos", "list", "Pedidos"],
   ["#/clientes", "clients", "Clientes"],
-  ["#/equipe", "team", "Equipe"],
+  ["#/configuracoes", "gear", "Configurações"],
 ];
 
 const FIN_NAV = ["#/financeiro", "money", "Financeiro"];
@@ -208,7 +209,7 @@ function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
-  const nav = NAV.flatMap((e) => (e[0] === "#/equipe" && finVisible() ? [FIN_NAV, e]
+  const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
     : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
@@ -218,7 +219,7 @@ function renderShell() {
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
   $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
   const top = $("#topnew");
-  top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
+  top.outerHTML = `<a href="#/configuracoes" id="topnew" aria-label="Configurações e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
@@ -241,7 +242,7 @@ function toggleMenu() {
   if (old) { old.remove(); return; }
   const m = document.createElement("div");
   m.className = "menu";
-  m.innerHTML = `<a href="#/equipe">${icon("user")}Minha conta e equipe</a>
+  m.innerHTML = `<a href="#/configuracoes">${icon("gear")}Configurações</a>
     ${ME.auth ? `<button data-act="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
     <button data-act="logout">${icon("logout")}Sair</button>` : ""}`;
   $(".side").appendChild(m);
@@ -268,7 +269,7 @@ const ROUTES = [
   [/^\/financeiro$/, viewFinance],
   [/^\/campanhas$/, viewCampaigns],
   [/^\/campanha\/(\d+)$/, viewCampaign],
-  [/^\/equipe$/, viewTeam],
+  [/^\/configuracoes$/, viewSettings],
 ];
 
 function hashParts() {
@@ -279,6 +280,12 @@ function hashParts() {
 
 async function route() {
   const { path, query } = hashParts();
+  if (path === "/equipe" || path.startsWith("/equipe/")) {
+    // the tab's name up to 1.6: bookmarks, Meta's way back and old links land on the new one
+    const q = query.toString();
+    history.replaceState(null, "", `#/configuracoes${path.slice(7)}${q ? "?" + q : ""}`);
+    return route();
+  }
   if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
   if (path.startsWith("/mudar/")) return showMove(path.slice(7));
   if (ME.auth && !ME.logged_in) return showGate();
@@ -536,7 +543,7 @@ function filesPanel(r) {
   const title = `<div class="section-title">${icon("clip")} Arquivos</div>`;
   if (!F.connected) {
     return `<div class="panel">${title}<p class="muted small">${ME.is_admin
-      ? `Conecte o OneDrive em <a href="#/equipe">Equipe</a> para anexar arquivos aos pedidos.`
+      ? `Conecte o OneDrive em <a href="#/configuracoes">Configurações → Arquivos</a> para anexar arquivos aos pedidos.`
       : "Os anexos ainda não estão ligados; um administrador conecta o OneDrive."}</p></div>`;
   }
   return `<div class="panel" id="files">
@@ -1194,7 +1201,7 @@ function bindPayBox(c, done) {
   }));
 }
 
-// Equipe → Financeiro: the team's conventions (admins)
+// Configurações → Financeiro: the team's conventions (admins)
 function financeSettingsPanel(fin) {
   const opt = (values, labels, cur) => values.map((v) => `<option value="${v}" ${v === cur ? "selected" : ""}>${labels[v]}</option>`).join("");
   return `<section class="panel mt" id="finsettings"><div class="panel-head"><h2>${icon("money")}Financeiro</h2><span class="muted small">Como o time cobra</span></div>
@@ -1403,7 +1410,7 @@ async function viewCampaigns(query) {
           : `<button class="btn ghost small" data-skip="${k.id}" data-name="${esc(k.name)}" title="Tirar da lista; a Meta não é alterada">Não acompanhar</button>`}</div>` : ""}
       </div>`).join("")}
     </div></section>`;
-  const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/equipe">Equipe → Meta</a>.` : ""}</div>`;
+  const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/configuracoes">Configurações → Meta</a>.` : ""}</div>`;
   app.innerHTML = `<div>
     <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${doc.clients.length} ${doc.clients.length === 1 ? "cliente" : "clientes"}.</p></div>
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
@@ -1572,11 +1579,13 @@ async function viewCampaign(query, id) {
 
 // ---------- team, account, settings ---------------------------------------------------------
 
-async function viewTeam(query) {
+// Configurações (up to 1.6 "Equipe"): the team, then each module's settings, admins only
+// past the team. What is about the person signed in lives on Perfil (viewProfile).
+async function viewSettings(query) {
   const members = await api("GET", "/api/members");
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
-    <div class="head"><div><h1>Equipe</h1><p>Quem usa a Pauta, convites e listas.</p></div>
+    <div class="head"><div><h1>Configurações</h1><p>O time, as integrações e as listas da Pauta.</p></div>
       ${ME.is_admin ? `<div class="actions"><button class="btn" id="export">${icon("download")}Exportar dados</button></div>` : ""}</div>
     <div class="grid2">
       <section class="panel">
@@ -1589,8 +1598,8 @@ async function viewTeam(query) {
         <div class="mt"><button class="btn" id="rename">${icon("check")}Salvar</button></div>
         <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></div>` : ""}
       </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
+      <section class="panel" id="time">
+        <div class="panel-head"><h2>${icon("team")}Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
         ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round", m.avatar)}
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
@@ -1601,23 +1610,22 @@ async function viewTeam(query) {
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
         </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
+        ${ME.is_admin && ME.auth ? `<div class="invite mt" id="invitebox"><h3>Convidar alguém</h3>
+          <p class="muted small" style="margin-top:4px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
+          <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
+            <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
+          <div id="qrbox"></div></div>` : ""}
       </section>
     </div>
-    ${ME.is_admin && ME.auth ? `<section class="panel mt">
-      <div class="panel-head"><h2>Convidar alguém</h2></div>
-      <p class="muted" style="margin-top:-6px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
-      <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
-        <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
-      <div id="qrbox"></div></section>` : ""}
-    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}OneDrive</h2><span class="muted small">Arquivos dos pedidos</span></div>
-      <div id="drivebody">${spinner()}</div></section>` : ""}
     ${ME.is_admin && BOOT.meta?.enabled ? `<section class="panel mt" id="meta"><div class="panel-head"><h2>${icon("target")}Meta</h2><span class="muted small">Números das campanhas</span></div>
       <div id="metabody">${spinner()}</div></section>` : ""}
     ${ME.is_admin ? financeSettingsPanel(BOOT.finance) : ""}
-    ${ME.is_admin ? `<section class="panel mt"><div class="panel-head"><h2>Listas</h2><span class="muted small">Um item por linha</span></div>
+    ${ME.is_admin ? `<section class="panel mt" id="lists"><div class="panel-head"><h2>${icon("list")}Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
         <textarea class="input" data-list="${k}" rows="9">${esc(o[k].join("\n"))}</textarea></div>`).join("")}</div>
       <div class="mt"><button class="btn" id="savelists">${icon("check")}Salvar listas</button></div></section>` : ""}
+    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}Arquivos</h2><span class="muted small">O OneDrive dos pedidos</span></div>
+      <div id="drivebody">${spinner()}</div></section>` : ""}
     <p class="muted small mt" id="version">Pauta ${esc(BOOT.version || "")}</p>
   </div>`;
   $("#logout")?.addEventListener("click", logout);
@@ -1626,7 +1634,7 @@ async function viewTeam(query) {
   if (ME.is_admin && BOOT.meta?.enabled) loadMeta();
   const back = query?.get("meta");  // the way back from Meta's login (/api/meta/callback)
   if (back) {
-    history.replaceState(null, "", "#/equipe");
+    history.replaceState(null, "", "#/configuracoes");
     if (back === "conectado") toast("Meta conectada");
     else toast(META_ERRORS[query.get("motivo")] || "Não foi possível conectar à Meta; tente de novo", true);
   }
@@ -1636,12 +1644,12 @@ async function viewTeam(query) {
       BOOT = await api("GET", "/api/boot");
       renderShell();
       toast("Salvo");
-      viewTeam();
+      viewSettings();
     } catch (e) { toast(e.message, true); }
   });
   $$("[data-m]").forEach((b) => b.addEventListener("click", async () => {
     const body = b.dataset.admin !== undefined ? { is_admin: b.dataset.admin === "1" } : { disabled: b.dataset.dis === "1" };
-    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
+    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewSettings(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
   $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
@@ -1873,7 +1881,7 @@ async function loadClientMeta(c) {
   catch { camps = null; }
   if (!$("#clientmeta")) return;
   if (!doc.accounts.length && !camps?.length) {
-    box.innerHTML = ME.is_admin ? card(`<p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/equipe">Vincule em Equipe → Meta.</a></p>`) : "";
+    box.innerHTML = ME.is_admin ? card(`<p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/configuracoes">Vincule em Configurações → Meta.</a></p>`) : "";
     return;
   }
   const line = (label, value) => `<div class="row"><span class="grow muted">${label}</span><b>${value}</b></div>`;

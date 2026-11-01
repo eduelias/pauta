@@ -1,5 +1,5 @@
 """A new or lost phone with one address (no move in progress): an admin makes a one-time
-link on Equipe, the person opens it on the new phone and is in, on the same account."""
+link on Configurações, the person opens it on the new phone and is in, on the same account."""
 
 import pytest
 from playwright.sync_api import expect
@@ -22,7 +22,7 @@ def test_an_admin_sends_a_new_passkey_link(live, device):
     admin = join(device, base, auth, "Edu Saleh", admin=True)
     join(device, base, auth, "Piero Sales")
 
-    admin.page.goto(f"{base}/#/equipe")
+    admin.page.goto(f"{base}/#/configuracoes")
     row = admin.page.locator(".member", has_text="Piero Sales")
     expect(row.get_by_role("button", name="Link para mudar")).to_have_count(0)
     row.get_by_role("button", name="Link de nova passkey").click()
@@ -60,7 +60,7 @@ def test_no_link_for_yourself_or_disabled_people(live, device):
     nato = next(m for m in store.members() if m["name"] == "Nato Lima")
     auth.set_member(nato["id"], disabled=True, by=None)
 
-    admin.page.goto(f"{base}/#/equipe")
+    admin.page.goto(f"{base}/#/configuracoes")
     me = admin.page.locator(".member", has_text="Edu Saleh").last
     expect(me.get_by_role("button", name="Link de nova passkey")).to_have_count(0)
     off = admin.page.locator(".member", has_text="Nato Lima")

@@ -53,7 +53,9 @@ class DriveError(Exception):
         self.status = status
 
 
-NOT_CONNECTED = "o OneDrive não está conectado; um administrador conecta em Equipe"
+NOT_CONNECTED = (
+    "o OneDrive não está conectado; um administrador conecta em Configurações → Arquivos"
+)
 UNAVAILABLE = "o OneDrive não respondeu; tente de novo"
 
 
@@ -311,7 +313,7 @@ class OneDrive:
         obs.event("onedrive_disconnected")
 
     def status(self, quota: bool = False) -> dict:
-        """For the Equipe page, /metrics and the CLI. Only `quota` calls Graph."""
+        """For the Configurações page, /metrics and the CLI. Only `quota` calls Graph."""
         saved = self._saved() if self.enabled else None
         out = {
             "enabled": self.enabled,

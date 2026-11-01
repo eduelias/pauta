@@ -19,7 +19,7 @@ SCREENS = {
     "#/cliente/1": "Clínica Bem Estar",
     "#/cliente/novo": "Novo cliente",
     "#/financeiro": "Financeiro",
-    "#/equipe": "Equipe",
+    "#/configuracoes": "Configurações",
 }
 
 
@@ -64,7 +64,7 @@ def test_every_screen(signed_in, layout):
 def test_gravatar_shows_over_the_initials(signed_in):
     base, open_device = signed_in
     page = open_device().page
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     img = page.locator("#mechip .avatar img")
     expect(img).to_have_attribute(
         "src", re.compile(r"^https://gravatar\.com/avatar/[0-9a-f]{64}\?")

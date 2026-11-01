@@ -2,7 +2,7 @@
 prints its dates (Ads Manager's "Últimos 30 dias" by default), the per-client list after a
 sync with Ads Manager's columns (Resultados with the objective's label, Custo por resultado,
 Valor gasto, Impressões, Alcance, Orçamento) and "ativa desde", Não acompanhar / ver
-ignoradas, Visto hoje, the campaign page with its cards and SVG charts, Equipe → Meta
+ignoradas, Visto hoje, the campaign page with its cards and SVG charts, Configurações → Meta
 without the monthly totals, and the client card listing campaigns.
 
 The browsers here live in São Paulo (`timezone_id`), like Piero's phone and the fixture ad
@@ -69,7 +69,7 @@ def synced(live, device, meta):
     laptop = device(timezone_id=TZ)
     page = laptop.page
     join(page, base, token, "Renato Lima")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     expect(page.locator("#metaaccounts tbody tr")).to_have_count(2)  # the read linked them
@@ -346,10 +346,10 @@ def test_campaign_page_cards_charts_and_remembered_chips(synced):
     expect(page.locator(".mcard[data-card='cpr'] .mval")).to_have_text("—")
 
 
-def test_equipe_meta_and_the_client_card(synced):
+def test_configuracoes_meta_and_the_client_card(synced):
     base, store, laptop, clinic, bakery = synced
     page = laptop.page
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     table = page.locator("#metaaccounts")
     expect(table.locator("thead th")).to_have_text(["Conta", "Cliente", "Saldo"])
     expect(page.locator("#meta")).not_to_contain_text("Investido este mês")
@@ -382,7 +382,7 @@ def test_balance_refused_says_what_to_do(synced, fake_meta):
     base, store, laptop, clinic, bakery = synced
     page = laptop.page
     fake_meta.refuse_balance = True
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Atualizar").click()
     cell = page.locator("#metaaccounts tbody tr").first.locator("td").nth(2).locator("span")
     expect(cell).to_have_text("sem permissão · reconecte em Adicionar contas")
@@ -402,7 +402,7 @@ def test_phone_tab_and_tiles(live, device, meta):
     expect(page.locator("#tabbar a")).to_have_count(5)  # Campanhas took the fourth slot
     expect(page.locator("#tabbar a[data-nav='#/quadro']")).to_have_count(0)
     expect(page.locator("#tabbar a[data-nav='#/financeiro']")).to_have_count(0)
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     expect(page.locator("#metaaccounts tbody tr")).to_have_count(2)

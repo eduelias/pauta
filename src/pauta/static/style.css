@@ -532,7 +532,7 @@ aside .kv { grid-template-columns: 88px 1fr; }
   padding: 8px 12px; font-size: 14px; }
 /* the Meta card's ad accounts: a plain table that scrolls sideways on a phone */
 .scrollx { overflow-x: auto; margin-top: 10px; }
-/* Equipe → Meta: one block per connected portfolio, and the short history under the table */
+/* Configurações → Meta: one block per connected portfolio, and the short history under the table */
 .row-gap .grow { flex: 1 1 240px; min-width: 0; }
 .member.conn .who .warnline { display: block; color: var(--danger); font-size: 13px; margin-top: 2px; }
 .metalog { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }

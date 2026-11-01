@@ -1,4 +1,4 @@
-"""The Meta card on Equipe in a real browser: the full trip to Meta's login (the fake one in
+"""The Meta card on Configurações in a real browser: the full trip to Meta's login (the fake one in
 tests/fakemeta.py) and back without the session cookie, one block per connected portfolio,
 the ad accounts table labelled by portfolio, and the history."""
 
@@ -30,13 +30,13 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     expect(page.locator("#mechip")).to_contain_text("Renato Lima")
 
     # not connected: one line and the button
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     card = page.locator("#meta")
     expect(card).to_contain_text("A Pauta só lê")
     # to facebook.com (the fake) and back: the callback has no cookie, the app still knows us
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
-    expect(page).to_have_url(re.compile(r"#/equipe$"))
+    expect(page).to_have_url(re.compile(r"#/configuracoes$"))
     block = card.locator(f"[data-conn='{BUSINESS}']")
     expect(block).to_contain_text("Portfólio Agência Exemplo")
     expect(block).to_contain_text(
@@ -67,11 +67,11 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     expect(page.locator("#toast")).to_have_text("Portfólio desconectado")
     expect(card.get_by_role("button", name="Conectar Meta")).to_be_visible()
 
-    # cancelled in Meta's dialog: back to Equipe with an error, nothing connected
+    # cancelled in Meta's dialog: back to Configurações with an error, nothing connected
     fake_meta.deny = True
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("A conexão foi cancelada na Meta")
-    expect(page).to_have_url(re.compile(r"#/equipe$"))
+    expect(page).to_have_url(re.compile(r"#/configuracoes$"))
     expect(page.locator("#meta").get_by_role("button", name="Conectar Meta")).to_be_visible()
 
 
@@ -86,7 +86,7 @@ def test_adding_a_new_clients_account(live, device, fake_meta):
     page.fill("#join input[name=name]", "Piero Sales")
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Piero")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     card = page.locator("#meta")
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
@@ -110,7 +110,7 @@ def test_hidden_without_the_secret(live, device, meta):
     page.fill("#join input[name=name]", "Renato Lima")
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Renato Lima")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     expect(page.locator("#drive")).to_be_visible()
     expect(page.locator("#meta")).to_have_count(0)
 
@@ -129,7 +129,7 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     page.fill("#join input[name=name]", "Piero Sales")
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Piero")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
 
@@ -165,7 +165,7 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
 
     # unticked in Meta: the row stays, says so, and can still be unlinked
     fake_meta.accounts = fake_meta.accounts[:1]
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Atualizar").click()
     stale = page.locator("#metaaccounts tbody tr.stale")
     expect(stale).to_have_count(1)
@@ -176,12 +176,12 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     expect(page.locator("#metaaccounts tbody tr.stale select")).to_have_value("")
     assert store.client(bakery["id"])["ad_account"] == "act_222"
 
-    # the bakery's page, as an admin with nothing linked: a pointer to Equipe
+    # the bakery's page, as an admin with nothing linked: a pointer to Configurações
     page.goto(f"{base}/#/cliente/{bakery['id']}")
     expect(page.locator("#clientmeta")).to_contain_text("Nenhuma conta da Meta vinculada")
     expect(
-        page.locator("#clientmeta").get_by_role("link", name="Vincule em Equipe → Meta.")
-    ).to_have_attribute("href", "#/equipe")
+        page.locator("#clientmeta").get_by_role("link", name="Vincule em Configurações → Meta.")
+    ).to_have_attribute("href", "#/configuracoes")
 
 
 def test_an_account_without_numbers_and_an_odd_currency(live, device, fake_meta):
@@ -197,7 +197,7 @@ def test_an_account_without_numbers_and_an_odd_currency(live, device, fake_meta)
     page.fill("#join input[name=name]", "Renato Lima")
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Renato Lima")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     rows = page.locator("#metaaccounts tbody tr")
@@ -234,7 +234,7 @@ def test_member_sees_the_card_but_no_pointer(live, device, fake_meta):
     admin.fill("#join input[name=name]", "Renato")
     admin.get_by_role("button", name="Criar passkey e entrar").click()
     expect(admin.locator("#mechip")).to_contain_text("Renato")
-    admin.goto(f"{base}/#/equipe")
+    admin.goto(f"{base}/#/configuracoes")
     admin.locator("#meta").get_by_role("button", name="Conectar Meta").click()
     expect(admin.locator("#toast")).to_have_text("Meta conectada")
 
@@ -279,7 +279,7 @@ def test_two_portfolios_each_with_its_block(live, device, fake_meta):
     page.fill("#join input[name=name]", "Piero Sales")
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Piero")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     card = page.locator("#meta")
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
