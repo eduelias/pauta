@@ -43,7 +43,9 @@ jobs:
       - name: Deploy scripts (shellcheck)
         run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
       - name: Workflows (actionlint)
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+        # the PyPI wheel of the same release: the rhysd/actionlint action builds it from
+        # source on every run (37 s of the job's 50)
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
 
   test:
     name: Tests (Python ${{ matrix.python }})
@@ -60,10 +62,14 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Unit and API tests, with coverage
+      - name: Unit and API tests, with coverage (du7's Python)
+        if: matrix.python == '3.11'
         run: >-
           uv run --extra dev pytest -n auto --cov --cov-report=term --cov-report=xml
           --junitxml=test-results/junit.xml
+      - name: Unit and API tests
+        if: matrix.python != '3.11'
+        run: uv run --extra dev pytest -n auto --junitxml=test-results/junit.xml
       - name: Coverage summary
         if: always() && matrix.python == '3.11'
         run: |
@@ -92,7 +98,17 @@ jobs:
         with:
           python-version: "3.11"
           enable-cache: true
+      - name: Playwright version (the browser cache key)
+        id: pw
+        run: echo "version=$(uv run --extra dev --extra e2e playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - name: Chromium from the cache
+        id: chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
       - name: Install Chromium
+        if: steps.chromium.outputs.cache-hit != 'true'
         run: uv run --extra dev --extra e2e playwright install --with-deps chromium
       - name: Journeys and screens in Chromium (virtual passkeys)
         run: uv run --extra dev --extra e2e pytest -m e2e -n auto --junitxml=test-results/e2e.xml
