@@ -4,6 +4,7 @@ Não acompanhar / Acompanhar, the admin's "Atualizar agora" and its 15-minute li
 /metrics and the export."""
 
 import json
+import time
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -12,7 +13,8 @@ from test_meta_api import connected
 from fakemeta import BUSINESS, CONVERSATIONS, EMPTY_ACCOUNT, TZ, expected
 from pauta import meta as meta_mod
 from pauta import server as server_mod
-from pauta.meta import NOT_CONNECTED, local_today
+from pauta import sync
+from pauta.meta import NOT_CONNECTED, THROTTLED, local_today
 from softpasskey import call
 
 
@@ -30,6 +32,28 @@ def meta(meta_on):
     return meta_on
 
 
+def wait_sync(base, timeout=15.0) -> dict:
+    """The /metrics `meta` block once the pass Atualizar agora started has ended."""
+    deadline = time.time() + timeout
+    while True:
+        m = call(f"{base}/metrics")[1]["meta"]
+        if not m["syncing"]:
+            return m
+        assert time.time() < deadline, "the sync never ended"
+        time.sleep(0.02)
+
+
+def sync_now(base, cookie) -> dict:
+    """Atualizar agora: 202 with the previous `last_sync`, then the pass runs on the
+    server's thread; returns /metrics' `meta` block after it ended."""
+    before = call(f"{base}/metrics")[1]["meta"]["last_sync"]
+    status, out, _ = call(f"{base}/api/meta/sync", {}, cookie)
+    assert status == 202 and out == {"started": True, "last_sync": before}, (status, out)
+    after = wait_sync(base)
+    assert after["last_sync"] and after["last_sync"].endswith("Z")
+    return after
+
+
 def synced(team, fake_meta):
     """Connected, both accounts linked to clients, one sync done (today's real date)."""
     base, nato, piero = connected(team, fake_meta)
@@ -38,14 +62,12 @@ def synced(team, fake_meta):
     call(f"{base}/api/meta", cookie=nato)  # reads the accounts into meta_account
     call(f"{base}/api/meta/accounts/111", {"client": clinic["id"]}, nato, method="PATCH")
     call(f"{base}/api/meta/accounts/222", {"client": bakery["id"]}, nato, method="PATCH")
-    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
-    assert status == 200, out
-    return base, nato, piero, out
+    return base, nato, piero, sync_now(base, nato)
 
 
 def test_sync_then_the_list(team, fake_meta):
-    base, nato, piero, out = synced(team, fake_meta)
-    assert out["accounts"] == 2 and out["campaigns_new"] == 3 and out["errors"] == []
+    base, nato, piero, m = synced(team, fake_meta)
+    assert m["sync_error"] == "" and not m["syncing"]
     today = today_in_sao_paulo()
     since, until = last_30_days(today)
     status, doc, _ = call(f"{base}/api/campaigns", cookie=piero)
@@ -53,7 +75,8 @@ def test_sync_then_the_list(team, fake_meta):
     # Ads Manager's default: the last 30 days, yesterday back, today out
     assert doc["since"] == since.isoformat() and doc["until"] == until.isoformat()
     assert doc["today_included"] is False
-    assert doc["last_sync"].endswith("Z")  # how fresh the stored numbers are
+    assert doc["last_sync"] == m["last_sync"]  # how fresh the stored numbers are
+    assert doc["sync_error"] == "" and doc["syncing"] is False
     assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Padaria Trigo de Ouro"]
     k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
     assert set(k) == {"23850001", "23850002", "23850004"}
@@ -247,8 +270,7 @@ def test_a_client_with_linked_accounts_and_no_campaigns_is_listed(team, fake_met
     call(f"{base}/api/meta", cookie=nato)
     call(f"{base}/api/meta/accounts/111", {"client": clinic["id"]}, nato, method="PATCH")
     call(f"{base}/api/meta/accounts/555", {"client": studio["id"]}, nato, method="PATCH")
-    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
-    assert status == 200 and out["errors"] == [] and out["campaigns_new"] == 2, out
+    assert sync_now(base, nato)["sync_error"] == ""
     status, doc, _ = call(f"{base}/api/campaigns", cookie=piero)
     assert status == 200
     assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Estúdio Pilates Leve"]
@@ -370,17 +392,50 @@ def test_today_is_the_ad_accounts_day(team, fake_meta, monkeypatch):
 def test_manual_sync_is_for_admins_once_in_15_minutes(team, fake_meta, monkeypatch):
     base, nato, piero = connected(team, fake_meta)
     assert call(f"{base}/api/meta/sync", {}, piero)[0] == 403
-    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
-    assert status == 200 and out["accounts"] == 0  # nothing linked yet: nothing to read
+    assert call(f"{base}/metrics")[1]["meta"]["last_sync"] is None
+    m = sync_now(base, nato)  # nothing linked yet: nothing to read, still a pass
+    assert m["sync_error"] == ""
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 429 and out["error"] == server_mod.SYNC_TOO_SOON
     assert 0 < out["retry_in_s"] <= 900
     monkeypatch.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
-    assert call(f"{base}/api/meta/sync", {}, nato)[0] == 200
+    assert call(f"{base}/api/meta/sync", {}, nato)[0] == 202
+    wait_sync(base)
     status, out, _ = call(f"{base}/api/meta/connections/{BUSINESS}", cookie=nato, method="DELETE")
     assert status == 200 and not out["connected"]
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 409 and out["error"] == NOT_CONNECTED
+
+
+def test_manual_sync_answers_at_once_and_refuses_a_second_while_it_runs(
+    team, fake_meta, monkeypatch
+):
+    """Atualizar agora doesn't hold a server slot for the whole pass: 202 right away with
+    the previous `last_sync`, `syncing` on while the thread works, 409 "já está
+    sincronizando" to a second tap (or the scheduler) meanwhile, and `last_sync` moved
+    once it ended. The 15-minute limit counts from the pass that started, not the 409."""
+    base, nato, piero, m = synced(team, fake_meta)
+    monkeypatch.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
+    fake_meta.slow = 0.1  # ~10 Graph reads: the pass takes about a second
+    time.sleep(1.1)  # `last_sync` has whole seconds: make sure the next one differs
+    before = m["last_sync"]
+    t0 = time.time()
+    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
+    assert status == 202 and out == {"started": True, "last_sync": before}
+    assert time.time() - t0 < 0.5  # it didn't wait for the pass
+    assert call(f"{base}/metrics")[1]["meta"]["syncing"] is True
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["syncing"] is True and doc["last_sync"] == before  # the UI polls this
+    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
+    assert status == 409 and out["error"] == sync.BUSY and "já está sincronizando" in sync.BUSY
+    after = wait_sync(base)
+    assert after["last_sync"] != before and after["sync_error"] == ""
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["syncing"] is False and doc["last_sync"] == after["last_sync"]
+    # the busy answer didn't eat the next manual sync
+    fake_meta.slow = 0
+    assert call(f"{base}/api/meta/sync", {}, nato)[0] == 202
+    wait_sync(base)
 
 
 def test_metrics_and_export_carry_the_sync(team, fake_meta):
@@ -390,13 +445,13 @@ def test_metrics_and_export_carry_the_sync(team, fake_meta):
     doc = call(f"{base}/api/export", cookie=nato)[1]
     assert len(doc["campaign"]) == 3 and doc["review"] == []
     assert len(doc["insight"]) > 0 and isinstance(doc["insight"][0]["actions"], dict)
-    # a sync with trouble shows on /metrics
+    # a sync with trouble shows on /metrics and on the list (the UI's toast says it)
     fake_meta.throttle = True
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
-        status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
-    assert status == 200 and out["errors"][0]["status"] == 503
-    assert call(f"{base}/metrics")[1]["meta"]["sync_error"] == out["errors"][0]["error"]
+        m = sync_now(base, nato)
+    assert m["sync_error"] == THROTTLED
+    assert call(f"{base}/api/campaigns", cookie=nato)[1]["sync_error"] == THROTTLED
 
 
 def test_the_last_sync_outlives_a_restart(site, team, fake_meta):

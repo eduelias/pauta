@@ -97,6 +97,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Fixed
 
+- **Atualizar agora** (Campanhas) responde na hora e sincroniza em segundo plano: a página
+  mostra "Sincronizando com a Meta…", acompanha a linha "Dados da Meta de…" e avisa quando
+  terminou (ou o problema que a passagem encontrou). Só uma sincronização roda por vez: um
+  segundo toque, ou a passagem automática de hora em hora chegando no meio, recebe "a Meta
+  já está sincronizando" em vez de ler a Meta duas vezes (a automática tenta de novo no
+  minuto seguinte). API: `POST /api/meta/sync` passa a responder **202**
+  `{"started": true, "last_sync": <anterior>}` e **409** enquanto uma passagem roda;
+  `GET /api/campaigns` e `/metrics` trazem `sync_error` e `syncing`.
 - Campanhas lista todo cliente com conta vinculada, mesmo sem campanha ativa (sumia como se
   a conexão tivesse falhado), e mostra o Saldo da conta em cada bloco; `GET /api/campaigns`
   traz `accounts` por cliente e `campaigns: []` para esses.

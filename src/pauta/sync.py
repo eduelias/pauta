@@ -16,6 +16,12 @@ yesterday, and nightly after 03:10 over the last 28 days (conversions keep arriv
 to 28 days after a click). "Today" is each ad account's own day (`timezone_name` from
 Meta, `meta.local_today`), not the server's: du7 runs on CET, and in the evening in Brazil
 a server-local today is already tomorrow. `pauta meta sync` runs one pass from the shell.
+
+One pass at a time: `run` takes a module lock without waiting and a second caller (the
+scheduler's tick while "Atualizar agora" runs, or the other way round) gets `BUSY` (409)
+instead of doubling every Graph read. `start` is the manual route's way in: it takes the
+lock and runs the pass on a daemon thread, so the request answers at once and the UI polls
+`last_sync` for the end.
 """
 
 from __future__ import annotations
@@ -34,8 +40,17 @@ HOURLY_DAYS = 2
 NIGHTLY_DAYS = 28
 HOURLY_MINUTES = 60
 NIGHTLY_AFTER = dtime(3, 10)
+SYNC_FAILED = "a sincronização falhou; veja o log"
 FIRST_RUN_SECONDS = 60
 TICK_SECONDS = 60
+BUSY = "a Meta já está sincronizando; espere essa passagem terminar"
+
+_lock = threading.Lock()  # one pass at a time, whoever asks
+
+
+def running() -> bool:
+    """A pass is under way (the lock is held)."""
+    return _lock.locked()
 
 
 def _stamp() -> str:
@@ -50,7 +65,38 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
     `last_sync` is written; `meta.last_sync`/`sync_error` sum the pass up for /metrics.
     The window is the last `days` days up to `today`, which is each account's own day
     (its time zone) unless given. Raises MetaError when nothing is connected at all
-    (nothing to sync)."""
+    (nothing to sync), or `BUSY` (409) when another pass is still running."""
+    if not _lock.acquire(blocking=False):
+        raise MetaError(BUSY, 409, "busy")
+    try:
+        return _run(store, meta, days=days, today=today)
+    finally:
+        _lock.release()
+
+
+def start(store: Store, meta: Meta, *, days: int) -> threading.Thread:
+    """`run` on a daemon thread, for "Atualizar agora": the lock is taken here, so by the
+    time this returns a second caller already gets `BUSY`; the thread releases it when the
+    pass ends. Raises `BUSY` (409) when a pass is under way. Whatever the pass meets is
+    logged and shown as `meta.sync_error`, as the scheduler does: no thread dies loudly."""
+    if not _lock.acquire(blocking=False):
+        raise MetaError(BUSY, 409, "busy")
+
+    def work():
+        try:
+            _run(store, meta, days=days)
+        except Exception as e:  # noqa: BLE001 - the thread must outlive any surprise
+            meta.sync_error = str(e) if isinstance(e, MetaError) else SYNC_FAILED
+            obs.event("meta_sync_failed", logging.ERROR, error=type(e).__name__)
+        finally:
+            _lock.release()
+
+    thread = threading.Thread(target=work, name="meta-sync-now", daemon=True)
+    thread.start()
+    return thread
+
+
+def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> dict:
     conns = [c for c in meta.connections() if c["business_id"] != LEGACY]
     if not conns:
         raise MetaError(NOT_CONNECTED, 409)
@@ -188,12 +234,18 @@ class Scheduler:
         if not what or not self.meta.connected:
             return None
         days = NIGHTLY_DAYS if "nightly" in what else HOURLY_DAYS
+        before = self.last_hourly, self.last_nightly
         self.last_hourly = now
         if "nightly" in what:
             self.last_nightly = now
         try:
             return run(self.store, self.meta, days=days)
         except Exception as e:  # noqa: BLE001 - the thread must outlive any surprise
-            self.meta.sync_error = "a sincronização falhou; veja o log"
+            if isinstance(e, MetaError) and e.reason == "busy":
+                # Atualizar agora is on it: this pass is due again at the next tick
+                self.last_hourly, self.last_nightly = before
+                obs.event("meta_sync_busy")
+                return None
+            self.meta.sync_error = SYNC_FAILED
             obs.event("meta_sync_failed", logging.ERROR, error=type(e).__name__)
             return None

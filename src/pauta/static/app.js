@@ -1303,6 +1303,22 @@ function bindPeriod(st, onChange) {
   $("#puntil").addEventListener("change", custom);
 }
 const syncLine = (last) => last ? `Dados da Meta de ${esc(ago(last))}` : "A Meta ainda não foi lida; os números chegam na primeira sincronização.";
+const SYNC_POLL_MS = 3000, SYNC_POLL_MAX = 40; // every 3 s for up to ~2 min
+async function waitForSync(previous, since, until) {
+  // After Atualizar agora: GET /api/campaigns until the pass ends (`syncing` off, or a
+  // newer `last_sync`); the "Dados da Meta" line follows. null when it is still running
+  // after the last poll, or when the person has left the screen.
+  for (let i = 0; i < SYNC_POLL_MAX; i++) {
+    await new Promise((r) => setTimeout(r, i ? SYNC_POLL_MS : 1000));
+    if (!document.contains($("#syncline"))) return null;
+    const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}`);
+    if (!doc.syncing || doc.last_sync !== previous) {
+      $("#syncline").textContent = syncLine(doc.last_sync);
+      return doc;
+    }
+  }
+  return null;
+}
 
 // Ativa / Encerrada em dd/mm / Pausada / Ignorada, Meta's own status on hover
 function stateTag(k) {
@@ -1427,18 +1443,24 @@ async function viewCampaigns(query) {
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
-    <p class="synced" id="synced"><span class="muted small">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
+    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
   bindPeriod(st, redraw);
   $("#showskipped")?.addEventListener("change", (e) => { campState.skipped = e.target.checked; redraw(); });
   $("#syncnow")?.addEventListener("click", async (e) => {
+    // the server answers 202 at once and syncs on its own thread (409 while one runs):
+    // poll the list until the pass ends, keeping the "Dados da Meta" line honest meanwhile
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
       const out = await api("POST", "/api/meta/sync", {});
-      toast(`${out.accounts} ${out.accounts === 1 ? "conta lida" : "contas lidas"}, ${out.campaigns_new} ${out.campaigns_new === 1 ? "campanha nova" : "campanhas novas"}, ${out.insight_rows} ${out.insight_rows === 1 ? "dia atualizado" : "dias atualizados"}${out.errors?.length ? ` · ${out.errors.length} com erro` : ""}`, Boolean(out.errors?.length));
+      const line = $("#syncline");
+      if (line) line.textContent = out.last_sync ? `Sincronizando com a Meta… (dados de ${ago(out.last_sync)})` : "Sincronizando com a Meta…";
+      const done = await waitForSync(out.last_sync, since, until);
+      if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
+      toast(done.sync_error ? `Sincronização com problema: ${done.sync_error}` : "Dados da Meta atualizados", Boolean(done.sync_error));
       redraw();
     } catch (err) { toast(err.message, true); btn.disabled = false; }
   });

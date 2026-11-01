@@ -35,6 +35,7 @@ import hmac
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import date, timedelta
@@ -284,6 +285,7 @@ class FakeMeta:
         self.fail_campaigns: set[str] = set()  # account ids whose campaign list answers 400
         self.throttle = False  # every read answers code 4 (too many calls)
         self.down = False  # Meta answers 500
+        self.slow = 0.0  # seconds every Graph answer waits (a pass that takes a while)
         self.deny = False  # the person cancels in the dialog
         self.exchanges = 0
         self.seen: list[str] = []  # Graph paths asked for, with the token (batch items too)
@@ -366,6 +368,8 @@ class FakeMeta:
             return h._send(404, oauth_error(803))
         path = path[len("/v26.0") :]
         self.calls.append(f"{method} {path}")
+        if self.slow:
+            time.sleep(self.slow)
         if self.down:
             return h._send(500, oauth_error(2, "Service temporarily unavailable"))
         if path == "/oauth/access_token":

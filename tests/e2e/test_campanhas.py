@@ -234,9 +234,12 @@ def test_skip_follow_again_and_sync_now(synced):
     expect(page.locator("#toast")).to_contain_text("de volta à lista")
     expect(page.locator(".krow.skipped")).to_have_count(0)
     expect(page.locator(".krow[data-id]")).to_have_count(3)
-    # Atualizar agora: the sync's summary in a toast; a second tap hits the 15-minute limit
+    # Atualizar agora: the server answers at once and syncs on its thread; the page polls
+    # until it ends and says so in a toast, the "Dados da Meta" line following; a second
+    # tap hits the 15-minute limit
     page.get_by_role("button", name="Atualizar agora").click()
-    expect(page.locator("#toast")).to_contain_text("2 contas lidas")
+    expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
+    expect(page.locator("#syncline")).to_have_text("Dados da Meta de agora")
     laptop.expected.add((429, "/api/meta/sync"))
     page.get_by_role("button", name="Atualizar agora").click()
     expect(page.locator("#toast")).to_contain_text("menos de 15 minutos")

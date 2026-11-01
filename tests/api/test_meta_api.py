@@ -163,6 +163,7 @@ def test_revoked_token_is_reported_on_its_connection(team, fake_meta):
         "error": REVOKED,
         "last_sync": None,
         "sync_error": "",
+        "syncing": False,
     }
     kinds = [e["kind"] for e in call(f"{base}/api/meta/log", cookie=nato)[1]]
     assert kinds == ["revoked", "connected"]
@@ -184,6 +185,7 @@ def test_metrics(team, fake_meta):
         "error": "",
         "last_sync": None,
         "sync_error": "",
+        "syncing": False,
     }
     through_meta(base, start(base, nato))
     fake_meta.business = OTHER_BUSINESS

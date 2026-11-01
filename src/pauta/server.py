@@ -428,6 +428,7 @@ def make_handler(
                 "error": next((c["error"] for c in conns if c["error"]), ""),
                 "last_sync": meta.last_sync,
                 "sync_error": meta.sync_error,
+                "syncing": sync.running(),
             }
 
         def do_GET(self):  # noqa: N802
@@ -721,7 +722,9 @@ def make_handler(
             `accounts` is the client's linked ad accounts with the balance from Meta's
             cached list (null when Meta won't say). `include_skipped=1` adds the campaigns
             marked Não acompanhar (so an admin can bring one back); `client=<id>` keeps one
-            client's. `last_sync` says how fresh the stored numbers are. `seen` counts the
+            client's. `last_sync` says how fresh the stored numbers are, `sync_error` what
+            the last pass ran into ("" when it went well) and `syncing` whether a pass is
+            under way (Atualizar agora polls this until it ends). `seen` counts the
             clients with campaigns only: Visto hoje needs an active one."""
             since, until, today = self._period()
             q = parse_qs(urlparse(self.path).query)
@@ -772,6 +775,8 @@ def make_handler(
                 "until": until,
                 "today_included": until >= today,
                 "last_sync": meta.last_sync,
+                "sync_error": meta.sync_error,
+                "syncing": sync.running(),
                 # the daily check: how many of the clients with something to check someone
                 # has been through today
                 "seen": {
@@ -867,16 +872,22 @@ def make_handler(
 
         @route("POST", "/api/meta/sync", "admin")
         def meta_sync(self, viewer, _body):
-            """Atualizar agora: the hourly pass, at most once every 15 minutes."""
+            """Atualizar agora: the hourly pass on its own thread, at most once every 15
+            minutes. Answers 202 `{started, last_sync}` at once (`last_sync` is the one
+            before: the UI polls GET /api/campaigns until it moves) instead of holding a
+            server slot for the tens of seconds a pass takes; 409 while a pass (this one's
+            or the scheduler's) is still running."""
             if not meta.connected:
                 raise MetaError(NOT_CONNECTED, 409)
             with manual_lock:
                 wait = manual_sync["at"] + MANUAL_SYNC_SECONDS - time.time()
                 if wait > 0:
                     raise Reply(429, {"error": SYNC_TOO_SOON, "retry_in_s": round(wait)})
+                previous = meta.last_sync
+                sync.start(store, meta, days=sync.HOURLY_DAYS)  # 409 when one is running
                 manual_sync["at"] = time.time()
             obs.event("meta_sync_requested", account=viewer["account"])
-            return sync.run(store, meta, days=sync.HOURLY_DAYS)
+            raise Reply(202, {"started": True, "last_sync": previous})
 
         # ---- finance (decision 7) ---------------------------------------------------------
 
