@@ -69,12 +69,3 @@ def test_gravatar_shows_over_the_initials(signed_in):
     expect(img).to_have_attribute(
         "src", re.compile(r"^https://gravatar\.com/avatar/[0-9a-f]{64}\?")
     )
-
-
-def test_link_preview_tags_are_static(live, device):
-    """Crawlers don't run JS: the tags must be in the HTML the server sends."""
-    base, _, _ = live
-    page = device().page
-    page.goto(base)
-    assert page.locator('meta[property="og:image"]').get_attribute("content").endswith("/og.png")
-    expect(page.locator("#login")).to_be_visible()

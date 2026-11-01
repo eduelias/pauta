@@ -5,6 +5,8 @@ that answers navigator.credentials.create/get like Face ID would, user verificat
 all, so the real login and join screens run end to end.
 """
 
+import contextlib
+import os
 import re
 from pathlib import Path
 
@@ -13,6 +15,9 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 TRACES = Path("test-results/traces")  # CI uploads these when a browser test fails
+# a full trace (a screenshot and DOM snapshot per action) costs about a tenth of the suite:
+# CI records one, the Mac keeps a screenshot of the failing page instead (PAUTA_TRACE=1 for a trace)
+TRACE = bool(os.environ.get("CI") or os.environ.get("PAUTA_TRACE"))
 
 from appserver import serve  # noqa: E402
 from pauta.auth import Auth  # noqa: E402
@@ -55,7 +60,8 @@ class Device:
 
     def __init__(self, browser, **context_args):
         self.context = browser.new_context(locale="pt-BR", **context_args)
-        self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        if TRACE:
+            self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
         self.context.route("https://gravatar.com/**", lambda r: r.fulfill(body=PNG))
         self.page = self.context.new_page()
         self.errors: list[str] = []
@@ -98,7 +104,14 @@ class Device:
         ]
 
     def close(self, trace_to: Path | None = None):
-        self.context.tracing.stop(path=trace_to)
+        """Closes the context; on a failure keeps the trace (or, without one, a screenshot)."""
+        if TRACE:
+            self.context.tracing.stop(path=trace_to)
+        elif trace_to:
+            trace_to.parent.mkdir(parents=True, exist_ok=True)
+            for i, page in enumerate(self.context.pages):
+                with contextlib.suppress(pw.Error):
+                    page.screenshot(path=trace_to.with_suffix(f".{i}.png"), full_page=True)
         self.context.close()
 
 
