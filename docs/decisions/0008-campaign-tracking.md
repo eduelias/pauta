@@ -305,6 +305,13 @@ token file migrated on restart to `pauta.db.meta-token.1000000000000016`, `meta_
 holds Delta's portfolio (connected by Piero), Equipe → Meta shows the portfolio blocks and
 the Histórico. The Ads Manager parity work (Period and Resultados rows above) follows.
 
+Ads Manager parity (`1aa73f5`) is on acc.pauta.cc as `1.6.2.dev10`, schema 11. Checked
+against Piero's Ads Manager for 2–31 Oct, campaign by campaign: Site R$ 33,80 · 5.534
+impressões · Resultados "—" (Conteúdo de visualização, no pixel events) · Orçamento
+R$ 15,00 diário; WhatsApp R$ 34,33 · 1.471 · 4 Conversas por mensagem iniciadas · R$ 8,58 ·
+R$ 15,00 diário. Same numbers, same words. By then Piero had connected a second portfolio
+("Casal Exemplo"); it sits next to Delta's as its own connection.
+
 ### More than one ad account (Piero, 2026-10-31)
 
 Piero's next remark: "só tá aceitando uma conta"; the ideal is to connect each new client's
