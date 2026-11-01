@@ -13,5 +13,6 @@ both files.
 | [5](0005-other-teams.md) | Other teams: a control DB plus one SQLite file per team, team in the URL, invite-only beta, off du7 before the first outside team | Proposed |
 | [6](0006-subscriptions.md) | Subscriptions sold by Du7 Technology Services through Paddle (Pix, Pix Automático, card); the Brazilian ME with Asaas as fallback | Proposed |
 | [7](0007-financeiro.md) | Financeiro: a receivables ledger per client, with the team's conventions as settings | Proposed (this PR) |
+| [8](0008-campaign-tracking.md) | Acompanhamento: a daily check of every live campaign (manual), then its numbers from Meta | Proposed; phases 1–2 built on acceptance (PR 19) |
 | [9](0009-branch-deploys-to-acceptance.md) | Any branch on acceptance, by hand, by the owner, as its own user (amends 1) | Proposed |
 | [11](0011-analytics.md) | Analytics: a first-party usage log inside the app, Plausible (cloud, EU) on the public site; no session replay | Proposed |
