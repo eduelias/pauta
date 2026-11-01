@@ -300,6 +300,11 @@ rows, the campaign page with metric chips and SVG daily charts, Equipe → Meta 
 accounts and mapping, and the balance line saying "sem permissão · reconecte em Adicionar
 contas". acc.pauta.cc runs it as `1.6.2.dev8`; Piero's test cycle starts there.
 
+One connection per portfolio (`ce909ce`) is on acc.pauta.cc as `1.6.2.dev9`: the single
+token file migrated on restart to `pauta.db.meta-token.1000000000000016`, `meta_connection`
+holds Delta's portfolio (connected by Piero), Equipe → Meta shows the portfolio blocks and
+the Histórico. The Ads Manager parity work (Period and Resultados rows above) follows.
+
 ### More than one ad account (Piero, 2026-10-31)
 
 Piero's next remark: "só tá aceitando uma conta"; the ideal is to connect each new client's
