@@ -438,6 +438,26 @@ def test_start_runs_on_a_thread_and_refuses_a_second(team, caplog):
     assert meta.sync_error == NOT_CONNECTED
 
 
+def test_start_gives_the_lock_back_when_the_thread_cannot_start(team):
+    """`start` takes the lock, then starts the thread: the OS refusing ("can't start new
+    thread") must not leave the lock held, or every pass gets BUSY until a restart."""
+    store, meta, fake, *_ = team
+
+    def refuse(self):
+        raise RuntimeError("can't start new thread")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(threading.Thread, "start", refuse)
+        with pytest.raises(RuntimeError, match="can't start new thread"):
+            sync.start(store, meta, days=2)
+    assert not sync.running()
+    # the next pass, either way in, works as if nothing had happened
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 2 and out["errors"] == []
+    sync.start(store, meta, days=2).join(timeout=30)
+    assert not sync.running() and meta.sync_error == ""
+
+
 def test_scheduler_tick_waits_when_a_manual_pass_runs(team, caplog):
     """The tick meeting Atualizar agora's pass doesn't count as the hourly: it is due again
     at the next tick, and nothing is logged as a failure."""

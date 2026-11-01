@@ -81,7 +81,9 @@ def start(store: Store, meta: Meta, *, days: int) -> threading.Thread:
     """`run` on a daemon thread, for "Atualizar agora": the lock is taken here, so by the
     time this returns a second caller already gets `BUSY`; the thread releases it when the
     pass ends. Raises `BUSY` (409) when a pass is under way. Whatever the pass meets is
-    logged and shown as `meta.sync_error`, as the scheduler does: no thread dies loudly."""
+    logged and shown as `meta.sync_error`, as the scheduler does: no thread dies loudly.
+    A thread that can't start (the OS refusing) gives the lock back before raising: held
+    forever, every later pass would get `BUSY` until a restart."""
     if not _lock.acquire(blocking=False):
         raise MetaError(BUSY, 409, "busy")
 
@@ -95,7 +97,11 @@ def start(store: Store, meta: Meta, *, days: int) -> threading.Thread:
             _lock.release()
 
     thread = threading.Thread(target=work, name="meta-sync-now", daemon=True)
-    thread.start()
+    try:
+        thread.start()
+    except BaseException:  # can't start new thread: the lock must not stay held forever
+        _lock.release()
+        raise
     return thread
 
 
