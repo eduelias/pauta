@@ -487,20 +487,24 @@ def make_handler(
 
         @route("DELETE", f"/api/me/passkeys/{CRED}")
         def remove_passkey(self, viewer, _body, cred):
+            """Removing a passkey signs the account out everywhere (the device that had it
+            above all); this device gets a fresh cookie and stays in."""
             aid = self._own_account(viewer)
             auth.remove_passkey(aid, cred)
-            return auth.passkeys(aid)
+            return auth.passkeys(aid), auth.make_cookie(aid, self._secure())
 
         @route("POST", "/api/me/move")
         def my_move_link(self, viewer, _body):
             """The same one-time link an admin makes (move_link), for yourself: a new or
-            lost phone, sent to your own WhatsApp or opened from the box on Perfil."""
+            lost phone, sent to your own WhatsApp or opened from the box on Perfil. It lasts
+            minutes, not days (the person taps it on the new phone right away), and dies
+            with the session (end_sessions)."""
             aid = self._own_account(viewer)
             if not auth.enabled or not auth.home:
                 raise Reply(
                     400, {"error": "links de nova passkey precisam de passkeys (PAUTA_AUTH)"}
                 )
-            token, expires = auth.create_move(aid, MOVE_LINK_DAYS * 86400, created_by=aid)
+            token, expires = auth.create_move(aid, created_by=aid)
             return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
 
         @route("GET", "/api/boot")

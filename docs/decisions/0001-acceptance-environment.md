@@ -6,6 +6,8 @@
 - **Amended by:** decision 9 (proposed): acceptance takes builds of any branch, started by
   hand by the owner, through `pauta-deploy-branch` instead of `pauta-deploy`; deploying `main`
   on every merge is not built.
+- **Amended by:** decision 8 (proposed): one real client's ad account, unnamed and with no
+  contacts, may live on acceptance for testing the Meta integration.
 
 ## Context
 

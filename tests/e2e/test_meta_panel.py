@@ -283,13 +283,16 @@ def test_two_portfolios_each_with_its_block(live, device, fake_meta):
     card = page.locator("#meta")
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
-    expect(card.locator("[data-conn]")).to_have_count(1)
+    blocks = card.locator("[data-conn]")
+    expect(blocks).to_have_count(1)
+    # the toast hides itself after ~2 s; wait for that, or the second "Meta conectada" below
+    # is satisfied by this one while the second connection is still on its way
+    expect(page.locator("#toast")).to_be_hidden(timeout=5_000)
 
     fake_meta.business = OTHER_BUSINESS  # in Meta's dialog he picks the client's portfolio
     card.get_by_role("button", name="Conectar outro portfólio").click()
-    expect(page.locator("#toast")).to_have_text("Meta conectada")
-    blocks = card.locator("[data-conn]")
-    expect(blocks).to_have_count(2)
+    expect(page.locator("#toast")).to_have_text("Meta conectada", timeout=15_000)
+    expect(blocks).to_have_count(2, timeout=15_000)  # a round trip through the fake Meta
     expect(blocks.nth(0)).to_contain_text("Portfólio Agência Exemplo")
     expect(blocks.nth(1)).to_contain_text("Portfólio Delta Imóveis")
     for i in range(2):

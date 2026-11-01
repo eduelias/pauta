@@ -2,9 +2,10 @@
 (label, remove while one stays, a link for a new phone), and what teammates never see."""
 
 import json
+import time
 
-from pauta.auth import Auth
-from softpasskey import ORIGIN, SoftPasskey, call, join, start
+from pauta.auth import MOVE_SECONDS, Auth
+from softpasskey import ORIGIN, SoftPasskey, call, join, login, start
 
 
 def register_more(base, cookie, key):
@@ -33,7 +34,7 @@ def test_patch_me_takes_name_email_and_whatsapp(team):
     assert call(f"{base}/api/me", {}, nato, "PATCH")[1]["name"] == "Nato"  # nothing to change
 
 
-def test_the_number_is_the_persons_and_the_admins_never_the_teams(team):
+def test_the_number_is_the_persons_only_not_even_an_admins(team):
     base, nato, piero, _ = team
     call(f"{base}/api/me", {"whatsapp": "31600000000"}, piero, "PATCH")
     for cookie in (nato, piero):
@@ -41,7 +42,7 @@ def test_the_number_is_the_persons_and_the_admins_never_the_teams(team):
         boot = call(f"{base}/api/boot", cookie=cookie)[1]
         assert "31600000000" not in json.dumps(boot["members"])
     assert call(f"{base}/api/me", cookie=piero)[1]["whatsapp"] == "31600000000"
-    assert call(f"{base}/api/me", cookie=nato)[1]["whatsapp"] == ""
+    assert call(f"{base}/api/me", cookie=nato)[1]["whatsapp"] == ""  # the admin sees only his
     export = json.dumps(call(f"{base}/api/export", cookie=nato)[1])
     assert "31600000000" not in export  # the export has no account table either
 
@@ -61,6 +62,9 @@ def test_my_passkeys_label_remove_and_the_last_one_stays(team):
     assert len(keys) == 2 and keys[0]["id"] == first
     status, keys, _ = call(f"{base}/api/me/passkeys/{first}", {"label": "iPhone"}, nato, "PATCH")
     assert status == 200 and [k["label"] for k in keys] == ["iPhone", "Este aparelho"]
+    for bad in ({}, {"label": None}, {"label": 7}, {"label": ["x"]}):
+        status, err, _ = call(f"{base}/api/me/passkeys/{first}", bad, nato, "PATCH")
+        assert (status, err["error"]) == (400, "nome inválido"), bad
 
     # someone else's passkey is not found, for the label and for the removal
     piero_key = call(f"{base}/api/me/passkeys", cookie=piero)[1][0]["id"]
@@ -70,22 +74,37 @@ def test_my_passkeys_label_remove_and_the_last_one_stays(team):
     assert call(f"{base}/api/me/passkeys/{first}", None, piero, "DELETE")[0] == 404
     assert call(f"{base}/api/me/passkeys/{'x' * 20}", None, None, "DELETE")[0] == 401
 
-    status, keys, _ = call(f"{base}/api/me/passkeys/{first}", None, nato, "DELETE")
+    # the phone that owns `first` is signed in too; removing its passkey signs it out at
+    # once, while the laptop doing the removing gets a fresh cookie in the same answer
+    status, _, phone = login(base, nato_key)
+    assert status == 200 and phone.startswith("pauta_session=")  # same generation as nato's
+    status, keys, headers = call(f"{base}/api/me/passkeys/{first}", None, nato, "DELETE")
     assert status == 200 and [k["label"] for k in keys] == ["Este aparelho"]
+    fresh = (headers.get("Set-Cookie") or "").split(";")[0]
+    assert fresh.startswith("pauta_session=") and fresh != nato
+    assert "HttpOnly" in headers["Set-Cookie"] and "SameSite=Strict" in headers["Set-Cookie"]
+    assert call(f"{base}/api/me/passkeys", cookie=phone)[0] == 401
+    assert call(f"{base}/api/me/passkeys", cookie=nato)[0] == 401  # the old cookie too
+    assert call(f"{base}/api/me", cookie=fresh)[1]["name"] == "Renato Lima"
+    assert call(f"{base}/api/me", cookie=piero)[1]["name"] == "Piero"  # nobody else
+    nato = fresh
     assert call(f"{base}/api/me/passkeys/{keys[0]['id']}", None, nato, "DELETE")[0] == 400
     members = call(f"{base}/api/members", cookie=piero)[1]
     assert next(m for m in members if m["name"] == "Renato Lima")["passkeys"] == 1
-    # the removed passkey no longer signs in; the session it had stays (it's a cookie)
+    # the removed passkey no longer signs in
     _, opts, _ = call(f"{base}/api/passkey/login/options", {})
     body = {"flow": opts["flow"], "credential": nato_key.get(opts["options"], "")}
     status, err, _ = call(f"{base}/api/passkey/login/verify", body)
     assert status == 400 and "não está cadastrada" in err["error"]
+    # a refused removal (the last one) changes nothing: this cookie still works
+    assert call(f"{base}/api/me", cookie=nato)[1]["name"] == "Renato Lima"
 
 
 def test_my_own_new_passkey_link(team):
     base, nato, piero, _ = team
     status, link, _ = call(f"{base}/api/me/move", {}, piero)
-    assert status == 200 and link["to"] == "localhost" and link["expires"] > 0
+    assert status == 200 and link["to"] == "localhost"
+    assert time.time() + MOVE_SECONDS - 10 < link["expires"] <= time.time() + MOVE_SECONDS
     assert link["url"].startswith(f"{ORIGIN}/#/mudar/")
     token = link["url"].rsplit("/", 1)[1]
     assert call(f"{base}/api/move/{token}")[1] == {"name": "Piero", "to": "localhost"}
@@ -98,6 +117,25 @@ def test_my_own_new_passkey_link(team):
     assert call(f"{base}/api/move/{token}")[0] == 404
     assert len(call(f"{base}/api/me/passkeys", cookie=piero)[1]) == 2
     assert call(f"{base}/api/me/move", {})[0] == 401
+
+
+def test_my_own_link_dies_with_my_sessions_an_admins_does_not(team):
+    """A self-made link is tied to the session that made it: "Sair em todos os aparelhos"
+    (or a logout anywhere) expires it. The admin's 3-day link for the same person stays."""
+    base, nato, piero, _ = team
+    mine = call(f"{base}/api/me/move", {}, piero)[1]["url"].rsplit("/", 1)[1]
+    status, theirs, _ = call(f"{base}/api/members/2/move", {}, nato)
+    assert status == 200 and theirs["expires"] > time.time() + 2 * 86400
+    theirs = theirs["url"].rsplit("/", 1)[1]
+    assert call(f"{base}/api/move/{mine}")[0] == call(f"{base}/api/move/{theirs}")[0] == 200
+
+    assert call(f"{base}/api/logout", {}, piero)[0] == 200
+    assert call(f"{base}/api/me/passkeys", cookie=piero)[0] == 401
+    assert call(f"{base}/api/move/{mine}")[0] == 404
+    assert call(f"{base}/api/move/{theirs}")[1] == {"name": "Piero", "to": "localhost"}
+    # nor can the dead link open a ceremony
+    status, err, _ = call(f"{base}/api/passkey/register/options", {"move": mine})
+    assert status == 400 and "expirou" in err["error"]
 
 
 def test_open_mode_has_no_passkeys_to_manage(tmp_path):

@@ -57,7 +57,7 @@ SESSION_DAYS = 180
 FLOW_SECONDS = 300
 RP_NAME = "Pauta"
 INVITE_DAYS = 7
-MOVE_SECONDS = 600  # the link a signed-in person makes for themselves
+MOVE_SECONDS = 600  # the link a signed-in person makes for themselves: tapped right away
 MOVE_LINK_DAYS = 3  # the link an admin makes and sends
 DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localhost"]
 
@@ -207,11 +207,17 @@ class Auth:
         return None
 
     def end_sessions(self, account_id: int | None) -> None:
-        """Sign the account out everywhere: every cookie issued so far stops working."""
+        """Sign the account out everywhere: every cookie issued so far stops working, and so
+        does any new-passkey link the person made for themselves (one an admin made for them
+        is the admin's to keep: `created_by` is the admin)."""
         if account_id is None:
             return
         with self.store.db() as db:
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
+            db.execute(
+                "UPDATE invite SET expires=0 WHERE account=? AND created_by=?",
+                (account_id, account_id),
+            )
 
     def viewer(self, cookie_header: str | None) -> dict:
         """Who is looking. Anonymous visitors see only the login page."""
@@ -504,6 +510,8 @@ class Auth:
         return [dict(r) for r in rows]
 
     def relabel_passkey(self, account_id: int, cred_id: str, label) -> None:
+        if not isinstance(label, str):
+            raise AuthError("nome inválido")
         with self.store.db() as db:
             done = db.execute(
                 "UPDATE passkey SET label=? WHERE id=? AND account=?",
@@ -514,17 +522,25 @@ class Auth:
 
     def remove_passkey(self, account_id: int, cred_id: str) -> None:
         """Take a passkey off the account, as long as another one stays: without any, the
-        person could never sign in again and nobody else could make them a link."""
+        person could never sign in again and nobody else could make them a link. The
+        account's sessions end with it (the removed device is usually the point), so the
+        caller re-issues the cookie of the device doing the removing. Only a passkey that
+        still signs in counts as "another one": a leftover for a domain Pauta left (decision
+        4) can't be the one that stays."""
+        cred_id = str(cred_id or "")
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")  # two removals at once can't both see "two left"
-            mine = [
-                r[0] for r in db.execute("SELECT id FROM passkey WHERE account=?", (account_id,))
-            ]
-            if str(cred_id or "") not in mine:
+            mine = {
+                r[0]: r[1]
+                for r in db.execute("SELECT id, rp_id FROM passkey WHERE account=?", (account_id,))
+            }
+            if cred_id not in mine:
                 raise NotFound("passkey não encontrada")
-            if len(mine) < 2:
+            usable = [k for k, rp in mine.items() if k != cred_id and (not rp or rp in self.rp_ids)]
+            if not usable:
                 raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
             db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
+            db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
 
     # ---- login with a discoverable passkey ------------------------------------------------
 
@@ -627,7 +643,7 @@ class Auth:
             db.execute("UPDATE account SET email=? WHERE id=?", (email, account_id))
 
     def set_whatsapp(self, account_id: int, number) -> None:
-        """Optional, free text like a client's: only the person and admins see it."""
+        """Optional, free text like a client's: only the person sees it (`GET /api/me`)."""
         with self.store.db() as db:
             db.execute(
                 "UPDATE account SET whatsapp=? WHERE id=?",

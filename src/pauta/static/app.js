@@ -1697,7 +1697,9 @@ async function viewSettings(query) {
 
 // What is about the person signed in, and only them: name, WhatsApp, e-mail, their passkeys
 // (a label each, add one here, remove one while another stays, a link for a new phone) and
-// the way out of every device. The team's settings are on Configurações.
+// the way out of every device. Removing a passkey signs the other devices out; the server
+// re-issues this one's cookie in the same answer, so the page carries on without a reload.
+// The team's settings are on Configurações.
 const KEY_KINDS = { internal: "Face ID, digital ou PIN", hybrid: "celular, pelo QR", usb: "chave USB", nfc: "chave NFC", ble: "chave Bluetooth" };
 function passkeyRow(k, alone) {
   const kinds = (k.transports || "").split(",").filter(Boolean).map((t) => KEY_KINDS[t] || t).join(", ");
@@ -1719,7 +1721,7 @@ async function viewProfile() {
       ${ME.auth ? `<div class="form-grid mt">
         <div class="field"><label>Seu nome</label><input class="input" id="myname" autocomplete="name" value="${esc(ME.name)}"></div>
         <div class="field"><label>WhatsApp <span class="muted">(opcional)</span></label><input class="input" id="mywa" inputmode="tel" autocomplete="tel" placeholder="+55 11 90000-0000" value="${esc(ME.whatsapp || "")}">
-          <span class="muted small">Só você e os administradores veem o número.</span></div>
+          <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
         <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
           <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
       </div>
@@ -1731,7 +1733,7 @@ async function viewProfile() {
       ${keys.map((k) => passkeyRow(k, keys.length === 1)).join("")}
       <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
         <button class="btn" id="newlink">${icon("link")}Link de nova passkey</button></div>
-      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez.</p>
+      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
       <div id="mv-me"></div>
     </section>
     <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
@@ -1758,7 +1760,7 @@ async function viewProfile() {
     catch (e) { toast(e.message, true); }
   }));
   $$("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
-    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela deixa de entrar na Pauta até ganhar outra.`)) return;
+    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela sai da Pauta agora e só volta a entrar com outra passkey. Este aparelho continua.`)) return;
     try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
     catch (e) { toast(e.message, true); }
   }));
@@ -1790,7 +1792,8 @@ async function loadDrive(doc) {
     toast("OneDrive desconectado");
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
-  if (doc.state === "connected") { toast("OneDrive conectado"); await refreshBoot(); }
+  // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
+  if (doc.state === "connected") { await refreshBoot(); toast("OneDrive conectado"); }
   if (doc.state === "expired") toast("O código expirou; gere outro", true);
   if (doc.state === "denied") toast("A conexão foi recusada na conta Microsoft", true);
 }
@@ -2031,7 +2034,8 @@ async function makeMoveLink(id, name, fresh = false) {
   const mine = id === "me";  // Perfil: the same link, made by the person for themselves
   try {
     const mv = await api("POST", mine ? "/api/me/move" : `/api/members/${id}/move`, {});
-    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    // the person's own link is tapped right away (10 minutes); an admin's is sent and waited for
+    const until = mine ? "por 10 minutos" : "até " + new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
     const msg = mine
       ? `Meu link para criar uma passkey nova na Pauta (celular novo ou perdido). Abrir no aparelho novo, confirmar com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
       : fresh
@@ -2040,7 +2044,7 @@ async function makeMoveLink(id, name, fresh = false) {
     const title = mine ? "Seu link de nova passkey" : fresh ? `Link de nova passkey de ${esc(firstName(name))}` : `Link de ${esc(firstName(name))} para ${esc(mv.to)}`;
     const who = mine ? "Só para você" : `Só para ${esc(firstName(name))}`;
     box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>${title}</b>
-      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, ${esc(until)}.</div>
       <code class="invlink">${esc(mv.url)}</code>
       <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
       <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;

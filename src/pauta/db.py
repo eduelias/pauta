@@ -564,8 +564,8 @@ class Store:
             # v4: bumped to end every session of an account (logout, disable, enable)
             if "session_gen" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0")
-            # v12: the person's own WhatsApp number (Perfil, decision 10); only they and
-            # admins see it, never /api/members
+            # v12: the person's own WhatsApp number (Perfil, decision 10); only they see
+            # it (GET /api/me), never /api/members, the boot data or the export
             if "whatsapp" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''")
             # v7: the domain a passkey belongs to (decision 4's move); '' until it's next used
