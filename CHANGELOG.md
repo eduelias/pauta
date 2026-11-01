@@ -97,6 +97,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Fixed
 
+- Campanhas lista todo cliente com conta vinculada, mesmo sem campanha ativa (sumia como se
+  a conexão tivesse falhado), e mostra o Saldo da conta em cada bloco; `GET /api/campaigns`
+  traz `accounts` por cliente e `campaigns: []` para esses.
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
 

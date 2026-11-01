@@ -15,7 +15,7 @@ from datetime import date, timedelta
 import pytest
 from playwright.sync_api import expect
 
-from fakemeta import TZ, expected
+from fakemeta import EMPTY_ACCOUNT, TZ, expected
 from pauta import sync
 from pauta.meta import local_today
 
@@ -268,6 +268,67 @@ def test_visto_hoje(synced):
     with store.db() as db:
         notes = [r[0] for r in db.execute("SELECT note FROM review ORDER BY id")]
     assert notes == ["", "", "subi a verba"]  # the clinic's two campaigns, then the bakery's
+
+
+def test_client_with_a_linked_account_and_no_campaigns(live, device, meta, fake_meta):
+    """A client whose linked account holds no campaign (Piero's second portfolio) is on the
+    list, last, saying so with the account's name and balance and without Visto hoje; the
+    blocks with campaigns show the account's balance under the name."""
+    base, auth, store = live
+    fake_meta.accounts.append(EMPTY_ACCOUNT)
+    store.save_client({"name": "Clínica Bem Estar", "ad_account": "111"})
+    store.save_client({"name": "Estúdio Pilates Leve", "ad_account": "555"})
+    store.save_client({"name": "Sem conta"})
+    token, _ = auth.create_invite(admin=True)
+    page = device(timezone_id=TZ).page
+    join(page, base, token, "Renato Lima")
+    page.goto(f"{base}/#/equipe")
+    page.locator("#meta").get_by_role("button", name="Conectar Meta").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    expect(page.locator("#metaaccounts tbody tr")).to_have_count(3)
+    out = sync.run(store, meta, days=sync.HOURLY_DAYS)
+    assert out["campaigns_new"] == 2 and out["errors"] == [], out
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    blocks = page.locator(".cblock")
+    expect(blocks).to_have_count(2)  # Sem conta has no account: not here
+    expect(page.locator("#app")).not_to_contain_text("Sem conta")
+    expect(blocks.first).to_contain_text("Clínica Bem Estar")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 0 de 1 cliente visto")
+    # the clinic's block: the account's balance under the name
+    clinic = blocks.first
+    expect(clinic.locator(".kbal")).to_have_count(1)
+    expect(clinic.locator(".kbal")).to_contain_text("Saldo da conta: R$ 3.765,44")
+    expect(clinic.locator(".kbal b span")).to_have_text("até o limite")
+    # the studio's: the line, the account's name and balance, no rows, no Visto hoje
+    studio = blocks.nth(1)
+    expect(studio).to_have_class(re.compile(r"\bnocamp\b"))
+    expect(studio).to_contain_text("Estúdio Pilates Leve")
+    expect(studio.locator(".nocamp-line")).to_have_text(
+        "sem campanhas ativas na(s) conta(s) vinculada(s): Estúdio Pilates Leve"
+    )
+    expect(studio.locator(".kbal")).to_contain_text("Saldo da conta: R$ 274,50")
+    expect(studio.locator(".krow")).to_have_count(0)
+    expect(studio.get_by_role("button", name="Visto hoje", exact=True)).to_have_count(0)
+    expect(studio.locator("[data-seen]")).to_have_count(0)
+    expect(studio.get_by_role("link", name="Estúdio Pilates Leve")).to_have_attribute(
+        "href", re.compile(r"^#/cliente/\d+$")
+    )
+    # seen clients sink, but still above the ones with nothing to check
+    clinic.get_by_role("button", name="Visto hoje", exact=True).click()
+    expect(page.locator("#toast")).to_have_text("Clínica Bem Estar: visto hoje")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 1 de 1 cliente visto")
+    expect(page.locator(".cblock").first).to_contain_text("Clínica Bem Estar")
+    expect(page.locator(".cblock").first.locator(".seen")).to_be_visible()
+    expect(page.locator(".cblock").nth(1)).to_contain_text("Estúdio Pilates Leve")
+    # a balance Meta refuses says what to do, here too
+    fake_meta.refuse_balance = True
+    page.goto(f"{base}/#/equipe")
+    page.locator("#meta").get_by_role("button", name="Atualizar").click()
+    expect(page.locator("#metaaccounts tbody tr").first).to_contain_text("sem permissão")
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    expect(page.locator(".cblock.nocamp .kbal span")).to_have_text(
+        "sem permissão · reconecte em Adicionar contas"
+    )
 
 
 def test_campaign_page_cards_charts_and_remembered_chips(synced):

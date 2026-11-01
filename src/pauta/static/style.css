@@ -633,6 +633,13 @@ aside .kv { grid-template-columns: 88px 1fr; }
   color: var(--s-done); background: var(--s-done-bg); border-radius: 99px; padding: 0 10px; height: 30px; }
 .cblock .seen svg { width: 15px; height: 15px; }
 .cblock .panel-head h2 a:hover { color: var(--accent); }
+/* the account's balance under the client's name, one per linked account */
+.cblock .kbals { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: -6px 0 10px; font-size: 13px; color: var(--muted); }
+.cblock .kbals b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cblock .kbals b span { font-weight: 400; margin-left: 4px; }
+.cblock.nocamp .nocamp-line { margin: -4px 0 8px; font-size: 14px; }
+.cblock.nocamp .nocamp-line b { color: var(--ink); font-weight: 600; }
+.cblock.nocamp .kbals { margin-top: 0; }
 .krows { display: flex; flex-direction: column; }
 /* one row: the name, then the six numbers; admins get an actions cell as an implicit column */
 .krow { display: grid; grid-template-columns: minmax(0, 2fr) repeat(6, minmax(0, 1fr));

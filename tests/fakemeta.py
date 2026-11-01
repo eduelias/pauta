@@ -19,7 +19,9 @@ for Business connects one portfolio per login): `/me` reports that business, and
 reads `fake.accounts_by_business[business]` when the test set it, else `fake.accounts`.
 `BUSINESS` is "Agência Exemplo" with accounts 111 and 222; `OTHER_BUSINESS` ("Delta
 Imóveis") is ready with account 444: set `fake.business = OTHER_BUSINESS` before a login to
-connect it. `fake.revoke(business)` kills that business's tokens only (190).
+connect it. `fake.revoke(business)` kills that business's tokens only (190). `EMPTY_ACCOUNT`
+(555, "Estúdio Pilates Leve") has a balance and no campaigns at all, as Piero's second
+portfolio had: `fake.accounts.append(EMPTY_ACCOUNT)` before the login lists it.
 
 Tests never talk to the real Meta. Point a Meta at it with
 `Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake.graph, dialog=fake.dialog)` and
@@ -76,6 +78,14 @@ OTHER_ACCOUNTS = [
         "timezone_name": TZ,
     },
 ]
+EMPTY_ACCOUNT = {  # linked to a client, nothing running in it: Meta lists no campaigns
+    "id": "act_555",
+    "account_id": "555",
+    "name": "Estúdio Pilates Leve",
+    "currency": "BRL",
+    "account_status": 1,
+    "timezone_name": TZ,
+}
 INSIGHTS = {
     "444": {
         "spend": "80.00",
@@ -220,6 +230,7 @@ BALANCE = {
     },
     "222": {"is_prepay_account": False, "spend_cap": "0", "amount_spent": "0"},
     "444": {"is_prepay_account": True, "spend_cap": "100000", "amount_spent": "8000"},
+    "555": {"is_prepay_account": True, "spend_cap": "30000", "amount_spent": "2550"},
 }
 
 
