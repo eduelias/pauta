@@ -1,5 +1,5 @@
 # The same checks CI runs, for before you push. `make help` lists them.
-.PHONY: help setup lint fmt test test-fast e2e check run demo release
+.PHONY: help setup lint fmt test test-fast e2e check acc run demo release
 
 help:  ## this list
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
@@ -30,6 +30,16 @@ e2e:  ## browser journeys in Chromium, in parallel (make setup once)
 	uv run --extra dev --extra e2e pytest -m e2e -n auto
 
 check: lint test e2e  ## everything CI checks (~1 min; run before you push)
+
+acc:  ## put this branch on https://acc.pauta.cc (owner only; pushes first, then watches)
+	@git diff --quiet HEAD || { echo "commit (or stash) first: acc deploys what is pushed"; exit 1; }
+	git push -u origin HEAD
+	@before=$$(gh run list --workflow deploy-branch.yml --limit 1 --json databaseId --jq '.[0].databaseId'); \
+	gh workflow run deploy-branch.yml -f ref="$$(git branch --show-current)"; \
+	for _ in $$(seq 30); do sleep 2; \
+	  run=$$(gh run list --workflow deploy-branch.yml --limit 1 --json databaseId --jq '.[0].databaseId'); \
+	  [ "$$run" != "$$before" ] && break; done; \
+	gh run watch "$$run" --exit-status && curl -fsS https://acc.pauta.cc/healthz
 
 run:  ## the app on http://localhost:8088, open mode, data in ./state
 	uv run pauta serve
