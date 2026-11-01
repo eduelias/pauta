@@ -50,8 +50,8 @@ on `main` (328 unit/API tests, 73 browser tests).
    Only the owner's dispatches reach du7 (the runner's guard checks the actor).
 5. **Merge** when CI is green and the owner has reviewed (see the flow above).
 
-When a browser test fails, `test-results/traces/<test>.<n>.png` is a screenshot of each page
-it had open. `PAUTA_TRACE=1 make e2e` records a full Playwright trace instead (open it with
+When a browser test fails, `test-results/traces/<test>-<device>.<page>.png` is a screenshot of
+each page it had open. `PAUTA_TRACE=1 make e2e` records a full Playwright trace instead (open it with
 `uv run playwright show-trace <zip>`); CI always records one and uploads it on failure.
 
 ## Ground rules
