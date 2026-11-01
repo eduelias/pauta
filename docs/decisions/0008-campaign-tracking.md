@@ -272,6 +272,16 @@ refused with ANALYZE, as expected: it needs the wider task (see "Saldo"). One fi
 needs more than `ads_read`: `business{name}` on ad accounts asks for `business_management`,
 so Pauta doesn't request it (the portfolio's name comes from `client_business_id`).
 
+### Per-campaign sync against the real Meta (2026-11-01, on acceptance)
+
+Slice A (eduelias/pauta#19, `229258a`) went to acc.pauta.cc through the branch pipeline. With
+Piero's one linked account, the in-process scheduler ran by itself a minute after start:
+`/act_<id>/campaigns` listed his campaigns and exactly **two** were ACTIVE, the same two his
+Ads Manager view shows; `level=campaign, time_increment=1` insights came back one row per
+campaign per day, the history fetch for the new campaigns reached back to 29 Oct, the
+`actions` list parsed, no errors. So the account-wide total that confused him is gone from
+the data model: from here on Pauta only sums tracked campaigns' daily rows.
+
 ### More than one ad account (Piero, 2026-10-31)
 
 Piero's next remark: "só tá aceitando uma conta"; the ideal is to connect each new client's
