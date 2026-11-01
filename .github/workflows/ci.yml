@@ -39,11 +39,13 @@ jobs:
       - name: Ruff (format)
         run: uv run --extra dev ruff format --check src tests scripts tools
       - name: JavaScript parses
-        run: node --check src/pauta/static/app.js
+        run: for f in src/pauta/static/app*.js; do node --check "$f"; done
       - name: Deploy scripts (shellcheck)
         run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
       - name: Workflows (actionlint)
-        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+        # the PyPI wheel of the same release: the rhysd/actionlint action builds it from
+        # source on every run (37 s of the job's 50)
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
 
   test:
     name: Tests (Python ${{ matrix.python }})
@@ -60,10 +62,14 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Unit and API tests, with coverage
+      - name: Unit and API tests, with coverage (du7's Python)
+        if: matrix.python == '3.11'
         run: >-
-          uv run --extra dev pytest --cov --cov-report=term --cov-report=xml
+          uv run --extra dev pytest -n auto --cov --cov-report=term --cov-report=xml
           --junitxml=test-results/junit.xml
+      - name: Unit and API tests
+        if: matrix.python != '3.11'
+        run: uv run --extra dev pytest -n auto --junitxml=test-results/junit.xml
       - name: Coverage summary
         if: always() && matrix.python == '3.11'
         run: |
@@ -92,10 +98,25 @@ jobs:
         with:
           python-version: "3.11"
           enable-cache: true
+      - name: Playwright version (the browser cache key)
+        id: pw
+        run: |
+          version=$(uv run --extra dev --extra e2e playwright --version | cut -d' ' -f2)
+          test -n "$version" || { echo "no Playwright version: the cache key would be shared across bumps"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Chromium from the cache
+        id: chromium
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Chromium's system libraries (apt; the cache holds only the browser)
+        run: uv run --extra dev --extra e2e playwright install-deps chromium
       - name: Install Chromium
-        run: uv run --extra dev --extra e2e playwright install --with-deps chromium
+        if: steps.chromium.outputs.cache-hit != 'true'
+        run: uv run --extra dev --extra e2e playwright install chromium
       - name: Journeys and screens in Chromium (virtual passkeys)
-        run: uv run --extra dev --extra e2e pytest -m e2e --junitxml=test-results/e2e.xml
+        run: uv run --extra dev --extra e2e pytest -m e2e -n auto --junitxml=test-results/e2e.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -136,7 +157,8 @@ jobs:
       - name: The wheel carries the web app
         run: |
           wheel=$(ls dist/pauta-*.whl)
-          for f in index.html app.js style.css vendor/qrcode.js og.png manifest.json; do
+          for f in index.html app.js app-requests.js app-clients.js app-financeiro.js app-campanhas.js app-team.js app-perfil.js app-router.js \
+                   style.css vendor/qrcode.js og.png manifest.json; do
             unzip -l "$wheel" "pauta/static/$f" > /dev/null || { echo "missing static/$f"; exit 1; }
           done
       - name: Install it like du7 does, start it, ask /healthz

@@ -27,9 +27,17 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   `tests/fakegraph.py`; never call the real one.
 - `src/pauta/obs.py`: JSON request logs (route patterns, never raw paths, bodies or personal
   data) and the numbers behind `GET /metrics` (loopback only, for du7's watchdog).
-- `src/pauta/server.py`: `/api/...` JSON; everything but login/join needs a session (client
-  data is private). Writes from a foreign `Origin` are refused; cookie is SameSite=Strict.
-- `src/pauta/static/`: one vanilla-JS app (`app.js`, hash routes `#/...`), `style.css` (light
+- `src/pauta/server.py`: the HTTP plumbing (dispatch, headers, static files, health, metrics)
+  and `/api/me`, `/api/boot`, `/api/export`. The rest of `/api/...` is in `src/pauta/routes/`,
+  one module per area (`requests`, `clients`, `campaigns`, `finance`, `team`, `account`), each
+  an `install(route, store, auth, drive, meta)` registering plain functions on the same route
+  table; what they share is in `routes/__init__.py`. Everything but login/join needs a session
+  (client data is private). Writes from a foreign `Origin` are refused; cookie is SameSite=Strict.
+- `src/pauta/static/`: one vanilla-JS app in plain scripts sharing one global scope, loaded in
+  order by `index.html`: `app.js` (helpers, shell), then one file per screen area
+  (`app-requests.js`, `app-clients.js`, `app-financeiro.js`, `app-campanhas.js`, `app-team.js`,
+  `app-perfil.js`), then `app-router.js` (hash routes `#/...`, start-up; last, since it names
+  every view). `style.css` (light
   and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only (no CDNs, no external fonts);
   the one exception is `img-src https://gravatar.com` for people's avatars. Accounts may
   set an email, which is only used for that: teammates get the SHA-256 hash, never the
@@ -42,11 +50,15 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 
 ```
 make setup     # uv sync with dev + e2e extras, Chromium for Playwright
-make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what CI runs
-make test      # just unit and API tests (~3 s)
-make e2e       # just the browser tests (~10 s)
+make test-fast # the inner loop: unit and API tests in parallel, no coverage (~5 s)
+make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what CI runs (~30 s)
+make test      # just unit and API tests with coverage (~7 s)
+make e2e       # just the browser tests, parallel (~25 s)
+make acc       # owner only: push this branch and put it on https://acc.pauta.cc (~1-2 min)
 make run       # http://localhost:8088, open mode, data in ./state
 ```
+
+The loop (what to run when, and the measured timings) is in `CONTRIBUTING.md`, "The loop".
 
 Tests: `tests/unit` (no HTTP), `tests/api` (a real server on a free port, `SoftPasskey` in
 `tests/softpasskey.py` signs real WebAuthn responses), `tests/e2e` (Playwright + Chromium's

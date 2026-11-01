@@ -23,7 +23,7 @@ Changelog = "https://github.com/eduelias/pauta/blob/main/CHANGELOG.md"
 pauta = "pauta.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.5"]
+dev = ["pytest>=8", "pytest-cov>=5", "pytest-xdist>=3.6", "ruff>=0.5"]
 # browser tests (tests/e2e): `uv run --extra e2e playwright install chromium` once
 e2e = ["pytest>=8", "playwright>=1.45"]
 
