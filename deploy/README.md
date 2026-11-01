@@ -1,7 +1,10 @@
 # Running on du7
 
 Pauta runs on du7 (192.168.2.68) as the systemd unit `pauta`, on `127.0.0.1:8088` only.
-Caddy puts it on the internet at https://pauta.genic.dev, next to dom.du7.dev.
+Caddy puts it on the internet at https://app.pauta.cc, next to dom.du7.dev. Acceptance is
+https://acc.pauta.cc; https://www.pauta.cc is for the public site (a temporary redirect to the
+app until it exists), and pauta.cc and pauta.team lead there. The old address,
+https://pauta.genic.dev, serves the same app until everyone has moved (see "Moving to pauta.cc").
 
 ```
 phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Caddy, TLS) ──▶ 127.0.0.1:8088 (pauta)
@@ -9,16 +12,16 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 
 | What | Where |
 |---|---|
-| DNS | Squarespace, `genic.dev` → DNS → custom record `pauta` CNAME `du7.sytes.net`, TTL 1 hr (the No-IP name the router keeps on the home IP, same as `dom.du7.dev`). Editing it asks for the account passkey |
+| DNS | `pauta.cc` and `pauta.team` (registered at Cloudflare, auto-renew and lock on): zones and records are code in `du7/dns-zone` (`pauta.tf`, OpenTofu). `pauta.cc`, `app.`, `acc.`, `www.` and `pauta.team`, `www.` are CNAMEs to `du7.sytes.net` (the No-IP name the router keeps on the home IP), DNS-only. The old `pauta.genic.dev` is a Squarespace record (`genic.dev` → DNS → `pauta` CNAME `du7.sytes.net`; editing it asks for the account passkey) |
 | Router | the existing TCP 443 → 192.168.2.68:443 forward (shared with dom.du7.dev; nothing new) |
-| Caddy | `/etc/caddy/Caddyfile`, the `pauta.genic.dev` block from `deploy/Caddyfile.pauta`. Certificate via TLS-ALPN on 443 |
+| Caddy | The `caddy` container's Caddyfile (`~/dns-stack/caddy/Caddyfile`, bind-mounted as a single file), the blocks from `deploy/Caddyfile.pauta`. Certificates via TLS-ALPN on 443 |
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
 | DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
 | Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
 | Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
-| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner`, user `gh-runner`, unit `actions.runner.eduelias-pauta.du7.service`; every job first passes `/usr/local/lib/pauta/runner-job-guard` (drop-in `job-guard.conf`) |
+| Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner`, user `gh-runner`, unit `actions.runner.eduelias-pauta.du7.service`; every job first passes `/usr/local/lib/pauta/runner-job-guard.sh` (drop-in `job-guard.conf`) |
 
 ## Releasing
 
@@ -50,10 +53,50 @@ starts `.github/workflows/release.yml`:
      doesn't (the job then fails),
    - keeps the last 5 releases.
 4. **Reachable from the internet**: a GitHub-hosted runner fetches
-   https://pauta.genic.dev/healthz and expects 1.2.0.
+   https://app.pauta.cc/healthz and expects 1.2.0.
 
 The `production` environment on GitHub only accepts deploys from `v*` tags and `main`, and
 lists every deploy under the repo's *Deployments*.
+
+## Moving to pauta.cc
+
+Decision 4. Passkeys belong to the domain they were made on, so everyone makes one new
+passkey for `pauta.cc`, from inside their account on the old address. The app itself is on
+`app.pauta.cc` (since 1.6.1; 1.6.0 had it on the apex): a passkey for `pauta.cc` works on
+any address under it, and production only accepts the origin `https://app.pauta.cc`. In
+order (steps 1–5 done 2026-10-31):
+
+1. **DNS**: `cd ~/reps/du7/dns-zone && op-env run -- tofu plan`, then `apply` (`pauta.tf`).
+2. **Caddy** on du7: add the blocks from `deploy/Caddyfile.pauta` to
+   `~/dns-stack/caddy/Caddyfile` *in place* (same inode), then check the container sees them
+   (`sudo docker exec caddy grep -c app.pauta.cc /etc/caddy/Caddyfile`; if 0, the mount is stale:
+   `sudo docker restart caddy`) and `sudo docker exec caddy caddy reload --config
+   /etc/caddy/Caddyfile --adapter caddyfile`. `curl -sI https://app.pauta.cc/healthz` answers
+   (with the old release) once the certificate is issued.
+3. **Unit**: install the new `deploy/pauta.service` (both domains), `sudo systemctl
+   daemon-reload`.
+4. **Release** the version with the move (`make release`). The deploy checks `app.pauta.cc`, so
+   steps 2 and 3 come first.
+5. **Move the team**: send each person their own link, which is one tap and Face ID. From
+   the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   A link works once, for 3 days, for that account only: send it to that person only.
+   Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
+   Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
+   old address). `pauta users` and the Equipe page show who has moved.
+6. **Close the old address** when everyone shows `pauta.cc`: in the unit, `PAUTA_RP_ID=pauta.cc`
+   and `PAUTA_ORIGIN=https://app.pauta.cc`; in Caddy, the `pauta.genic.dev` block becomes
+   `redir https://app.pauta.cc{uri} 301`. Keep the redirect (and the Squarespace record) for at
+   least a year.
+7. **Acceptance** (done 2026-10-31): `acc.pauta.cc` in Caddy (the old name redirects),
+   `PAUTA_RP_ID=acc.pauta.cc` and `PAUTA_ORIGIN=https://acc.pauta.cc` in `pauta-acc.service`
+   (now `deploy/pauta-acc.service`, see "Acceptance: trying a branch"), and an admin invite from its CLI because its old
+   passkeys don't work there.
+8. **Monitoring**: du7's watchdog `pauta*` checks and the repo's homepage link point at
+   `app.pauta.cc`, as the GitHub uptime check does.
+
+Until step 6 a rollback is the usual one: the release before the move runs on the new
+database (the `passkey.rp_id` column is additive) and the old address still works.
 
 ## Rolling back
 
@@ -65,6 +108,47 @@ lists every deploy under the repo's *Deployments*.
 Schema changes are additive (new tables and columns), so an older release runs on a newer
 database. If one ever isn't, restore the matching file from `~/backups/pauta/pre-deploy`
 (stop `pauta`, copy it over `~/.local/share/pauta/pauta.db`, start `pauta`).
+
+## Acceptance: trying a branch
+
+https://acc.pauta.cc is a second copy of Pauta on du7 (unit `pauta-acc`, `127.0.0.1:8089`,
+user `pauta-acc`, demo data, its own accounts). It takes builds of any branch before they are
+merged or released; decision 9 says why and what that exposes.
+
+```
+gh workflow run deploy-branch.yml -f ref=feat/meta-connect     # or Actions → Deploy branch to acceptance
+gh workflow run deploy-branch.yml -f rollback=true             # back to the build before
+```
+
+Only the owner can start it (the job guard refuses anyone else's run on du7). GitHub builds the
+branch as `X.Y.Z.devN+gSHA` (the next patch, the run number, the commit), checks it installs
+and answers `/healthz`, and du7 runs `sudo pauta-deploy-branch acc VERSION WHEEL LOCK SOURCE`:
+
+- refuses unless the unit runs as `pauta-acc`, in no other group, with `ProtectHome=yes`, from
+  `/opt/pauta-acc/current`; it has no way to name production's `/opt/pauta`, unit or data,
+- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required),
+  then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
+- backs up the DB read-only to `/var/backups/pauta-acc` (30 days), never writing
+  `/var/lib/pauta-acc` (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key),
+- switches `/opt/pauta-acc/current`, restarts `pauta-acc`, waits for `/healthz` to report the
+  version, and switches back if it doesn't; keeps 5 builds.
+
+On du7: `sudo pauta-deploy-branch acc --status` (log in `/opt/pauta-acc/deploy.log` and
+`journalctl -t pauta-deploy-acc`), `sudo pauta-deploy-branch acc --rollback`. The DB is
+acceptance's own: if a branch's schema change breaks the build before, restore the newest
+`/var/backups/pauta-acc/pauta-*-before-<version>.db` (stop `pauta-acc`, copy it over
+`/var/lib/pauta-acc/pauta.db` as `pauta-acc`, start it).
+
+**Setting it up** (re-runnable; it never starts, restarts or reads into acceptance's state):
+from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. It installs
+`pauta-deploy-branch`, the sudo rule `/etc/sudoers.d/gh-runner-pauta-branch`, the
+`pauta-acc` user and unit (`deploy/pauta-acc.service`; settings for one environment, like the
+Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the
+runner's job guard, which a sudo rule for unreleased code must never be without.
+
+**Another environment** (`dev`): a line in `env_config` in `pauta-deploy-branch` (its port),
+`deploy/pauta-dev.service`, a Caddy block, `dev` in the workflow's `environment` choices, then
+`sudo deploy/provision-branch-env.sh dev`.
 
 ## Setting up du7 (once)
 
@@ -85,8 +169,9 @@ and `systemctl reload caddy`.
 
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
 shell and no groups, and keeps itself updated. Its job-started hook,
-`/usr/local/lib/pauta/runner-job-guard`, refuses every job except `du7` of `release.yml` on a
-`vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`; refusals are in
+`/usr/local/lib/pauta/runner-job-guard.sh`, refuses every job except `du7` of `release.yml` on a
+`vX.Y.Z` tag, `du7` of `deploy.yml` run by hand on `main`, and `du7` of `deploy-branch.yml` run
+by hand on `main` by the owner; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
 
@@ -141,7 +226,8 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
-  ask an admin for a fresh invite and disable the old account. Disabling ends every session
+  an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
+  or `pauta move-link <name>` on du7). Disabling ends every session
   the account had; "Sair em todos os aparelhos" does the same for your own account.
 - Sign everyone out (a leaked cookie, a suspicion): delete
   `~/.local/share/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is

@@ -7,6 +7,44 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- Para testar: qualquer branch pode ir para https://acc.pauta.cc antes do merge (Actions →
+  *Deploy branch to acceptance*). Só o Eduardo pode disparar; a versão do ar não muda.
+
+### Fixed
+
+- du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
+  todo job, inclusive os deploys.
+
+## [1.6.1] - 2026-10-31
+
+### Changed
+
+- A Pauta agora fica em **https://app.pauta.cc**. As passkeys feitas em pauta.cc continuam
+  valendo, sem fazer nada. pauta.cc e pauta.team levam para www.pauta.cc, o futuro site
+  (por enquanto ele leva para o app), e links antigos como pauta.cc/#/mudar/... ainda chegam
+  ao lugar certo. O teste fica em https://acc.pauta.cc.
+
+### Fixed
+
+- Equipe: os botões de quem administra não espremem mais o nome das pessoas no painel Time;
+  vão para baixo do nome quando falta espaço.
+
+## [1.6.0] - 2026-10-31
+
+### Changed
+
+- A Pauta mudou para **https://pauta.cc** (decision 4). No endereço antigo aparece "Mudar
+  para pauta.cc": um toque leva sua conta para o endereço novo, onde você cria uma passkey
+  com Face ID ou digital. A conta, os pedidos e o histórico continuam os mesmos. Depois,
+  adicione pauta.cc à tela de início do celular. A página Equipe mostra quem já mudou, e
+  `pauta users` também. pauta.team leva para pauta.cc.
+- Quem administra pode mandar a cada pessoa o link dela: Equipe → "Link para mudar" →
+  Enviar no WhatsApp. A pessoa toca no link, confirma com Face ID e já está em pauta.cc.
+  O link vale uma vez, por 3 dias, e só para aquela pessoa; serve também para quem perdeu o
+  celular. No du7: `pauta move-link <nome>`.
+
 ## [1.5.1] - 2026-10-30
 
 ### Fixed
@@ -200,7 +238,9 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/eduelias/pauta/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/eduelias/pauta/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/eduelias/pauta/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/eduelias/pauta/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0

@@ -429,9 +429,11 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .client-hero h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---- team --------------------------------------------------------------------------- */
-.member { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+.member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line-2); }
 .member:last-child { border-bottom: 0; }
-.member .who { flex: 1; min-width: 0; }
+.member .who { flex: 1 1 200px; min-width: 0; }
+/* an admin's buttons go under the name when the panel is narrow, never squeeze it */
+.member > .row-gap { margin-left: auto; justify-content: flex-end; }
 .member .who b { display: flex; align-items: center; gap: 8px; }
 .member .who span { font-size: 13px; color: var(--muted); }
 .member.off { opacity: .5; }
@@ -581,3 +583,10 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .pay .m { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pay.void .d, .pay.void .v, .pay.void .m { text-decoration: line-through; color: var(--faint); }
 .paytotal { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; }
+
+/* moving to a new address (decision 4): shown on the old one until the person has moved */
+.movebar { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  flex-wrap: wrap; margin: 0 0 22px; padding: 14px 16px; border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.movebar b { display: block; }
+.movebar span { color: var(--muted); font-size: 14px; }

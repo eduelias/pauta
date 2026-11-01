@@ -1,6 +1,6 @@
 # pauta
 
-The team's request queue at https://pauta.genic.dev. It replaces the spreadsheet "Controle de
+The team's request queue at https://app.pauta.cc. It replaces the spreadsheet "Controle de
 Clientes e Campanhas": the person who talks to clients files a request (pedido), and the
 person who runs the Meta ads campaigns works it through A fazer → Em andamento → Aguardando →
 Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
@@ -17,6 +17,9 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
 - `src/pauta/auth.py`: passkey-only accounts, modelled on dominion-archive's. One team, no
   sign-up: invites only (`pauta invite --admin` for the first, then the Equipe page). The first
   account is an admin. Without `PAUTA_AUTH=passkeys` the app runs open (local dev).
+  Passkeys belong to a domain: during a move (decision 4) `PAUTA_RP_ID` lists the new home
+  first and the old one after; each ceremony uses the domain its page is on, and a one-time
+  link (`#/mudar/<token>`) gives a signed-in account a passkey on the new one.
 - `src/pauta/onedrive.py`: request files live in one OneDrive through Microsoft Graph (stdlib
   `urllib`, no SDK). Device code sign-in, no client secret; the refresh token is a file next
   to the DB. Uploads stream through in 5 MiB chunks; downloads are redirects to Graph's
@@ -68,6 +71,6 @@ under Unreleased in `CHANGELOG.md`. Merge your own PR once CI is green. Paths in
 `.github/CODEOWNERS` (CI, `deploy/`, `scripts/`, `Makefile`, `auth.py`, `ratelimit.py`,
 `tests/softpasskey.py`, `pyproject.toml`, `uv.lock`, this file, the decisions) need the
 owner's review: don't change them to get a feature through; say what you need in the PR.
-Never create or move `v*` tags, never touch du7, https://pauta.genic.dev or real data, and
+Never create or move `v*` tags, never touch du7, https://app.pauta.cc (or the old pauta.genic.dev) or real data, and
 never put secrets or real phone numbers anywhere in the repo. Security model:
 `docs/decisions/0002-collaborators-and-a-public-repo.md`.

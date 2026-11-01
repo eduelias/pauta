@@ -47,7 +47,7 @@ jobs:
           {
             echo
             echo "---"
-            echo "Deployed to https://pauta.genic.dev by the *Deploy* job of this run."
+            echo "Deployed to https://app.pauta.cc by the *Deploy* job of this run."
             if [ -n "$prev" ]; then
               echo "Full diff: https://github.com/$GITHUB_REPOSITORY/compare/$prev...$GITHUB_REF_NAME"
             fi

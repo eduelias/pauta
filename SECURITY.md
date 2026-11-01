@@ -1,13 +1,13 @@
 # Security
 
-Pauta holds a small team's client contacts and runs at https://pauta.genic.dev.
+Pauta holds a small team's client contacts and runs at https://app.pauta.cc.
 
 ## Reporting a vulnerability
 
 Please report it privately: **Security → Report a vulnerability** on this repository
 (GitHub's private vulnerability reporting). Don't open a public issue, and don't test
-against https://pauta.genic.dev: run your own copy (`make run`) instead. You'll get an answer
-within a few days.
+against https://app.pauta.cc (or the old pauta.genic.dev): run your own copy (`make run`)
+instead. You'll get an answer within a few days.
 
 ## What protects it
 

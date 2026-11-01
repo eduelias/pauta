@@ -41,7 +41,7 @@ jobs:
       - name: JavaScript parses
         run: node --check src/pauta/static/app.js
       - name: Deploy scripts (shellcheck)
-        run: shellcheck deploy/pauta-deploy deploy/provision-du7.sh deploy/runner-job-guard scripts/repo-settings.sh
+        run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
       - name: Workflows (actionlint)
         uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
 

@@ -181,7 +181,7 @@ def test_link_preview_is_public(site):
         html = r.read().decode()
     for tag in (
         'property="og:title"',
-        'property="og:image" content="https://pauta.genic.dev/og.png"',
+        'property="og:image" content="https://app.pauta.cc/og.png"',
         'name="twitter:card" content="summary_large_image"',
     ):
         assert tag in html
