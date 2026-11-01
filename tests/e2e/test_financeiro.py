@@ -10,6 +10,14 @@ from ledger import drift_cycles
 
 pytestmark = pytest.mark.e2e
 
+
+def recent(days: int) -> str:
+    """`days` ago, clamped to the 1st of this month: the Recebido tile counts the current
+    month, so a payment dated in the previous month (the first days of a month) would
+    make these tests fail by the calendar."""
+    today = date.today()
+    return max(today - timedelta(days=days), today.replace(day=1)).isoformat()
+
 PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 
 
@@ -44,7 +52,7 @@ def test_register_a_payment_from_the_panel(admin):
     page.locator(".finrow", has_text="Açougue").get_by_role("button", name="Registrar").click()
     form = page.locator("#payf")
     expect(form.locator("input[name=amount]")).to_have_value("100")
-    ago = (date.today() - timedelta(days=3)).isoformat()
+    ago = recent(3)  # a few days ago, but inside this month: the tile counts this month
     form.locator("input[name=paid_on]").fill(ago)
     form.locator("select[name=method]").select_option("Pix")
     form.get_by_role("button", name="Registrar").click()
@@ -144,7 +152,7 @@ def test_tiles_filter_and_the_month_picker(admin):
     store.save_client({"name": "Esperando ME"})
     today = date.today()
     ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
-    store.add_payment(paid["id"], {"paid_on": ago(2), "amount": 100}, None)
+    store.add_payment(paid["id"], {"paid_on": recent(2), "amount": 100}, None)
     store.add_payment(late["id"], {"paid_on": ago(70), "amount": 100, "method": "Pix"}, None)
     page = open_device().page
     page.goto(f"{base}/#/financeiro")
