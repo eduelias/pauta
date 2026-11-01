@@ -74,5 +74,8 @@ def test_connect_upload_share_and_remove(live, device, fake):
     page.get_by_role("button", name="Desconectar").click()
     expect(page.locator("#toast")).to_have_text("OneDrive desconectado", timeout=10_000)  # same
     expect(page.get_by_role("button", name="Conectar OneDrive")).to_be_visible()
+    # the toast comes after the app has refreshed /api/boot: before it, a request page
+    # could still render the upload box (the one flaky test of the suite)
+    expect(page.locator("#toast")).to_contain_text("OneDrive desconectado")
     page.goto(f"{base}/#/pedido/1")
     expect(page.locator(".panel", has_text="Arquivos")).to_contain_text("Conecte o OneDrive")
