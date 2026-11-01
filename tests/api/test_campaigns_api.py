@@ -14,6 +14,7 @@ from fakemeta import BUSINESS, CONVERSATIONS, EMPTY_ACCOUNT, TZ, expected
 from pauta import meta as meta_mod
 from pauta import server as server_mod
 from pauta import sync
+from pauta.db import cents_per
 from pauta.meta import NOT_CONNECTED, THROTTLED, local_today
 from softpasskey import call
 
@@ -84,13 +85,14 @@ def test_sync_then_the_list(team, fake_meta):
     want = expected("23850001", since, until, date(2026, 10, 3))
     assert limpeza["spend_cents"] == want["spend_cents"]
     assert limpeza["link_clicks"] == want["link_clicks"]
-    assert limpeza["cpl_cents"] == round(want["spend_cents"] / want["link_clicks"])
+    # half up, as Ads Manager (the fixture lands on an exact half: round() would differ)
+    assert limpeza["cpl_cents"] == cents_per(want["spend_cents"], want["link_clicks"])
     assert limpeza["reach"] == 500 * want["days"]
     assert limpeza["actions"]["link_click"] == want["link_clicks"]
     # Resultados as Ads Manager counts them for the campaign's objective
     assert limpeza["results"] == want["results"] == 2 * want["days"]
     assert limpeza["result_indicator"] == CONVERSATIONS
-    assert limpeza["cost_per_result_cents"] == round(want["spend_cents"] / want["results"])
+    assert limpeza["cost_per_result_cents"] == cents_per(want["spend_cents"], want["results"])
     assert limpeza == {
         **limpeza,
         "name": "Limpeza de pele novembro",
@@ -343,8 +345,8 @@ def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
     assert snap["link_clicks"] == limpeza["link_clicks"]
     assert snap["reach"] == limpeza["reach"] and snap["impressions"] == limpeza["impressions"]
     assert snap["result_indicator"] == CONVERSATIONS and snap["results"] is not None
-    assert snap["cost_per_result_cents"] == round(snap["spend_cents"] / snap["results"])
-    assert snap["cpl_cents"] == round(snap["spend_cents"] / snap["link_clicks"])
+    assert snap["cost_per_result_cents"] == cents_per(snap["spend_cents"], snap["results"])
+    assert snap["cpl_cents"] == cents_per(snap["spend_cents"], snap["link_clicks"])
     # a second tap the same day is another row, not an error; the status stays "seen"
     assert call(f"{base}/api/clients/{clinic['id']}/reviews", {}, piero)[0] == 200
     assert call(f"{base}/api/clients/999/reviews", {}, piero)[0] == 404

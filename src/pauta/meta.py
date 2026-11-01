@@ -370,28 +370,39 @@ class Meta:
     def _saved(self, business_id: str) -> dict | None:
         return self._load(self.token_file(business_id)) if business_id else None
 
-    def _save(self, doc: dict) -> None:
+    def _save(self, doc: dict, *, create: bool = True) -> bool:
+        """Write a connection's file (mode 600, atomically). With `create` off it only
+        updates a file that is still there: a 190 answered during Desconectar must not
+        bring the token back. Returns whether it wrote."""
         target = self.token_file(doc["business_id"])
+        if not create and not target.exists():
+            return False
         tmp = target.with_name(target.name + ".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(doc, f)
         os.replace(tmp, target)
+        return True
 
     def _migrate(self) -> None:
         """The single `<db>.meta-token` of earlier releases becomes a per-business file (the
         same bytes, so the mode stays 600). One without a business id can't be placed:
-        it is kept as `.legacy`, shown as "reconecte" and never read."""
+        it is kept as `.legacy`, shown as "reconecte" and never read. One that isn't a
+        token document at all (unreadable JSON, say) is moved aside the same way, with a
+        warning, so the next start doesn't trip over it again."""
+        if not self.legacy_file.exists():
+            return
         doc = self._load(self.legacy_file)
         if doc is None:
-            return
-        business_id = _digits(doc.get("business_id"))
+            obs.event("meta_token_unreadable", logging.WARNING)
+        business_id = _digits(doc.get("business_id")) if doc else ""
         target = self.token_file(business_id or LEGACY)
         if target.exists():  # connected again since: the newer file wins
             self.legacy_file.unlink()
         else:
             os.replace(self.legacy_file, target)
-        obs.event("meta_token_migrated", legacy=not business_id)
+        if doc:
+            obs.event("meta_token_migrated", legacy=not business_id)
 
     def _files(self) -> dict[str, dict]:
         """Every connection's saved document, by business id (digits, or "legacy")."""
@@ -448,10 +459,16 @@ class Meta:
         return next((c["error"] for c in self.connections() if c["error"]), "")
 
     def _mark(self, business_id: str, state: str, error: str) -> None:
-        """A connection's state, kept in its file so it outlives a restart."""
-        doc = self._saved(business_id)
-        if doc and (doc.get("state") or "ok", doc.get("error") or "") != (state, error):
-            self._save({**doc, "business_id": business_id, "state": state, "error": error})
+        """A connection's state, kept in its file so it outlives a restart. Read and write
+        under the lock, and only a file still there: Desconectar (which unlinks under the
+        same lock) wins over a late 190."""
+        with self._lock:
+            doc = self._saved(business_id)
+            if doc and (doc.get("state") or "ok", doc.get("error") or "") != (state, error):
+                self._save(
+                    {**doc, "business_id": business_id, "state": state, "error": error},
+                    create=False,
+                )
         self._changed()
 
     def _changed(self) -> None:
@@ -1001,7 +1018,16 @@ class Meta:
             return out
         by_business: dict[str, list[str]] = {}
         for aid in todo:
-            by_business.setdefault(self._business_for(aid), []).append(aid)
+            try:
+                business_id = self._business_for(aid)
+            except MetaError:
+                if not self._readable():
+                    raise
+                # several portfolios and no read has placed this account yet: its campaigns
+                # show a dash, the others still get their reach
+                obs.event("meta_reach_unplaced", logging.WARNING)
+                continue
+            by_business.setdefault(business_id, []).append(aid)
         for business_id, aids in by_business.items():
             reads = [
                 f"act_{aid}/insights?"

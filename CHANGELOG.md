@@ -134,6 +134,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Changed
 
+- Voltar para uma versão anterior ao esquema 10 (antes de "uma conexão por portfólio")
+  mostra a Meta como "não conectada" até a próxima atualização: o arquivo do token passou a
+  ser um por portfólio, e a versão antiga não o encontra pelo nome. Nada se perde; a
+  atualização seguinte volta a ler os arquivos.
+- Custo por resultado e Custo por lead arredondam a metade para cima, como o Gerenciador
+  de Anúncios (antes a metade exata ia para o par mais próximo).
+- Um arquivo de token antigo ilegível é posto de lado com um aviso no log em vez de ser
+  tentado a cada início; com dois ou mais portfólios, o Alcance de uma conta ainda sem
+  portfólio conhecido fica em traço sem derrubar o dos outros; um acesso revogado chegando
+  no meio de Desconectar não ressuscita a conexão.
 - A aba **Equipe** agora se chama **Configurações** (ícone de engrenagem): é onde ficam o
   time, os convites, a Meta, o Financeiro, as listas e os Arquivos (o OneDrive dos pedidos),
   em seções com esse nome e nessa ordem. O endereço `#/equipe` (e qualquer link antigo que

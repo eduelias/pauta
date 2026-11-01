@@ -32,6 +32,7 @@ from .db import (
     Invalid,
     NotFound,
     Store,
+    cents_per,
     period_results,
     valid_date,
 )
@@ -766,8 +767,7 @@ def make_handler(
                     if r["client"]["id"] == c["id"]
                 ]
                 for k in c["campaigns"]:
-                    clicks = k["link_clicks"]
-                    k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
+                    k["cpl_cents"] = cents_per(k["spend_cents"], k["link_clicks"])
                     k["reach"] = reach.get(k["meta_id"])
             checkable = [c for c in clients if c["campaigns"]]
             return {
@@ -816,9 +816,7 @@ def make_handler(
                         "until": until,
                         "spend_cents": k["spend_cents"],
                         "link_clicks": k["link_clicks"],
-                        "cpl_cents": round(k["spend_cents"] / k["link_clicks"])
-                        if k["link_clicks"]
-                        else None,
+                        "cpl_cents": cents_per(k["spend_cents"], k["link_clicks"]),
                         "results": k["results"],
                         "result_indicator": k["result_indicator"],
                         "cost_per_result_cents": k["cost_per_result_cents"],
@@ -854,8 +852,7 @@ def make_handler(
             k["result_indicator"] = next(
                 (d["result_indicator"] for d in reversed(days) if d["result_indicator"]), ""
             )
-            clicks = k["link_clicks"]
-            k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
+            k["cpl_cents"] = cents_per(k["spend_cents"], k["link_clicks"])
             pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
             k["reach"] = self._reach(pairs, since, until).get(k["meta_id"])
             return {

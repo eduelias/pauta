@@ -11,6 +11,7 @@ from test_meta import connect
 from fakemeta import BUSINESS, CONVERSATIONS, OTHER_BUSINESS, TODAY, TZ, expected
 from pauta import meta as meta_mod
 from pauta import sync
+from pauta.db import cents_per
 from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError, local_today
 from pauta.sync import BUSY, UNCLAIMED
 
@@ -70,7 +71,7 @@ def test_run_syncs_linked_accounts_and_fetches_history(team, caplog):
     # indicator, no values), link clicks for Panetone (no entry: the objective's fallback)
     assert limpeza["results"] == want["results"] == 2 * want["days"]
     assert limpeza["result_indicator"] == CONVERSATIONS
-    assert limpeza["cost_per_result_cents"] == round(want["spend_cents"] / want["results"])
+    assert limpeza["cost_per_result_cents"] == cents_per(want["spend_cents"], want["results"])
     assert limpeza["daily_budget_cents"] == 1500 and limpeza["lifetime_budget_cents"] is None
     botox = rows[0]["campaigns"][0]
     assert botox["results"] is None and botox["result_indicator"] == "lead"

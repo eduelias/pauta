@@ -17,6 +17,7 @@ from playwright.sync_api import expect
 
 from fakemeta import EMPTY_ACCOUNT, TZ, expected
 from pauta import sync
+from pauta.db import cents_per
 from pauta.meta import local_today
 
 pytestmark = pytest.mark.e2e
@@ -124,7 +125,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(limpeza.locator(".km-results b")).to_have_text(str(want["results"]))
     expect(limpeza.locator(".km-results .ksub")).to_have_text(CONVERSATIONS)
     expect(limpeza.locator(".km-cpr b")).to_contain_text(
-        brl(round(want["spend_cents"] / want["results"]))
+        brl(cents_per(want["spend_cents"], want["results"]))
     )
     expect(limpeza.locator(".km-cpr .ksub")).to_have_text(CONVERSATIONS)
     expect(limpeza.locator(".km-spend b")).to_have_text(

@@ -20,6 +20,7 @@ import sqlite3
 import time
 import unicodedata
 from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from . import finance, obs
@@ -523,13 +524,21 @@ def _budget(value) -> int | None:
     return n if n > 0 else None
 
 
+def cents_per(spend_cents: int, n) -> int | None:
+    """spend ÷ n in whole cents, half up as Ads Manager rounds (Python's `round()` is
+    half-even: 5 ÷ 2 would be 2 there, 3 here); None without units."""
+    if not n:
+        return None
+    return int((Decimal(int(spend_cents)) / Decimal(int(n))).quantize(1, rounding=ROUND_HALF_UP))
+
+
 def period_results(results, spend_cents: int) -> dict:
     """Ads Manager's Resultados and Custo por resultado over a period: `results` is the sum
     of the days that had a count (None when none did), the cost is spend ÷ results."""
     n = int(results) if results is not None else None
     return {
         "results": n,
-        "cost_per_result_cents": round(spend_cents / n) if n else None,
+        "cost_per_result_cents": cents_per(spend_cents, n),
     }
 
 
