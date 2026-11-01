@@ -633,7 +633,7 @@ class Auth:
             db.execute("UPDATE account SET email=? WHERE id=?", (email, account_id))
 
     def set_whatsapp(self, account_id: int, number) -> None:
-        """Optional, free text like a client's: only the person and admins see it."""
+        """Optional, free text like a client's: only the person sees it (`GET /api/me`)."""
         with self.store.db() as db:
             db.execute(
                 "UPDATE account SET whatsapp=? WHERE id=?",

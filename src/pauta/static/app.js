@@ -1697,7 +1697,7 @@ async function viewProfile() {
       ${ME.auth ? `<div class="form-grid mt">
         <div class="field"><label>Seu nome</label><input class="input" id="myname" autocomplete="name" value="${esc(ME.name)}"></div>
         <div class="field"><label>WhatsApp <span class="muted">(opcional)</span></label><input class="input" id="mywa" inputmode="tel" autocomplete="tel" placeholder="+55 11 90000-0000" value="${esc(ME.whatsapp || "")}">
-          <span class="muted small">Só você e os administradores veem o número.</span></div>
+          <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
         <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
           <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
       </div>

@@ -103,7 +103,7 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
 - **Perfil** (`#/perfil`, no menu da conta e no avatar da barra de cima): a sua página, só
-  sua. Nome, **WhatsApp** (novo; só você e os administradores veem) e e-mail do Gravatar
+  sua. Nome, **WhatsApp** (novo; só você vê) e e-mail do Gravatar
   saem de Equipe e vêm para cá. As suas **passkeys** aparecem em lista, com nome (a Pauta
   dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
   **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma) ficam ao lado,

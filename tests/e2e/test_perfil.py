@@ -61,7 +61,8 @@ def test_name_whatsapp_and_email_are_the_persons(live, device):
         row = conn.execute("SELECT name, whatsapp FROM account WHERE id=2").fetchone()
     assert tuple(row) == ("Nato Lima", "+55 11 90000-0000")
 
-    # the team's page shows the person, never the number
+    expect(page.locator("#me")).to_contain_text("Só você vê o número")
+    # the team's page shows the person, never the number, not even to this admin
     page.goto(f"{base}/#/configuracoes")
     expect(page.locator(".member", has_text="Nato Lima")).to_be_visible()
     expect(page.locator("#app")).not_to_contain_text("90000-0000")

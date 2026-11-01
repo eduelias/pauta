@@ -34,7 +34,7 @@ def test_patch_me_takes_name_email_and_whatsapp(team):
     assert call(f"{base}/api/me", {}, nato, "PATCH")[1]["name"] == "Nato"  # nothing to change
 
 
-def test_the_number_is_the_persons_and_the_admins_never_the_teams(team):
+def test_the_number_is_the_persons_only_not_even_an_admins(team):
     base, nato, piero, _ = team
     call(f"{base}/api/me", {"whatsapp": "31600000000"}, piero, "PATCH")
     for cookie in (nato, piero):
@@ -42,7 +42,7 @@ def test_the_number_is_the_persons_and_the_admins_never_the_teams(team):
         boot = call(f"{base}/api/boot", cookie=cookie)[1]
         assert "31600000000" not in json.dumps(boot["members"])
     assert call(f"{base}/api/me", cookie=piero)[1]["whatsapp"] == "31600000000"
-    assert call(f"{base}/api/me", cookie=nato)[1]["whatsapp"] == ""
+    assert call(f"{base}/api/me", cookie=nato)[1]["whatsapp"] == ""  # the admin sees only his
     export = json.dumps(call(f"{base}/api/export", cookie=nato)[1])
     assert "31600000000" not in export  # the export has no account table either
 
