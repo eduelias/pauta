@@ -18,6 +18,7 @@ def recent(days: int) -> str:
     today = date.today()
     return max(today - timedelta(days=days), today.replace(day=1)).isoformat()
 
+
 PHONE = {"viewport": {"width": 390, "height": 844}, "is_mobile": True, "has_touch": True}
 
 
