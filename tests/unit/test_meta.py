@@ -230,7 +230,9 @@ def test_balance_refused_is_not_an_error(linked, fake_meta, caplog):
     caplog.set_level(logging.INFO, logger="pauta")
     fake_meta.refuse_balance = True
     accs = linked.accounts()
-    assert all(a["balance"] == {"available": False, "reason": NO_BALANCE} for a in accs)
+    assert all(
+        a["balance"] == {"available": False, "refused": True, "reason": NO_BALANCE} for a in accs
+    )
     assert accs[0]["spend_cents"] == 123456 and not linked.error
 
 

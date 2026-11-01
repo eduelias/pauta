@@ -9,6 +9,25 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- Aba **Campanhas** (quando a Meta está configurada; todo o time vê): um bloco por cliente
+  com as campanhas acompanhadas e os números do período (investido, leads = cliques no link,
+  custo por lead, alcance, impressões), mais o total do cliente. No topo, o **período** com
+  as opções do Gerenciador de Anúncios (hoje, ontem, últimos 7 ou 30 dias sem o dia de hoje,
+  este mês, mês passado, personalizado) sempre mostrando as datas exatas e um aviso "hoje
+  incluso"; a escolha fica no endereço e o navegador lembra a última. O check diário mora
+  nas mesmas linhas: **Visto hoje** por cliente (com nota opcional), "Hoje: 3 de 5 clientes
+  vistos", e quem ainda falta ver fica em cima. Tocar numa campanha abre a página dela:
+  escolha de métricas (investido, leads, custo por lead, alcance, impressões, CTR, CPM,
+  frequência e os resultados que a Meta reportar, como conversas iniciadas), cada uma com
+  o valor do período e um gráfico por dia. Administradores têm **Atualizar agora**, **Não
+  acompanhar** e "ver ignoradas". No celular, a aba entra no lugar de Financeiro/Quadro
+  (os dois continuam a um toque do Painel). **Equipe → Meta** agora só mapeia as contas
+  (conta, cliente e saldo; os totais do mês saíram, porque somavam campanhas encerradas) e,
+  quando a Meta recusa o saldo, diz o que fazer: "sem permissão · reconecte em Adicionar
+  contas". O cartão Meta da página do cliente lista as campanhas do mês com link para a aba.
+  API: `GET /api/campaigns` ganha `include_skipped=1`, `client=<id>`, `last_sync`,
+  `seen_today`/`seen`; novos `GET /api/campaigns/{id}?since&until` (a campanha com os dias)
+  e `POST /api/clients/{id}/reviews` (o Visto hoje).
 - Acompanhamento de campanhas (dados e sincronização; a tela vem a seguir): a Pauta passa a
   guardar, por campanha e por dia, os números das contas de anúncios vinculadas a um cliente
   (investido, impressões, alcance, cliques no link e as ações da Meta). As campanhas vêm da

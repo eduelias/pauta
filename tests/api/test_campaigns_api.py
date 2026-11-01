@@ -2,6 +2,7 @@
 acompanhar / Acompanhar, the admin's "Atualizar agora" and its 15-minute limit, /metrics
 and the export."""
 
+import json
 from datetime import date
 
 import pytest
@@ -39,6 +40,7 @@ def test_sync_then_the_list(team, fake_meta):
     assert status == 200
     assert doc["since"] == today.replace(day=1).isoformat() and doc["until"] == today.isoformat()
     assert doc["today_included"] is True
+    assert doc["last_sync"].endswith("Z")  # how fresh the stored numbers are
     assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Padaria Trigo de Ouro"]
     k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
     assert set(k) == {"23850001", "23850002", "23850004"}
@@ -56,6 +58,7 @@ def test_sync_then_the_list(team, fake_meta):
         "started": "2026-10-03",
         "ended": None,
         "account_id": "111",
+        "currency": "BRL",
         "request": None,
     }
 
@@ -106,6 +109,124 @@ def test_skip_and_follow_again(team, fake_meta):
     status, out, _ = call(f"{base}/api/campaigns/{cid}", {}, piero, "PATCH")
     assert status == 400
     assert call(f"{base}/api/campaigns/999", {"state": "skipped"}, piero, "PATCH")[0] == 404
+
+
+def test_one_campaign_with_its_days(team, fake_meta):
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
+    cid = k["23850001"]["id"]
+    status, doc, _ = call(
+        f"{base}/api/campaigns/{cid}?since=2026-10-10&until=2026-10-12", cookie=piero
+    )
+    assert status == 200
+    assert doc["since"] == "2026-10-10" and doc["until"] == "2026-10-12"
+    assert doc["today_included"] is False and doc["last_sync"].endswith("Z")
+    c = doc["campaign"]
+    assert c["id"] == cid and c["name"] == "Limpeza de pele novembro"
+    assert c["client_name"] == "Clínica Bem Estar" and c["state"] == "active"
+    assert c["currency"] == "BRL"  # the account's: money is in it
+    assert [d["day"] for d in c["days"]] == ["2026-10-10", "2026-10-11", "2026-10-12"]
+    assert c["days"][0] == {
+        **c["days"][0],
+        "spend_cents": 1010,
+        "impressions": 1000,
+        "reach": 800,
+        "link_clicks": 10,
+        "actions": {
+            "link_click": 10,
+            "onsite_conversion.messaging_conversation_started_7d": 2,
+        },
+    }
+    assert c["spend_cents"] == 1010 + 1011 + 1012 and c["impressions"] == 3300
+    assert c["link_clicks"] == c["results"] == 33
+    assert c["cpl_cents"] == round(3033 / 33)
+    assert c["reach"] == 500 * 3
+    assert c["actions"] == {
+        "link_click": 33,
+        "onsite_conversion.messaging_conversation_started_7d": 6,
+    }
+    # the default period is this month so far, like the list's
+    today = date.today()
+    doc = call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]
+    assert doc["since"] == today.replace(day=1).isoformat() and doc["until"] == today.isoformat()
+    # a period before the campaign: no days, zero sums, no cost per lead, no reach
+    doc = call(f"{base}/api/campaigns/{cid}?since=2025-01-01&until=2025-01-31", cookie=piero)[1]
+    assert doc["campaign"]["days"] == [] and doc["campaign"]["spend_cents"] == 0
+    assert doc["campaign"]["cpl_cents"] is None and doc["campaign"]["reach"] is None
+    assert (
+        call(f"{base}/api/campaigns/{cid}?since=2026-10-20&until=2026-10-19", cookie=piero)[0]
+        == 400
+    )
+    assert call(f"{base}/api/campaigns/999", cookie=piero)[0] == 404
+    assert call(f"{base}/api/campaigns/{cid}")[0] == 401
+    # reach failing is never the page's problem
+    fake_meta.token_invalid = True
+    status, doc, _ = call(
+        f"{base}/api/campaigns/{cid}?since=2026-09-01&until=2026-09-30", cookie=piero
+    )
+    assert status == 200 and doc["campaign"]["reach"] is None
+
+
+def test_skipped_ones_on_request_and_one_clients_campaigns(team, fake_meta):
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    clinic, bakery = doc["clients"]
+    cid = clinic["campaigns"][0]["id"]
+    call(f"{base}/api/campaigns/{cid}", {"state": "skipped"}, piero, "PATCH")
+    # the list leaves it out; include_skipped=1 brings it back, marked
+    plain = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert cid not in [x["id"] for c in plain["clients"] for x in c["campaigns"]]
+    full = call(f"{base}/api/campaigns?include_skipped=1", cookie=piero)[1]
+    k = {x["id"]: x for c in full["clients"] for x in c["campaigns"]}
+    assert k[cid]["state"] == "skipped"
+    assert len(k) == 3 and sum(1 for x in k.values() if x["state"] == "skipped") == 1
+    # one client's campaigns (the client page): the bakery's only
+    mine = call(f"{base}/api/campaigns?client={bakery['id']}", cookie=piero)[1]
+    assert [c["id"] for c in mine["clients"]] == [bakery["id"]]
+    assert [x["meta_id"] for x in mine["clients"][0]["campaigns"]] == ["23850004"]
+    assert call(f"{base}/api/campaigns?client=999", cookie=piero)[1]["clients"] == []
+    assert call(f"{base}/api/campaigns?client=abc", cookie=piero)[0] == 400
+
+
+def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    clinic, bakery = doc["clients"]
+    assert doc["seen"] == {"done": 0, "total": 2}
+    assert clinic["seen_today"] is None and bakery["seen_today"] is None
+    # a member marks the clinic as seen, with a note
+    status, out, _ = call(
+        f"{base}/api/clients/{clinic['id']}/reviews", {"note": "subi a verba"}, piero
+    )
+    assert status == 200, out
+    assert out["client"] == clinic["id"] and out["campaigns"] == 2  # its two ACTIVE ones
+    assert out["seen_today"]["by"] == "Piero" and out["seen_today"]["at"]
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["seen"] == {"done": 1, "total": 2}
+    assert doc["clients"][0]["seen_today"]["by"] == "Piero"
+    assert doc["clients"][1]["seen_today"] is None
+    # the rows: dated today, by Piero, the note next to this month's numbers
+    today = date.today()
+    reviews = call(f"{base}/api/export", cookie=nato)[1]["review"]
+    assert len(reviews) == 2 and {r["on"] for r in reviews} == {today.isoformat()}
+    assert all(r["note"] == "subi a verba" for r in reviews)
+    by_campaign = {r["campaign"]: json.loads(r["snapshot"]) for r in reviews}
+    limpeza = next(k for k in clinic["campaigns"] if k["meta_id"] == "23850001")
+    snap = by_campaign[limpeza["id"]]
+    assert snap["since"] == today.replace(day=1).isoformat() and snap["until"] == today.isoformat()
+    assert snap["spend_cents"] == limpeza["spend_cents"]
+    assert snap["link_clicks"] == limpeza["link_clicks"]
+    assert snap["cpl_cents"] == limpeza["cpl_cents"]
+    assert snap["reach"] == limpeza["reach"] and snap["impressions"] == limpeza["impressions"]
+    # a second tap the same day is another row, not an error; the status stays "seen"
+    assert call(f"{base}/api/clients/{clinic['id']}/reviews", {}, piero)[0] == 200
+    assert call(f"{base}/api/clients/999/reviews", {}, piero)[0] == 404
+    assert call(f"{base}/api/clients/{clinic['id']}/reviews", {})[0] == 401
+    # a client with no active campaign has nothing to mark
+    extra = call(f"{base}/api/clients", {"name": "Sem campanha"}, nato)[1]
+    status, out, _ = call(f"{base}/api/clients/{extra['id']}/reviews", {}, piero)
+    assert status == 400 and "campanha ativa" in out["error"]
 
 
 def test_manual_sync_is_for_admins_once_in_15_minutes(team, fake_meta, monkeypatch):

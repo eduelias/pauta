@@ -25,7 +25,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__, obs, sync
 from .auth import MOVE_LINK_DAYS, Auth, AuthError
-from .db import EXPORT_TABLES, Invalid, NotFound, Store, valid_date
+from .db import (
+    CAMPAIGN_STATES,
+    EXPORT_TABLES,
+    TRACKED_STATES,
+    Invalid,
+    NotFound,
+    Store,
+    valid_date,
+)
 from .meta import ACCOUNT_STATUS, NOT_CONNECTED, Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
@@ -610,26 +618,42 @@ def make_handler(
                 raise Invalid(f"período grande demais (máximo {MAX_PERIOD_DAYS} dias)")
             return since, until, today.isoformat()
 
+        def _reach(self, pairs: list[tuple[str, str]], since: str, until: str) -> dict:
+            """The period's reach per campaign from Meta; {} when Meta won't say (reach is
+            never the screen's problem: the caller shows a dash)."""
+            if not pairs or not meta.connected:
+                return {}
+            try:
+                return meta.reach(pairs, date.fromisoformat(since), date.fromisoformat(until))
+            except MetaError:
+                return {}
+
         @route("GET", "/api/campaigns")
         def campaigns(self, viewer, _body):
             """Every tracked campaign by client with the period's sums; `reach` comes from
             Meta for the period as a whole (null when Meta won't say: never the list's
-            problem)."""
+            problem). `include_skipped=1` adds the campaigns marked Não acompanhar (so an
+            admin can bring one back); `client=<id>` keeps one client's. `last_sync` says
+            how fresh the stored numbers are."""
             since, until, today = self._period()
-            clients = store.campaign_rows(since, until)
+            q = parse_qs(urlparse(self.path).query)
+            states = CAMPAIGN_STATES if q.get("include_skipped", [""])[0] == "1" else TRACKED_STATES
+            clients = store.campaign_rows(since, until, states)
+            client = q.get("client", [""])[0]
+            if client:
+                if not client.isdigit():
+                    raise Invalid("cliente inválido")
+                clients = [c for c in clients if c["id"] == int(client)]
             pairs = [
                 (k["account_id"], k["meta_id"])
                 for c in clients
                 for k in c["campaigns"]
                 if k["meta_id"] and k["account_id"]
             ]
-            reach: dict = {}
-            if pairs and meta.connected:
-                try:
-                    reach = meta.reach(pairs, date.fromisoformat(since), date.fromisoformat(until))
-                except MetaError:
-                    reach = {}
+            reach = self._reach(pairs, since, until)
+            seen = store.seen_on(today)
             for c in clients:
+                c["seen_today"] = seen.get(c["id"])
                 for k in c["campaigns"]:
                     results = k["results"]
                     k["cpl_cents"] = round(k["spend_cents"] / results) if results else None
@@ -638,7 +662,83 @@ def make_handler(
                 "since": since,
                 "until": until,
                 "today_included": until >= today,
+                "last_sync": meta.last_sync,
+                # the daily check: how many of these clients someone has been through today
+                "seen": {
+                    "done": sum(1 for c in clients if c["seen_today"]),
+                    "total": len(clients),
+                },
                 "clients": clients,
+            }
+
+        @route("POST", f"/api/clients/{ID}/reviews")
+        def review_client(self, viewer, body, cid):
+            """Visto hoje: one `review` per active campaign of the client, dated today, with
+            this month's numbers as the snapshot (so the note sits next to the numbers it
+            was about). Returns the client's check status."""
+            cid = int(cid)
+            store.client(cid)
+            note = str(body.get("note") or "").strip()[:500]
+            today = date.today()
+            since, until = today.replace(day=1).isoformat(), today.isoformat()
+            rows = [
+                k
+                for c in store.campaign_rows(since, until, ("active",))
+                if c["id"] == cid
+                for k in c["campaigns"]
+            ]
+            if not rows:
+                raise Invalid("este cliente não tem campanha ativa para marcar")
+            reach = self._reach(
+                [(k["account_id"], k["meta_id"]) for k in rows if k["meta_id"]], since, until
+            )
+            snaps = [
+                (
+                    k["id"],
+                    {
+                        "since": since,
+                        "until": until,
+                        "spend_cents": k["spend_cents"],
+                        "link_clicks": k["link_clicks"],
+                        "cpl_cents": round(k["spend_cents"] / k["results"])
+                        if k["results"]
+                        else None,
+                        "reach": reach.get(k["meta_id"]),
+                        "impressions": k["impressions"],
+                    },
+                )
+                for k in rows
+            ]
+            n = store.add_reviews(cid, until, viewer["account"], note, snaps)
+            obs.event("campaign_review", account=viewer["account"], client=cid, campaigns=n)
+            return {"client": cid, "campaigns": n, "seen_today": store.seen_on(until).get(cid)}
+
+        @route("GET", f"/api/campaigns/{ID}")
+        def campaign(self, viewer, _body, cid):
+            """One campaign for the period: the row, its daily rows (`days`), the period's
+            sums and cost per lead, and the period's reach from Meta (null when it won't
+            say)."""
+            since, until, today = self._period()
+            k = store.campaign(int(cid), since, until)
+            days = k["days"]
+            k["spend_cents"] = sum(d["spend_cents"] for d in days)
+            k["impressions"] = sum(d["impressions"] for d in days)
+            k["link_clicks"] = sum(d["link_clicks"] for d in days)
+            actions: dict[str, int] = {}
+            for d in days:
+                for name, n in d["actions"].items():
+                    actions[name] = actions.get(name, 0) + int(n)
+            k["actions"] = actions
+            k["results"] = k["link_clicks"]
+            k["cpl_cents"] = round(k["spend_cents"] / k["results"]) if k["results"] else None
+            pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
+            k["reach"] = self._reach(pairs, since, until).get(k["meta_id"])
+            return {
+                "since": since,
+                "until": until,
+                "today_included": until >= today,
+                "last_sync": meta.last_sync,
+                "campaign": k,
             }
 
         @route("PATCH", f"/api/campaigns/{ID}")

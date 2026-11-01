@@ -930,14 +930,17 @@ class Store:
 
     def campaign_rows(self, since: str, until: str, states: tuple = TRACKED_STATES) -> list[dict]:
         """Per client (by name), its campaigns (active first, then by name) with the period's
-        sums from `insight`: spend, impressions, link clicks and actions by type. `results`
-        is the link clicks (the team's lead definition; a setting may change it later)."""
+        sums from `insight`: spend, impressions, link clicks and actions by type, plus the
+        account's `currency` (money is in it). `results` is the link clicks (the team's lead
+        definition; a setting may change it later)."""
         marks = ",".join("?" for _ in states)
         with self.db() as db:
             rows = db.execute(
                 "SELECT k.id, k.client, c.name AS client_name, k.account_id, k.meta_id, k.name, "
                 "k.objective, k.state, k.effective_status, k.started, k.ended, k.request, "
-                "k.every_days, k.note, k.last_seen FROM campaign k JOIN client c ON c.id=k.client "
+                "k.every_days, k.note, k.last_seen, a.currency FROM campaign k "
+                "JOIN client c ON c.id=k.client "
+                "LEFT JOIN meta_account a ON a.account_id=k.account_id "
                 f"WHERE k.state IN ({marks}) "
                 "ORDER BY c.name COLLATE NOCASE, c.id, k.state<>'active', "
                 "k.name COLLATE NOCASE, k.id",
@@ -980,8 +983,9 @@ class Store:
         """One campaign with its daily rows in the range (all of them when no range)."""
         with self.db() as db:
             row = db.execute(
-                "SELECT k.*, c.name AS client_name FROM campaign k "
-                "LEFT JOIN client c ON c.id=k.client WHERE k.id=?",
+                "SELECT k.*, c.name AS client_name, a.currency FROM campaign k "
+                "LEFT JOIN client c ON c.id=k.client "
+                "LEFT JOIN meta_account a ON a.account_id=k.account_id WHERE k.id=?",
                 (cid,),
             ).fetchone()
             if not row:
@@ -1017,6 +1021,32 @@ class Store:
             )
         obs.event("campaign_state", account=by, campaign=cid, state=state)
         return self.campaign(cid)
+
+    def add_reviews(self, cid: int, on: str, by: int | None, note: str, snapshots: list) -> int:
+        """Visto hoje (decision 8, phase 1 on the Meta rows): one `review` row per campaign
+        in `snapshots` ([(campaign id, numbers)]), dated `on`, by `by`, with the note and
+        the period numbers it was about. Returns how many rows were written."""
+        self.client(cid)  # 404 for an unknown client
+        with self.db() as db:
+            for kid, snap in snapshots:
+                db.execute(
+                    'INSERT INTO review(campaign, "on", account, note, snapshot) '
+                    "VALUES (?,?,?,?,?)",
+                    (kid, on, by, note or "", json.dumps(snap, sort_keys=True)),
+                )
+        return len(snapshots)
+
+    def seen_on(self, on: str) -> dict[int, dict]:
+        """Per client, the latest check dated `on` over its tracked campaigns:
+        {client id: {"by": name or None, "at": created}}."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT k.client, a.name AS by, MAX(r.created) AS at FROM review r "
+                "JOIN campaign k ON k.id=r.campaign LEFT JOIN account a ON a.id=r.account "
+                "WHERE r.\"on\"=? AND k.state IN ('active', 'paused', 'ended') GROUP BY k.client",
+                (on,),
+            ).fetchall()
+        return {r["client"]: {"by": r["by"], "at": r["at"]} for r in rows}
 
     def table(self, name: str) -> list[dict]:
         """Every row of one of the tracking tables, for the export."""

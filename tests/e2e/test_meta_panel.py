@@ -38,21 +38,22 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     expect(page).to_have_url(re.compile(r"#/equipe$"))
     expect(card).to_contain_text("Conectado: Agência Exemplo desde")
 
+    # the accounts and whose they are; the numbers live in Campanhas (decision 8)
     table = page.locator("#metaaccounts")
+    expect(table.locator("thead th")).to_have_text(["Conta", "Cliente", "Saldo"])
     expect(table.locator("tbody tr")).to_have_count(2)
     clinic = table.locator("tbody tr").first
     expect(clinic).to_contain_text("Clínica Bem Estar")
-    expect(clinic).to_contain_text("1.234,56")  # investido
-    expect(clinic).to_contain_text("20.118")  # alcance
-    expect(clinic).to_contain_text("1,37")  # custo por clique
     expect(clinic).to_contain_text("3.765,44")  # left before the spending limit
+    expect(clinic).not_to_contain_text("1.234,56")
+    expect(card).not_to_contain_text("Investido este mês")
     expect(table.locator("tbody tr").nth(1)).to_contain_text("Desativada")
 
     # Meta won't show the balance to this token: the rest still reads
     fake_meta.refuse_balance = True
     card.get_by_role("button", name="Atualizar").click()
     expect(clinic).to_contain_text("sem permissão")
-    expect(clinic).to_contain_text("1.234,56")
+    expect(clinic).to_contain_text("Clínica Bem Estar")
 
     page.once("dialog", lambda d: d.accept())
     card.get_by_role("button", name="Desconectar").click()
@@ -146,16 +147,14 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     expect(page.locator("#metaaccounts tbody tr").first).not_to_contain_text("Sugestão")
     assert store.client(clinic["id"])["ad_account"] == "111"
 
-    # the client page: this month's numbers of the linked account
+    # the client page: no campaign synced yet, the linked account's balance
     page.goto(f"{base}/#/cliente/{clinic['id']}")
     card = page.locator("#clientmeta")
-    expect(card).to_contain_text("Clínica Bem Estar")
-    expect(card).to_contain_text("1.234,56")
-    expect(card).to_contain_text("20.118")
-    expect(card).to_contain_text("903")
-    expect(card).to_contain_text("1,37")
+    expect(card).to_contain_text("Nenhuma campanha acompanhada este mês")
+    expect(card).to_contain_text("Saldo · Clínica Bem Estar")
     expect(card).to_contain_text("3.765,44")
-    expect(card.locator(".row")).to_have_count(6)
+    expect(card.locator(".row")).to_have_count(1)
+    expect(card.get_by_role("link", name="Campanhas")).to_have_attribute("href", "#/campanhas")
 
     # unticked in Meta: the row stays, says so, and can still be unlinked
     fake_meta.accounts = fake_meta.accounts[:1]
@@ -173,13 +172,15 @@ def test_linking_accounts_to_clients(live, device, fake_meta):
     # the bakery's page, as an admin with nothing linked: a pointer to Equipe
     page.goto(f"{base}/#/cliente/{bakery['id']}")
     expect(page.locator("#clientmeta")).to_contain_text("Nenhuma conta da Meta vinculada")
-    expect(page.locator("#clientmeta").get_by_role("link")).to_have_attribute("href", "#/equipe")
+    expect(
+        page.locator("#clientmeta").get_by_role("link", name="Vincule em Equipe → Meta.")
+    ).to_have_attribute("href", "#/equipe")
 
 
 def test_an_account_without_numbers_and_an_odd_currency(live, device, fake_meta):
-    """Meta won't return one account's insights: that row shows dashes (the reason on hover)
-    and the others their numbers; the client card says so. A currency Intl doesn't know
-    (Meta's data) falls back to "<code> <value>" instead of breaking the card."""
+    """Meta won't return one account's insights: the account list and the balance still
+    read (the numbers live in Campanhas now). A currency Intl doesn't know (Meta's data)
+    falls back to "<code> <value>" instead of breaking a card."""
     base, auth, store = live
     clinic = store.save_client({"name": "Clínica Bem Estar", "ad_account": "111"})
     fake_meta.accounts = [ACCOUNTS[0], {**ACCOUNTS[1], "currency": "N/A"}]
@@ -194,24 +195,22 @@ def test_an_account_without_numbers_and_an_odd_currency(live, device, fake_meta)
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     rows = page.locator("#metaaccounts tbody tr")
     expect(rows).to_have_count(2)
-    expect(rows.nth(1)).to_contain_text("N/A 0.00")  # the fallback, no console error
-    assert page.evaluate("centsMoney(1234, 'N/A')") == "N/A 12.34"
+    expect(rows.nth(1)).to_contain_text("—")  # no spending limit: nothing to show
+    assert page.evaluate("centsMoney(1234, 'N/A')") == "N/A 12.34"  # the fallback
     assert page.evaluate("centsMoney(1234, 'BRL')") == "R$\xa012,34"
     assert page.evaluate("centsMoney(null, 'BRL')") == "—"
 
     fake_meta.fail_insights = {"111"}
     page.locator("#meta").get_by_role("button", name="Atualizar").click()
     clinic_row = page.locator("#metaaccounts tbody tr").first
-    dashes = clinic_row.locator("td[title]")
-    expect(dashes).to_have_count(5)
-    expect(dashes.first).to_have_text("—")
-    expect(dashes.first).to_have_attribute("title", NO_NUMBERS)
+    expect(clinic_row).to_contain_text("Clínica Bem Estar")
     expect(clinic_row).to_contain_text("3.765,44")  # the balance read still worked
-    expect(page.locator("#metaaccounts tbody tr").nth(1)).to_contain_text("N/A 0.00")
+    expect(clinic_row.locator("td")).to_have_count(3)
+    assert NO_NUMBERS  # the reason still travels in the API, for whoever reads it
 
     page.goto(f"{base}/#/cliente/{clinic['id']}")
     card = page.locator("#clientmeta")
-    expect(card).to_contain_text("números indisponíveis")
+    expect(card).to_contain_text("Nenhuma campanha acompanhada")
     expect(card).to_contain_text("3.765,44")
     expect(card).not_to_contain_text("Investido")
 
@@ -239,8 +238,8 @@ def test_member_sees_the_card_but_no_pointer(live, device, fake_meta):
     page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(page.locator("#mechip")).to_contain_text("Ana")
     page.goto(f"{base}/#/cliente/{clinic['id']}")
-    expect(page.locator("#clientmeta")).to_contain_text("Investido este mês")
-    expect(page.locator("#clientmeta")).to_contain_text("1.234,56")
+    expect(page.locator("#clientmeta")).to_contain_text("Saldo · Clínica Bem Estar")
+    expect(page.locator("#clientmeta")).to_contain_text("3.765,44")
     page.goto(f"{base}/#/cliente/{empty['id']}")
     expect(page.locator("#cname")).to_contain_text("Padaria")
     expect(page.locator("#clientmeta")).to_be_empty()

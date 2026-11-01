@@ -601,7 +601,9 @@ class Meta:
                 raise self._fail(status, doc, "balance")
             # 10, 100, 200-299: the token may not read these fields
             obs.event("meta_balance_refused", code=code)
-            return {"available": False, "reason": NO_BALANCE}
+            # refused: only a fresh connection carries a changed system-user task (the UI
+            # says "reconecte em Adicionar contas")
+            return {"available": False, "refused": True, "reason": NO_BALANCE}
         cap, spent = _minor(doc.get("spend_cap")), _minor(doc.get("amount_spent"))
         funding = doc.get("funding_source_details")
         return {
