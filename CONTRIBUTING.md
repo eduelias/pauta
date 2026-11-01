@@ -22,7 +22,8 @@
 ## The loop, and how long it takes
 
 Measured on 2026-11-01 on an M-series Mac (11 cores) and GitHub's `ubuntu-latest` (4 vCPU),
-on `main` (328 unit/API tests, 73 browser tests).
+on `main` (328 unit/API tests, 73 browser tests). With the Meta and Perfil features merged the
+same day (463 and 104 tests) `make check` takes 53 s: `make test` 15 s, `make e2e` 34 s.
 
 | Step | Command | Before | Now |
 |---|---|---|---|
