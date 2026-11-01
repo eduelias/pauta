@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from test_meta_api import connected
 
-from fakemeta import BUSINESS, CONVERSATIONS, TZ, expected
+from fakemeta import BUSINESS, CONVERSATIONS, EMPTY_ACCOUNT, TZ, expected
 from pauta import meta as meta_mod
 from pauta import server as server_mod
 from pauta.meta import NOT_CONNECTED, local_today
@@ -228,6 +228,63 @@ def test_skipped_ones_on_request_and_one_clients_campaigns(team, fake_meta):
     assert [x["meta_id"] for x in mine["clients"][0]["campaigns"]] == ["23850004"]
     assert call(f"{base}/api/campaigns?client=999", cookie=piero)[1]["clients"] == []
     assert call(f"{base}/api/campaigns?client=abc", cookie=piero)[0] == 400
+
+
+def test_a_client_with_linked_accounts_and_no_campaigns_is_listed(team, fake_meta):
+    """Piero connected a portfolio whose ad account is a client's but holds no campaign:
+    the client stays on Campanhas (campaigns: [], its account and balance) instead of
+    vanishing as if the connection had failed. A client with neither doesn't show. Every
+    block carries its linked accounts with the balance from Meta's cached list; Meta
+    failing nulls the balances and nothing else. Visto hoje still counts (and accepts) the
+    clients with something to check only."""
+    base = team[0]
+    assert call(f"{base}/api/campaigns", cookie=team[2])[1]["clients"] == []  # not connected
+    fake_meta.accounts.append(EMPTY_ACCOUNT)
+    base, nato, piero = connected(team, fake_meta)
+    clinic = call(f"{base}/api/clients", {"name": "Clínica Bem Estar"}, nato)[1]
+    studio = call(f"{base}/api/clients", {"name": "Estúdio Pilates Leve"}, nato)[1]
+    nobody = call(f"{base}/api/clients", {"name": "Sem conta"}, nato)[1]
+    call(f"{base}/api/meta", cookie=nato)
+    call(f"{base}/api/meta/accounts/111", {"client": clinic["id"]}, nato, method="PATCH")
+    call(f"{base}/api/meta/accounts/555", {"client": studio["id"]}, nato, method="PATCH")
+    status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
+    assert status == 200 and out["errors"] == [] and out["campaigns_new"] == 2, out
+    status, doc, _ = call(f"{base}/api/campaigns", cookie=piero)
+    assert status == 200
+    assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Estúdio Pilates Leve"]
+    assert nobody["id"] not in [c["id"] for c in doc["clients"]]
+    first, second = doc["clients"]
+    assert len(first["campaigns"]) == 2
+    assert first["accounts"] == [
+        {
+            "id": "111",
+            "name": "Clínica Bem Estar",
+            "currency": "BRL",
+            "business_name": "Agência Exemplo",
+            "balance": first["accounts"][0]["balance"],
+        }
+    ]
+    assert first["accounts"][0]["balance"]["remaining_cents"] == 376544
+    assert second["campaigns"] == [] and second["seen_today"] is None
+    (acc,) = second["accounts"]
+    assert acc["id"] == "555" and acc["name"] == "Estúdio Pilates Leve"
+    assert acc["business_name"] == "Agência Exemplo" and acc["currency"] == "BRL"
+    assert acc["balance"]["available"] and acc["balance"]["remaining_cents"] == 27450
+    assert doc["seen"] == {"done": 0, "total": 1}  # the studio has nothing to check
+    mine = call(f"{base}/api/campaigns?client={studio['id']}", cookie=piero)[1]
+    assert [c["id"] for c in mine["clients"]] == [studio["id"]]
+    assert mine["clients"][0]["campaigns"] == [] and mine["seen"] == {"done": 0, "total": 0}
+    status, out, _ = call(f"{base}/api/clients/{studio['id']}/reviews", {}, piero)
+    assert status == 400 and "campanha ativa" in out["error"]
+    # Meta failing (the failure is remembered for a while): the list answers, balances null
+    fake_meta.token_invalid = True
+    call(f"{base}/api/meta?refresh=1", cookie=nato)
+    status, doc, _ = call(f"{base}/api/campaigns", cookie=piero)
+    assert status == 200
+    assert [c["name"] for c in doc["clients"]] == ["Clínica Bem Estar", "Estúdio Pilates Leve"]
+    assert [a["balance"] for c in doc["clients"] for a in c["accounts"]] == [None, None]
+    assert doc["clients"][1]["accounts"][0]["business_name"] == "Agência Exemplo"
+    assert len(doc["clients"][0]["campaigns"]) == 2
 
 
 def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):

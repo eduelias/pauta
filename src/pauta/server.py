@@ -698,19 +698,41 @@ def make_handler(
             except MetaError:
                 return {}
 
+        def _live_accounts(self) -> dict[str, dict]:
+            """Meta's latest account list by id (the cached read, as the client cards use);
+            {} when Meta isn't connected or won't say: a balance is never the list's
+            problem (the caller shows null)."""
+            if not meta.connected:
+                return {}
+            try:
+                return {a["id"]: a for a in meta.accounts()}
+            except MetaError:
+                return {}
+
         @route("GET", "/api/campaigns")
         def campaigns(self, viewer, _body):
-            """Every tracked campaign by client with the period's sums, Ads Manager's
-            Resultados (`results`, `result_indicator`, `cost_per_result_cents`), the lead
-            cost (`cpl_cents`: spend ÷ link clicks) and the campaign's budget; `reach`
-            comes from Meta for the period as a whole (null when Meta won't say: never the
-            list's problem). `include_skipped=1` adds the campaigns marked Não acompanhar
-            (so an admin can bring one back); `client=<id>` keeps one client's. `last_sync`
-            says how fresh the stored numbers are."""
+            """Every client with a tracked campaign or a linked ad account. Each comes
+            with its campaigns and the period's sums, Ads Manager's Resultados (`results`,
+            `result_indicator`, `cost_per_result_cents`), the lead cost (`cpl_cents`: spend
+            ÷ link clicks) and the campaign's budget; `reach` comes from Meta for the period
+            as a whole (null when Meta won't say: never the list's problem). A client whose
+            linked accounts hold no tracked campaign (a portfolio just connected, say) is
+            listed with `campaigns: []`, so it doesn't look like the connection failed.
+            `accounts` is the client's linked ad accounts with the balance from Meta's
+            cached list (null when Meta won't say). `include_skipped=1` adds the campaigns
+            marked Não acompanhar (so an admin can bring one back); `client=<id>` keeps one
+            client's. `last_sync` says how fresh the stored numbers are. `seen` counts the
+            clients with campaigns only: Visto hoje needs an active one."""
             since, until, today = self._period()
             q = parse_qs(urlparse(self.path).query)
             states = CAMPAIGN_STATES if q.get("include_skipped", [""])[0] == "1" else TRACKED_STATES
             clients = store.campaign_rows(since, until, states)
+            linked = [r for r in store.meta_accounts() if r["client"]]
+            listed = {c["id"] for c in clients}
+            for r in linked:  # clients with accounts and no campaign come after, by name
+                if r["client"]["id"] not in listed:
+                    listed.add(r["client"]["id"])
+                    clients.append({**r["client"], "campaigns": []})
             client = q.get("client", [""])[0]
             if client:
                 if not client.isdigit():
@@ -723,22 +745,38 @@ def make_handler(
                 if k["meta_id"] and k["account_id"]
             ]
             reach = self._reach(pairs, since, until)
+            live = self._live_accounts()
+            portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
             seen = store.seen_on(today)
             for c in clients:
                 c["seen_today"] = seen.get(c["id"])
+                c["accounts"] = [
+                    {
+                        "id": r["id"],
+                        "name": r["name"],
+                        "currency": r["currency"],
+                        "business_name": (live.get(r["id"]) or {}).get("business_name")
+                        or portfolios.get(r["business_id"], ""),
+                        "balance": live[r["id"]]["balance"] if r["id"] in live else None,
+                    }
+                    for r in linked
+                    if r["client"]["id"] == c["id"]
+                ]
                 for k in c["campaigns"]:
                     clicks = k["link_clicks"]
                     k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
                     k["reach"] = reach.get(k["meta_id"])
+            checkable = [c for c in clients if c["campaigns"]]
             return {
                 "since": since,
                 "until": until,
                 "today_included": until >= today,
                 "last_sync": meta.last_sync,
-                # the daily check: how many of these clients someone has been through today
+                # the daily check: how many of the clients with something to check someone
+                # has been through today
                 "seen": {
-                    "done": sum(1 for c in clients if c["seen_today"]),
-                    "total": len(clients),
+                    "done": sum(1 for c in checkable if c["seen_today"]),
+                    "total": len(checkable),
                 },
                 "clients": clients,
             }

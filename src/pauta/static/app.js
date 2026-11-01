@@ -1390,15 +1390,27 @@ async function viewCampaigns(query) {
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
   // a campaign younger than the period has numbers only from its "ativa desde" on
   const late = doc.clients.some((c) => c.campaigns.some((k) => k.state !== "skipped" && k.started && k.started > since));
-  // the daily check (Visto hoje): clients still to see first, the seen ones sink
-  const clients = [...doc.clients.filter((c) => !c.seen_today), ...doc.clients.filter((c) => c.seen_today)];
-  const seen = doc.seen || { done: 0, total: clients.length };
+  // the daily check (Visto hoje): clients still to see first, the seen ones sink; a client
+  // whose linked accounts hold no campaign (nothing to check) comes last, so a portfolio
+  // just connected shows up instead of looking like a failed connection
+  const checkable = doc.clients.filter((c) => c.campaigns.length);
+  const clients = [...checkable.filter((c) => !c.seen_today), ...checkable.filter((c) => c.seen_today), ...doc.clients.filter((c) => !c.campaigns.length)];
+  const seen = doc.seen || { done: 0, total: checkable.length };
   const seenBox = (c) => c.seen_today
     ? `<span class="seen" title="${esc(c.seen_today.at ? `às ${stamp(c.seen_today.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "")}">${icon("check")}visto hoje${c.seen_today.by ? ` por ${esc(firstName(c.seen_today.by))}` : ""}</span>`
     : `<span class="row-gap"><button class="btn small" data-seen="${c.id}" data-name="${esc(c.name)}">${icon("check")}Visto hoje</button><button class="btn ghost small icon-only" data-seen="${c.id}" data-name="${esc(c.name)}" data-note="1" title="Visto hoje, com uma nota" aria-label="Visto hoje, com uma nota">${icon("msg")}</button></span>`;
   const head = `<div class="krow khead" aria-hidden="true"><div class="kname">Campanha</div>${METRIC_COLS.map(([key, label]) => `<div class="km km-${key}"><span>${label}</span></div>`).join("")}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>`;
-  const block = (c) => `<section class="panel cblock" data-client="${c.id}">
+  // "Saldo da conta: R$ 1.000,00 até o limite", one per linked account (named when there
+  // are several), the Saldo the decision promised next to the campaigns
+  const balances = (c) => (c.accounts || []).length
+    ? `<div class="kbals">${c.accounts.map((a) => `<span class="kbal" data-account="${esc(a.id)}">Saldo da conta${c.accounts.length > 1 ? ` ${esc(a.name)}` : ""}: <b>${metaBalance(a)}</b></span>`).join("")}</div>` : "";
+  const noCampaigns = (c) => `<section class="panel cblock nocamp" data-client="${c.id}">
+    <div class="panel-head"><h2><a href="#/cliente/${c.id}">${avatar(c.name)}${esc(c.name)}</a><span class="muted small">sem campanhas</span></h2></div>
+    <p class="muted nocamp-line">sem campanhas ativas na(s) conta(s) vinculada(s): ${(c.accounts || []).map((a) => `<b>${esc(a.name)}</b>`).join(", ")}</p>
+    ${balances(c)}</section>`;
+  const block = (c) => !c.campaigns.length ? noCampaigns(c) : `<section class="panel cblock" data-client="${c.id}">
     <div class="panel-head"><h2><a href="#/cliente/${c.id}">${avatar(c.name)}${esc(c.name)}</a><span class="muted small">${c.campaigns.length} ${c.campaigns.length === 1 ? "campanha" : "campanhas"}</span></h2>${seenBox(c)}</div>
+    ${balances(c)}
     <div class="krows">${head}
       <div class="krow ktotal"><div class="kname"><b>Total do cliente</b></div>${metricCells(clientTotals(c), true)}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>
       ${c.campaigns.map((k) => `<div class="krow ${k.state === "skipped" ? "skipped" : ""}" data-id="${k.id}">
@@ -1411,7 +1423,7 @@ async function viewCampaigns(query) {
     </div></section>`;
   const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/configuracoes">Configurações → Meta</a>.` : ""}</div>`;
   app.innerHTML = `<div>
-    <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${doc.clients.length} ${doc.clients.length === 1 ? "cliente" : "clientes"}.</p></div>
+    <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${checkable.length} ${checkable.length === 1 ? "cliente" : "clientes"}.</p></div>
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
