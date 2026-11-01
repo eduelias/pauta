@@ -12,7 +12,7 @@ from fakemeta import BUSINESS, CONVERSATIONS, OTHER_BUSINESS, TODAY, TZ, expecte
 from pauta import meta as meta_mod
 from pauta import sync
 from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError, local_today
-from pauta.sync import BUSY
+from pauta.sync import BUSY, UNCLAIMED
 
 
 @pytest.fixture()
@@ -318,15 +318,57 @@ def test_run_falls_back_to_the_only_connection_for_untagged_rows(team):
     assert all(a["business_id"] == "" for a in store.meta_accounts())
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["accounts"] == 2 and out["errors"] == []
-    # with two connections an untagged, unread row is nobody's until a read tags it
+    # with two connections an untagged, unread row is nobody's: the pass lists each
+    # connection's accounts first (one call each) and that read places the rows
     fake.business = OTHER_BUSINESS
     connect(meta, fake)
     fake.business = BUSINESS
+    fake.calls.clear()
     out = sync.run(store, meta, days=2, today=TODAY)
-    assert out["accounts"] == 0
-    meta.accounts()  # the read fills meta.business_of (the server also seeds it from rows)
+    assert out["accounts"] == 2 and out["errors"] == []
+    assert fake.calls.count("GET /me/adaccounts") == 2
+    assert meta.business_of["111"] == BUSINESS and meta.business_of["444"] == OTHER_BUSINESS
+    # the list is cached: the next pass doesn't ask again
+    fake.calls.clear()
     out = sync.run(store, meta, days=2, today=TODAY)
-    assert out["accounts"] == 2
+    assert out["accounts"] == 2 and "GET /me/adaccounts" not in fake.calls
+
+
+def test_run_reports_a_linked_account_no_connection_claims(team, caplog):
+    """Two connections, and a linked account neither portfolio lists (its row carries no
+    business_id): before, nobody synced it and nothing said so. Now the pass reads each
+    connection's list first (which places 111 and 222), and the one still unplaced is in
+    `errors` with what to do, and in the log."""
+    store, meta, fake, clinic, _ = team
+    caplog.set_level(logging.INFO, logger="pauta")
+    meta.on_read = store.sync_meta_accounts
+    orphan = store.save_client({"name": "Órfã"})
+    store.link_meta_account("333", orphan["id"])
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake)
+    fake.business = BUSINESS
+    assert all(a["business_id"] == "" for a in store.meta_accounts())
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["connections"] == 2 and out["accounts"] == 2
+    assert out["errors"] == [{"account": "333", "business_id": "", "error": UNCLAIMED, "status": 0}]
+    assert "Configurações → Meta" in UNCLAIMED
+    assert meta.sync_error == UNCLAIMED and store.sync_state()["sync_error"] == UNCLAIMED
+    assert "GET /act_333/campaigns" not in fake.calls
+    # the read placed the rows it could; each connection still got its last_sync
+    rows = {a["id"]: a["business_id"] for a in store.meta_accounts()}
+    assert rows == {"111": BUSINESS, "222": BUSINESS, "333": "", "444": OTHER_BUSINESS}
+    assert all(c["last_sync"] == meta.last_sync for c in store.connections())
+    events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
+    assert len(events) == 1 and events[0].levelno == logging.WARNING
+    assert '"account":"333"' in events[0].getMessage()
+    # Meta refusing the placing read is logged and the pass goes on to meet it itself
+    fake.calls.clear()
+    fake.throttle = True
+    meta._cache = None  # the cached list would spare the call
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert any('"meta_sync_accounts_read_failed"' in r.getMessage() for r in caplog.records)
+    assert out["errors"][0]["status"] == 503
+    assert out["errors"][-1]["error"] == UNCLAIMED
 
 
 def test_one_pass_at_a_time(team):

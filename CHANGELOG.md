@@ -105,6 +105,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   minuto seguinte). API: `POST /api/meta/sync` passa a responder **202**
   `{"started": true, "last_sync": <anterior>}` e **409** enquanto uma passagem roda;
   `GET /api/campaigns` e `/metrics` trazem `sync_error` e `syncing`.
+- Com dois ou mais portfólios conectados, uma conta vinculada a um cliente que nenhuma
+  leitura ainda tinha colocado no seu portfólio ficava sem sincronizar, sem erro e sem
+  aviso. A sincronização agora lê a lista de contas de cada portfólio antes (o que coloca
+  quase todas), e a que ainda assim ficar sem portfólio aparece nos erros da passagem e no
+  log ("conta sem portfólio conhecido; abra Configurações → Meta para a Pauta ler as
+  contas").
 - Um portfólio com mais de cem contas de anúncios agora lista todas em Configurações → Meta:
   a leitura segue as páginas da Meta (antes parava na primeira).
 - Campanhas lista todo cliente com conta vinculada, mesmo sem campanha ativa (sumia como se

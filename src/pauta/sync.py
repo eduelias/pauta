@@ -7,7 +7,9 @@ stopped delivering end), then the last `days` days of per-campaign insights are 
 keeps 37 months). Finally done "Criar/Reativar campanha" requests whose Ads Manager link
 names a campaign are tied to it.
 
-One account's trouble doesn't stop the others; a revoked token stops only its own
+One account's trouble doesn't stop the others; a linked account no connection has placed
+under its portfolio is reported (`UNCLAIMED`) rather than skipped in silence, after one
+account list per connection tried to place it; a revoked token stops only its own
 connection's accounts (the other portfolios still sync); a throttle stops the pass (nothing
 retries in a loop: the next scheduled pass tries again). Each connection gets its
 `last_sync` and the first error met under it. `Scheduler` runs it in a daemon
@@ -44,6 +46,7 @@ SYNC_FAILED = "a sincronização falhou; veja o log"
 FIRST_RUN_SECONDS = 60
 TICK_SECONDS = 60
 BUSY = "a Meta já está sincronizando; espere essa passagem terminar"
+UNCLAIMED = "conta sem portfólio conhecido; abra Configurações → Meta para a Pauta ler as contas"
 
 _lock = threading.Lock()  # one pass at a time, whoever asks
 
@@ -109,7 +112,7 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         "errors": [],
     }
     fetched = _stamp()
-    accounts = [a for a in store.meta_accounts() if a["client"]]
+    accounts = _linked(store, meta, conns)
     throttled = False
     for conn in conns:
         bid = conn["business_id"]
@@ -135,6 +138,13 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         store.set_connection_sync(bid, fetched, first_error)
         if throttled:
             break
+    for account in accounts:  # linked, and still no connection's: never synced, so say so
+        if _business(account, meta, conns):
+            continue
+        out["errors"].append(
+            {"account": account["id"], "business_id": "", "error": UNCLAIMED, "status": 0}
+        )
+        obs.event("meta_account_unclaimed", logging.WARNING, account=account["id"])
     out["linked"] = store.link_requests_to_campaigns()
     error = out["errors"][0]["error"] if out["errors"] else ""
     meta.last_sync, meta.sync_error = fetched, error
@@ -150,6 +160,22 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         errors=len(out["errors"]),
     )
     return out
+
+
+def _linked(store: Store, meta: Meta, conns: list[dict]) -> list[dict]:
+    """The ad accounts linked to a client. With several connections, a linked row that no
+    read has placed under a portfolio yet (written before v10, or linked before any read)
+    would be nobody's: one account list per connection (cheap, cached ten minutes) tags
+    what it can first, through `meta.business_of` and, on the server, the rows
+    (`on_read`). Meta refusing that read is the pass's business, not this step's."""
+    accounts = [a for a in store.meta_accounts() if a["client"]]
+    if len(conns) > 1 and any(not _business(a, meta, conns) for a in accounts):
+        try:
+            meta.accounts()
+        except MetaError as e:
+            obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
+        accounts = [a for a in store.meta_accounts() if a["client"]]
+    return accounts
 
 
 def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
