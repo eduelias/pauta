@@ -5,7 +5,7 @@ const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const app = $("#app");
 let ME = null;        // /api/me
-let BOOT = null;      // {me, options, members, avatars, files}
+let BOOT = null;      // {me, options, members, avatars, files, finance, meta}
 let REQS = null;      // last /api/requests, for the nav counter
 
 // ---------- small helpers ---------------------------------------------------------------
@@ -82,6 +82,8 @@ const ICONS = {
   file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/>',
   money: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>',
   sparkle: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+  chart: '<path d="M3 3v18h18"/><path d="m7 15 4-5 4 3 5-7"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -113,7 +115,7 @@ function addDays(iso, n) {
 }
 const daysUntil = (iso) => Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(todayISO() + "T00:00:00Z")) / 86400000);
 const fmtDate = (iso, opts = { day: "numeric", month: "short" }) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", opts).replace(".", "") : "";
-const stamp = (s) => new Date(String(s).replace(" ", "T") + "Z");
+const stamp = (s) => new Date(/Z$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
 function ago(s) {
   const sec = (Date.now() - stamp(s)) / 1000;
   if (sec < 60) return "agora";
@@ -193,25 +195,31 @@ const NAV = [
   ["#/quadro", "board", "Quadro"],
   ["#/pedidos", "list", "Pedidos"],
   ["#/clientes", "clients", "Clientes"],
-  ["#/equipe", "team", "Equipe"],
+  ["#/configuracoes", "gear", "Configurações"],
 ];
 
 const FIN_NAV = ["#/financeiro", "money", "Financeiro"];
 const finVisible = () => Boolean(BOOT?.finance?.visible);
+// Campanhas (decision 8) sits after Pedidos; members see it too (the clients' numbers the
+// team already sees), admins get the extra buttons
+const CAMP_NAV = ["#/campanhas", "chart", "Campanhas"];
+const metaVisible = () => Boolean(BOOT?.meta?.enabled);
 
 function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
-  // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7)
-  const nav = NAV.flatMap((e) => (e[0] === "#/equipe" && finVisible() ? [FIN_NAV, e] : [e]));
+  // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
+  // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
+  const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
+    : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
   $("#tabbar").innerHTML = [
     ["#/", "dash", "Painel"], ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
-    finVisible() ? FIN_NAV : ["#/quadro", "board", "Quadro"], ["#/clientes", "clients", "Clientes"],
+    metaVisible() ? CAMP_NAV : finVisible() ? FIN_NAV : ["#/quadro", "board", "Quadro"], ["#/clientes", "clients", "Clientes"],
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
   $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
   const top = $("#topnew");
-  top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
+  top.outerHTML = `<a href="#/perfil" id="topnew" aria-label="Seu perfil">${avatar(ME.name, "md round", ME.avatar)}</a>`;
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
@@ -224,7 +232,7 @@ function renderShell() {
 function markNav() {
   const h = location.hash || "#/";
   const base = "#/" + (h.slice(2).split(/[/?]/)[0] || "");
-  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/": "#/" };
+  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/campanha": "#/campanhas", "#/": "#/" };
   const want = map[base] || base;
   $$("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === want));
 }
@@ -234,14 +242,12 @@ function toggleMenu() {
   if (old) { old.remove(); return; }
   const m = document.createElement("div");
   m.className = "menu";
-  m.innerHTML = `<a href="#/equipe">${icon("user")}Minha conta e equipe</a>
-    ${ME.auth ? `<button data-act="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
-    <button data-act="logout">${icon("logout")}Sair</button>` : ""}`;
+  m.innerHTML = `<a href="#/perfil">${icon("user")}Meu perfil</a>
+    <a href="#/configuracoes">${icon("gear")}Configurações</a>
+    ${ME.auth ? `<button data-act="logout">${icon("logout")}Sair</button>` : ""}`;
   $(".side").appendChild(m);
   m.addEventListener("click", (e) => {
-    const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "logout") logout();
-    if (act === "addkey") addPasskey();
+    if (e.target.closest("[data-act]")?.dataset.act === "logout") logout();
     m.remove();
   });
   setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }));
@@ -259,7 +265,10 @@ const ROUTES = [
   [/^\/cliente\/novo$/, viewNewClient],
   [/^\/cliente\/(\d+)$/, viewClient],
   [/^\/financeiro$/, viewFinance],
-  [/^\/equipe$/, viewTeam],
+  [/^\/campanhas$/, viewCampaigns],
+  [/^\/campanha\/(\d+)$/, viewCampaign],
+  [/^\/configuracoes$/, viewSettings],
+  [/^\/perfil$/, viewProfile],
 ];
 
 function hashParts() {
@@ -270,6 +279,12 @@ function hashParts() {
 
 async function route() {
   const { path, query } = hashParts();
+  if (path === "/equipe" || path.startsWith("/equipe/")) {
+    // the tab's name up to 1.6: bookmarks, Meta's way back and old links land on the new one
+    const q = query.toString();
+    history.replaceState(null, "", `#/configuracoes${path.slice(7)}${q ? "?" + q : ""}`);
+    return route();
+  }
   if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
   if (path.startsWith("/mudar/")) return showMove(path.slice(7));
   if (ME.auth && !ME.logged_in) return showGate();
@@ -337,7 +352,7 @@ async function viewDash() {
     </div>
     <div class="dash">
       <section class="panel">
-        <div class="panel-head"><h2>Para fazer agora</h2><a class="btn ghost small" href="#/quadro">Ver quadro</a></div>
+        <div class="panel-head"><h2>Para fazer agora</h2><div class="row-gap">${finVisible() && metaVisible() ? `<a class="btn ghost small" href="#/financeiro">${icon("money")}Financeiro</a>` : ""}<a class="btn ghost small" href="#/quadro">Ver quadro</a></div></div>
         ${attention.length ? `<div class="rcards">${attention.map((r) => rcard(r)).join("")}</div>`
           : `<div class="empty"><span class="big">🎉</span>Nada na fila. Hora de um café.</div>`}
       </section>
@@ -494,7 +509,7 @@ function linkField(name, value, placeholder) {
 }
 
 function timeline(r) {
-  const who = (e) => `<b>${esc(e.account_name || (ME.auth ? "Alguém" : "Você"))}</b>`;
+  const who = (e) => `<b>${esc(e.account_name || (e.kind === "campaign" ? "A Pauta" : ME.auth ? "Alguém" : "Você"))}</b>`;
   return r.events.slice().reverse().map((e) => {
     if (e.kind === "comment") {
       return `<div class="ev comment"><div class="ic">${icon("msg")}</div><div class="body">${who(e)}<span class="when">${esc(ago(e.at))}</span><div class="bubble">${esc(e.text)}</div></div></div>`;
@@ -509,6 +524,7 @@ function timeline(r) {
     if (e.kind === "edited") what = `editou ${esc(e.text)}`;
     if (e.kind === "file") { what = `anexou <b>${esc(e.text)}</b>`; ic = "clip"; }
     if (e.kind === "unfile") { what = `removeu o arquivo ${esc(e.text)}`; ic = "trash"; }
+    if (e.kind === "campaign") { what = "vinculou a campanha da Meta ao pedido"; ic = "link"; }
     return `<div class="ev"><div class="ic">${icon(ic)}</div><div class="body">${who(e)} ${what}<span class="when">${esc(ago(e.at))}</span></div></div>`;
   }).join("");
 }
@@ -526,7 +542,7 @@ function filesPanel(r) {
   const title = `<div class="section-title">${icon("clip")} Arquivos</div>`;
   if (!F.connected) {
     return `<div class="panel">${title}<p class="muted small">${ME.is_admin
-      ? `Conecte o OneDrive em <a href="#/equipe">Equipe</a> para anexar arquivos aos pedidos.`
+      ? `Conecte o OneDrive em <a href="#/configuracoes">Configurações → Arquivos</a> para anexar arquivos aos pedidos.`
       : "Os anexos ainda não estão ligados; um administrador conecta o OneDrive."}</p></div>`;
   }
   return `<div class="panel" id="files">
@@ -951,6 +967,7 @@ async function viewClient(_q, id) {
           <div class="quiet-off">${clientForm(c)}</div></section>
       </div>
       <aside><div class="panel clientbox"><div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}</div>
+        <div id="clientmeta"></div>
         <div id="paybox">${payBox(c)}</div>
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
     </div></div>`;
@@ -976,6 +993,7 @@ async function viewClient(_q, id) {
   }));
   $("#del")?.addEventListener("click", () => deleteClient(c));
   bindCopy(app);
+  loadClientMeta(c);
 }
 
 // Deleting a client with requests takes them (and their history) along, so the name has to
@@ -1182,7 +1200,7 @@ function bindPayBox(c, done) {
   }));
 }
 
-// Equipe → Financeiro: the team's conventions (admins)
+// Configurações → Financeiro: the team's conventions (admins)
 function financeSettingsPanel(fin) {
   const opt = (values, labels, cur) => values.map((v) => `<option value="${v}" ${v === cur ? "selected" : ""}>${labels[v]}</option>`).join("");
   return `<section class="panel mt" id="finsettings"><div class="panel-head"><h2>${icon("money")}Financeiro</h2><span class="muted small">Como o time cobra</span></div>
@@ -1202,70 +1220,428 @@ function financeSettingsPanel(fin) {
     <div class="mt"><button class="btn" id="savefin">${icon("check")}Salvar financeiro</button></div></section>`;
 }
 
+
+// ---------- campanhas (decision 8) ----------------------------------------------------------
+
+// The period picker means what Ads Manager means: "últimos N dias" run from yesterday back
+// and never include today (today's numbers are still moving); "este mês" is the 1st to today.
+// The default is Ads Manager's own, "Últimos 30 dias". Dates are computed here, in the
+// browser's local date, and sent as since/until (the server's own default, when a caller
+// sends none, is the same 30 days in the ad account's time zone).
+const PERIODS = [
+  ["today", "Hoje"], ["yesterday", "Ontem"], ["last_7", "Últimos 7 dias"], ["last_30", "Últimos 30 dias"],
+  ["this_month", "Este mês"], ["last_month", "Mês passado"], ["custom", "Personalizado"],
+];
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const isISO = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "");
+
+function periodDates(p, custom = {}) {
+  const t = todayISO();
+  const first = t.slice(0, 8) + "01";
+  switch (p) {
+    case "today": return [t, t];
+    case "yesterday": return [addDays(t, -1), addDays(t, -1)];
+    case "last_7": return [addDays(t, -7), addDays(t, -1)];
+    case "last_30": return [addDays(t, -30), addDays(t, -1)];
+    case "last_month": { const end = addDays(first, -1); return [end.slice(0, 8) + "01", end]; }
+    case "custom": {
+      const a = isISO(custom.since) ? custom.since : first, b = isISO(custom.until) ? custom.until : t;
+      return a <= b ? [a, b] : [b, a];
+    }
+    default: return [first, t];
+  }
+}
+// "3 out", "25 out 2025": the year only when it isn't this one
+const shortDay = (iso) => { const [y, m, d] = iso.split("-").map(Number); return `${d} ${MONTHS[m - 1]}${y !== new Date().getFullYear() ? ` ${y}` : ""}`; };
+// "1 nov – 1 nov", "25 out – 31 out"
+const periodLabel = (since, until) => `${shortDay(since)} – ${shortDay(until)}`;
+// the hash query wins (a reload keeps it), then the last choice on this browser, then the last 30 days
+function readPeriod(query) {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("pauta.period") || "{}") || {}; } catch { saved = {}; }
+  const known = (k) => PERIODS.some(([key]) => key === k);
+  let p = query.get("p") || "", since = query.get("since") || "", until = query.get("until") || "";
+  if (isISO(since) && isISO(until)) p = "custom";
+  else if (!known(p) || p === "custom") {
+    p = known(saved.p) ? saved.p : "last_30";
+    since = saved.since || "";
+    until = saved.until || "";
+    if (p === "custom" && !(isISO(since) && isISO(until))) p = "last_30";
+  }
+  return { p, since, until };
+}
+const periodQuery = (st) => st.p === "custom" ? `since=${st.since}&until=${st.until}` : `p=${st.p}`;
+function savePeriod(st) {
+  try { localStorage.setItem("pauta.period", JSON.stringify(st.p === "custom" ? st : { p: st.p })); } catch { /* private mode: not remembered */ }
+}
+function periodPicker(st) {
+  const [since, until] = periodDates(st.p, st);
+  const t = todayISO();
+  return `<div class="period" id="period">
+    <div class="seg">${PERIODS.map(([k, label]) => `<button type="button" data-p="${k}" class="${k === st.p ? "on" : ""}">${label}</button>`).join("")}</div>
+    <div class="period-custom" ${st.p === "custom" ? "" : "hidden"}><input class="input" type="date" id="psince" aria-label="Início" value="${since}" max="${t}"><span class="muted">até</span><input class="input" type="date" id="puntil" aria-label="Fim" value="${until}" max="${t}"></div>
+    <div class="period-dates"><b id="pdates">${esc(periodLabel(since, until))}</b>${until >= t ? `<span class="tag" id="ptoday" title="os números de hoje ainda mudam">hoje incluso</span>` : ""}</div>
+  </div>`;
+}
+function bindPeriod(st, onChange) {
+  $("#period .seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-p]");
+    if (!b || b.dataset.p === st.p) return;
+    const [since, until] = periodDates(st.p, st);  // Personalizado starts from the range shown
+    st.p = b.dataset.p;
+    if (st.p === "custom") { st.since = since; st.until = until; }
+    onChange();
+  });
+  const custom = () => {
+    const a = $("#psince").value, b = $("#puntil").value;
+    if (!isISO(a) || !isISO(b)) return;
+    [st.since, st.until] = a <= b ? [a, b] : [b, a];
+    st.p = "custom";
+    onChange();
+  };
+  $("#psince").addEventListener("change", custom);
+  $("#puntil").addEventListener("change", custom);
+}
+const syncLine = (last) => last ? `Dados da Meta de ${esc(ago(last))}` : "A Meta ainda não foi lida; os números chegam na primeira sincronização.";
+
+// Ativa / Encerrada em dd/mm / Pausada / Ignorada, Meta's own status on hover
+function stateTag(k) {
+  const [cls, txt] = k.state === "active" ? ["Ativo", "Ativa"]
+    : k.state === "paused" ? ["Pausado", "Pausada"]
+    : k.state === "skipped" ? ["Encerrado", "Ignorada"]
+    : ["Encerrado", `Encerrada${k.ended ? ` em ${fmtDate(k.ended, { day: "2-digit", month: "2-digit" })}` : ""}`];
+  return `<span class="state ${cls}" title="${esc(k.effective_status || "")}">${esc(txt)}</span>`;
+}
+
+// Ads Manager's own words for what a campaign's Resultados count (the action type Meta names
+// in `result_indicator`); a type not here reads as its name with dots and underscores as spaces
+const RESULT_LABELS = {
+  "onsite_conversion.messaging_conversation_started_7d": "Conversas por mensagem iniciadas",
+  lead: "Cadastros", "onsite_conversion.lead_grouped": "Cadastros", link_click: "Cliques no link",
+  landing_page_view: "Visualizações da página de destino",
+  purchase: "Compras", omni_purchase: "Compras", "onsite_conversion.purchase": "Compras",
+  post_engagement: "Engajamentos com a publicação",
+  "offsite_conversion.fb_pixel_view_content": "Conteúdo de visualização",
+  video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
+  "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
+};
+const resultLabel = (type) => RESULT_LABELS[type] || String(type || "").replace(/[._]+/g, " ");
+const NO_RESULTS = "sem resultados registrados para o objetivo da campanha";
+const MIXED_RESULTS = "resultados de objetivos diferentes não somam";
+const NO_REACH = "a Meta não respondeu";
+const SUM_REACH = "alcance não soma entre campanhas: a mesma pessoa pode ver mais de uma";
+const NO_BUDGET = "orçamento definido nos conjuntos de anúncios, não na campanha";
+const SUM_BUDGET = "o orçamento é de cada campanha";
+
+// the six numbers of a row, Ads Manager's columns in its order; a client's total shows "—"
+// for reach (it doesn't add up), for the budget (each campaign's own) and for results when
+// its campaigns count different things
+const METRIC_COLS = [["results", "Resultados"], ["cpr", "Custo por resultado"], ["spend", "Valor gasto"], ["impressions", "Impressões"], ["reach", "Alcance"], ["budget", "Orçamento"]];
+const dash = (title) => `<span class="muted" title="${esc(title)}">—</span>`;
+// "R$ 15,00 · diário", "R$ 450,00 · total", "" when the ad sets carry the budget
+function budgetText(k) {
+  if (k.daily_budget_cents != null) return `${centsMoney(k.daily_budget_cents, k.currency)} · diário`;
+  if (k.lifetime_budget_cents != null) return `${centsMoney(k.lifetime_budget_cents, k.currency)} · total`;
+  return "";
+}
+function metricCells(k, total = false) {
+  const label = resultLabel(k.result_indicator);
+  const none = total && k.mixed ? MIXED_RESULTS : NO_RESULTS;
+  const v = {
+    results: k.results == null ? [dash(none)] : [esc(count(k.results)), label],
+    cpr: k.results ? [esc(centsMoney(k.cost_per_result_cents, k.currency)), label] : [dash(none)],
+    spend: [esc(centsMoney(k.spend_cents, k.currency))],
+    impressions: [esc(count(k.impressions))],
+    reach: [total ? dash(SUM_REACH) : k.reach == null ? dash(NO_REACH) : esc(count(k.reach))],
+    budget: [total ? dash(SUM_BUDGET) : budgetText(k) ? esc(budgetText(k)) : dash(NO_BUDGET)],
+  };
+  return METRIC_COLS.map(([key, label]) => {
+    const [main, sub] = v[key];
+    return `<div class="km km-${key}"><span class="kl">${label}</span><b>${main}</b>${sub ? `<span class="ksub" title="${esc(sub)}">${esc(sub)}</span>` : ""}</div>`;
+  }).join("");
+}
+function clientTotals(c) {
+  const live = c.campaigns.filter((x) => x.state !== "skipped");
+  const t = { spend_cents: 0, link_clicks: 0, impressions: 0, currency: c.campaigns[0]?.currency, results: null, result_indicator: "", cost_per_result_cents: null, mixed: false };
+  for (const k of live) { t.spend_cents += k.spend_cents; t.link_clicks += k.link_clicks; t.impressions += k.impressions; }
+  t.cpl_cents = t.link_clicks ? Math.round(t.spend_cents / t.link_clicks) : null;
+  // results add up only when every campaign counts the same thing
+  const kinds = new Set(live.map((k) => k.result_indicator).filter(Boolean));
+  const counted = live.filter((k) => k.results != null);
+  if (kinds.size === 1 && counted.length) {
+    t.result_indicator = [...kinds][0];
+    t.results = counted.reduce((a, k) => a + k.results, 0);
+    t.cost_per_result_cents = t.results ? Math.round(t.spend_cents / t.results) : null;
+  } else t.mixed = kinds.size > 1;
+  return t;
+}
+// "ativa desde 3 out" next to the name, so a short period isn't read as missing data
+const sinceTag = (k) => k.state === "active" && k.started
+  ? `<span class="ksince" title="ativa desde ${esc(fmtDate(k.started, { day: "2-digit", month: "2-digit", year: "numeric" }))}: antes disso não há números">ativa desde ${esc(shortDay(k.started))}</span>` : "";
+
+const campState = { skipped: false };  // "ver ignoradas", for the session
+async function viewCampaigns(query) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`);
+  savePeriod(st);
+  history.replaceState(null, "", `#/campanhas?${periodQuery(st)}`);
+  const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
+  // a campaign younger than the period has numbers only from its "ativa desde" on
+  const late = doc.clients.some((c) => c.campaigns.some((k) => k.state !== "skipped" && k.started && k.started > since));
+  // the daily check (Visto hoje): clients still to see first, the seen ones sink; a client
+  // whose linked accounts hold no campaign (nothing to check) comes last, so a portfolio
+  // just connected shows up instead of looking like a failed connection
+  const checkable = doc.clients.filter((c) => c.campaigns.length);
+  const clients = [...checkable.filter((c) => !c.seen_today), ...checkable.filter((c) => c.seen_today), ...doc.clients.filter((c) => !c.campaigns.length)];
+  const seen = doc.seen || { done: 0, total: checkable.length };
+  const seenBox = (c) => c.seen_today
+    ? `<span class="seen" title="${esc(c.seen_today.at ? `às ${stamp(c.seen_today.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "")}">${icon("check")}visto hoje${c.seen_today.by ? ` por ${esc(firstName(c.seen_today.by))}` : ""}</span>`
+    : `<span class="row-gap"><button class="btn small" data-seen="${c.id}" data-name="${esc(c.name)}">${icon("check")}Visto hoje</button><button class="btn ghost small icon-only" data-seen="${c.id}" data-name="${esc(c.name)}" data-note="1" title="Visto hoje, com uma nota" aria-label="Visto hoje, com uma nota">${icon("msg")}</button></span>`;
+  const head = `<div class="krow khead" aria-hidden="true"><div class="kname">Campanha</div>${METRIC_COLS.map(([key, label]) => `<div class="km km-${key}"><span>${label}</span></div>`).join("")}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>`;
+  // "Saldo da conta: R$ 1.000,00 até o limite", one per linked account (named when there
+  // are several), the Saldo the decision promised next to the campaigns
+  const balances = (c) => (c.accounts || []).length
+    ? `<div class="kbals">${c.accounts.map((a) => `<span class="kbal" data-account="${esc(a.id)}">Saldo da conta${c.accounts.length > 1 ? ` ${esc(a.name)}` : ""}: <b>${metaBalance(a)}</b></span>`).join("")}</div>` : "";
+  const noCampaigns = (c) => `<section class="panel cblock nocamp" data-client="${c.id}">
+    <div class="panel-head"><h2><a href="#/cliente/${c.id}">${avatar(c.name)}${esc(c.name)}</a><span class="muted small">sem campanhas</span></h2></div>
+    <p class="muted nocamp-line">sem campanhas ativas na(s) conta(s) vinculada(s): ${(c.accounts || []).map((a) => `<b>${esc(a.name)}</b>`).join(", ")}</p>
+    ${balances(c)}</section>`;
+  const block = (c) => !c.campaigns.length ? noCampaigns(c) : `<section class="panel cblock" data-client="${c.id}">
+    <div class="panel-head"><h2><a href="#/cliente/${c.id}">${avatar(c.name)}${esc(c.name)}</a><span class="muted small">${c.campaigns.length} ${c.campaigns.length === 1 ? "campanha" : "campanhas"}</span></h2>${seenBox(c)}</div>
+    ${balances(c)}
+    <div class="krows">${head}
+      <div class="krow ktotal"><div class="kname"><b>Total do cliente</b></div>${metricCells(clientTotals(c), true)}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>
+      ${c.campaigns.map((k) => `<div class="krow ${k.state === "skipped" ? "skipped" : ""}" data-id="${k.id}">
+        <div class="kname"><a href="#/campanha/${k.id}"><b>${esc(k.name)}</b></a>${stateTag(k)}${sinceTag(k)}</div>
+        ${metricCells(k)}
+        ${ME.is_admin ? `<div class="kact">${k.state === "skipped"
+          ? `<button class="btn small" data-follow="${k.id}" data-name="${esc(k.name)}">${icon("check")}Acompanhar</button>`
+          : `<button class="btn ghost small" data-skip="${k.id}" data-name="${esc(k.name)}" title="Tirar da lista; a Meta não é alterada">Não acompanhar</button>`}</div>` : ""}
+      </div>`).join("")}
+    </div></section>`;
+  const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/configuracoes">Configurações → Meta</a>.` : ""}</div>`;
+  app.innerHTML = `<div>
+    <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${checkable.length} ${checkable.length === 1 ? "cliente" : "clientes"}.</p></div>
+      ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
+        <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
+    ${periodPicker(st)}
+    <p class="synced" id="synced"><span class="muted small">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
+    <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
+  </div>`;
+  const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
+  bindPeriod(st, redraw);
+  $("#showskipped")?.addEventListener("change", (e) => { campState.skipped = e.target.checked; redraw(); });
+  $("#syncnow")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const out = await api("POST", "/api/meta/sync", {});
+      toast(`${out.accounts} ${out.accounts === 1 ? "conta lida" : "contas lidas"}, ${out.campaigns_new} ${out.campaigns_new === 1 ? "campanha nova" : "campanhas novas"}, ${out.insight_rows} ${out.insight_rows === 1 ? "dia atualizado" : "dias atualizados"}${out.errors?.length ? ` · ${out.errors.length} com erro` : ""}`, Boolean(out.errors?.length));
+      redraw();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
+  $$("[data-seen]").forEach((b) => b.addEventListener("click", async () => {
+    let note = "";
+    if (b.dataset.note) {
+      note = prompt(`Nota de hoje sobre ${b.dataset.name} (opcional)`, "");
+      if (note === null) return;
+    }
+    b.disabled = true;
+    try { await api("POST", `/api/clients/${b.dataset.seen}/reviews`, { note }); toast(`${b.dataset.name}: visto hoje`); redraw(); }
+    catch (err) { toast(err.message, true); b.disabled = false; }
+  }));
+  $$("[data-skip]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Não acompanhar "${b.dataset.name}"? Ela sai desta lista (a Meta não muda). Dá para voltar em "ver ignoradas".`)) return;
+    try { await api("PATCH", `/api/campaigns/${b.dataset.skip}`, { state: "skipped" }); toast("Campanha ignorada"); redraw(); }
+    catch (err) { toast(err.message, true); }
+  }));
+  $$("[data-follow]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api("PATCH", `/api/campaigns/${b.dataset.follow}`, { state: "active" }); toast(`${b.dataset.name} de volta à lista`); redraw(); }
+    catch (err) { toast(err.message, true); }
+  }));
+}
+
+// One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
+// period value from the campaign's sums, `day` one day's from an insight row; a metric
+// without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart;
+// `sub` names what Resultados count, under the value, as Ads Manager does.
+const METRICS = {
+  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta" },
+  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => d.results ? d.spend_cents / d.results : null, sub: (k) => resultLabel(k.result_indicator) },
+  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
+  leads: { label: "Leads (cliques)", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks },
+  cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => d.link_clicks ? d.spend_cents / d.link_clicks : null },
+  reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia" },
+  impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions },
+  ctr: { label: "CTR", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões" },
+  cpm: { label: "CPM", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "custo por mil impressões" },
+  freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período" },
+};
+// the action chips: Ads Manager's words, told apart where two types would read the same
+const ACTION_LABELS = {
+  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
+  "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
+  post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
+  initiate_checkout: "Finalizações iniciadas",
+};
+const DEFAULT_METRICS = ["results", "cpr", "spend"];
+function metricDefs(k) {
+  const defs = { ...METRICS };
+  for (const type of Object.keys(k.actions || {}).sort()) {
+    defs[`act:${type}`] = { label: ACTION_LABELS[type] || type, fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0 };
+  }
+  return defs;
+}
+function fmtMetric(v, fmt, cur) {
+  if (v == null || Number.isNaN(v)) return "—";
+  if (fmt === "money") return centsMoney(Math.round(v), cur);
+  if (fmt === "pct") return `${(v * 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}%`;
+  if (fmt === "dec") return v.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+  return count(Math.round(v));
+}
+function readMetrics() {
+  try {
+    const got = JSON.parse(localStorage.getItem("pauta.metrics") || "null");
+    if (Array.isArray(got) && got.every((x) => typeof x === "string")) return got;
+  } catch { /* fall through */ }
+  return [...DEFAULT_METRICS];
+}
+
+// A plain SVG bar chart, one bar per day of the period (no library: CSP stays 'self'). The
+// labels (the max above, the first and last day below) are HTML around the SVG, so they
+// keep their size however narrow the card is; each bar carries a <title>.
+function chart(points, fmt, cur) {
+  const W = 600, H = 140, n = points.length, bw = W / n;
+  const max = Math.max(0, ...points.map((p) => p.v ?? 0)) || 1;
+  const bars = points.map((p, i) => {
+    if (p.v == null) return "";
+    const h = Math.max(p.v > 0 ? 1.5 : 0, p.v / max * (H - 2));
+    const x = i * bw + bw * 0.15, w = Math.max(1, bw * 0.7);
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(fmtDate(p.day))}: ${esc(fmtMetric(p.v, fmt, cur))}</title></rect>`;
+  }).join("");
+  return `<div class="chartbox">
+    <div class="chart-y">${esc(fmtMetric(max, fmt, cur))}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Por dia, de ${esc(fmtDate(points[0].day))} a ${esc(fmtDate(points[n - 1].day))}">${bars}<line class="axis" x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}"/></svg>
+    <div class="chart-x"><span>${esc(fmtDate(points[0].day))}</span><span>${esc(fmtDate(points[n - 1].day))}</span></div>
+  </div>`;
+}
+function dayPoints(k, since, until, metric) {
+  const byDay = Object.fromEntries((k.days || []).map((d) => [d.day, d]));
+  const out = [];
+  for (let day = since; day <= until && out.length < 800; day = addDays(day, 1)) {
+    const row = byDay[day];
+    out.push({ day, v: row ? metric.day(row) : null });
+  }
+  return out;
+}
+
+async function viewCampaign(query, id) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  const k = doc.campaign;
+  savePeriod(st);
+  history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
+  const defs = metricDefs(k);
+  let picked = readMetrics();
+  const chips = () => Object.entries(defs).map(([key, m]) => `<button type="button" class="chip ${picked.includes(key) ? "on" : ""}" data-metric="${esc(key)}" aria-pressed="${picked.includes(key)}" ${m.note ? `title="${esc(m.note)}"` : ""}>${esc(m.label)}</button>`).join("");
+  const cards = () => {
+    const shown = picked.filter((key) => defs[key]);
+    if (!shown.length) return `<div class="panel empty">Escolha uma métrica acima.</div>`;
+    return shown.map((key) => {
+      const m = defs[key];
+      const v = m.period(k), sub = m.sub ? m.sub(k) : "";
+      return `<section class="panel mcard" data-card="${esc(key)}">
+        <div class="panel-head"><h3>${esc(m.label)}</h3>${m.note ? `<span class="muted small">${esc(m.note)}</span>` : ""}</div>
+        <div class="mval" ${m.sub && v == null ? `title="${NO_RESULTS}"` : ""}>${esc(fmtMetric(v, m.fmt, k.currency))}</div>
+        ${sub ? `<div class="msub muted small">${esc(sub)}</div>` : ""}
+        ${m.day ? chart(dayPoints(k, since, until, m), m.fmt, k.currency) : `<p class="muted small">Só no período: não há valor por dia.</p>`}
+      </section>`;
+    }).join("");
+  };
+  const when = [k.started ? `desde ${esc(fmtDate(k.started, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "",
+    k.ended ? `até ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : ""].filter(Boolean).join(" · ");
+  app.innerHTML = `<div>
+    <div class="crumb"><a href="#/campanhas">Campanhas</a><span>/</span><span>${esc(k.name)}</span></div>
+    <div class="head"><div>
+      <div class="row-gap"><a class="cl" href="#/cliente/${k.client}">${avatar(k.client_name || "?", "md")}<span style="font-size:16px">${esc(k.client_name || "—")}</span></a>${stateTag(k)}</div>
+      <h1 id="kname">${esc(k.name)}</h1>
+      <p>${when}${k.objective ? ` · ${esc(k.objective.replace(/^OUTCOME_/, "").toLowerCase())}` : ""}${k.request ? ` · <a href="#/pedido/${k.request}">Pedido #${k.request}</a>` : ""}</p>
+    </div></div>
+    ${periodPicker(st)}
+    <p class="muted small synced" id="synced">${syncLine(doc.last_sync)}</p>
+    <div class="chips" id="metrics">${chips()}</div>
+    <div class="mcards" id="cards">${cards()}</div>
+  </div>`;
+  bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
+  $("#metrics").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-metric]");
+    if (!b) return;
+    const key = b.dataset.metric;
+    picked = picked.includes(key) ? picked.filter((x) => x !== key) : [...picked, key];
+    try { localStorage.setItem("pauta.metrics", JSON.stringify(picked)); } catch { /* not remembered */ }
+    $("#metrics").innerHTML = chips();
+    $("#cards").innerHTML = cards();
+  });
+}
+
 // ---------- team, account, settings ---------------------------------------------------------
 
-async function viewTeam() {
+// Configurações (up to 1.6 "Equipe"): the team, then each module's settings, admins only
+// past the team. What is about the person signed in lives on Perfil (viewProfile).
+async function viewSettings(query) {
   const members = await api("GET", "/api/members");
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
-    <div class="head"><div><h1>Equipe</h1><p>Quem usa a Pauta, convites e listas.</p></div>
+    <div class="head"><div><h1>Configurações</h1><p>O time, as integrações e as listas da Pauta.</p></div>
       ${ME.is_admin ? `<div class="actions"><button class="btn" id="export">${icon("download")}Exportar dados</button></div>` : ""}</div>
-    <div class="grid2">
-      <section class="panel">
-        <div class="panel-head"><h2>Você</h2></div>
-        <div class="member">${avatar(ME.name, "md round", ME.avatar)}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
-          <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
-        ${ME.auth ? `<div class="field mt"><label>Seu nome</label><input class="input" id="myname" value="${esc(ME.name)}"></div>
-        <div class="field mt"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
-          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
-        <div class="mt"><button class="btn" id="rename">${icon("check")}Salvar</button></div>
-        <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></div>` : ""}
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
+    <a class="profile-link" href="#/perfil" id="toprofile">${avatar(ME.name, "round", ME.avatar)}Seu perfil →</a>
+    <section class="panel" id="time">
+        <div class="panel-head"><h2>${icon("team")}Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
         ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round", m.avatar)}
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
-            ${ME.move && !m.disabled && !m.domains.includes(ME.move.to) ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>` : ""}
+            ${ME.auth && !m.disabled ? (ME.move && !m.domains.includes(ME.move.to)
+              ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>`
+              : `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}" data-new="1">${icon("key")}Link de nova passkey</button>`) : ""}
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
         </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
+        ${ME.is_admin && ME.auth ? `<div class="invite mt" id="invitebox"><h3>Convidar alguém</h3>
+          <p class="muted small" style="margin-top:4px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
+          <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
+            <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
+          <div id="qrbox"></div></div>` : ""}
       </section>
-    </div>
-    ${ME.is_admin && ME.auth ? `<section class="panel mt">
-      <div class="panel-head"><h2>Convidar alguém</h2></div>
-      <p class="muted" style="margin-top:-6px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
-      <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
-        <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
-      <div id="qrbox"></div></section>` : ""}
-    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}OneDrive</h2><span class="muted small">Arquivos dos pedidos</span></div>
-      <div id="drivebody">${spinner()}</div></section>` : ""}
+    ${ME.is_admin && BOOT.meta?.enabled ? `<section class="panel mt" id="meta"><div class="panel-head"><h2>${icon("target")}Meta</h2><span class="muted small">Números das campanhas</span></div>
+      <div id="metabody">${spinner()}</div></section>` : ""}
     ${ME.is_admin ? financeSettingsPanel(BOOT.finance) : ""}
-    ${ME.is_admin ? `<section class="panel mt"><div class="panel-head"><h2>Listas</h2><span class="muted small">Um item por linha</span></div>
+    ${ME.is_admin ? `<section class="panel mt" id="lists"><div class="panel-head"><h2>${icon("list")}Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
         <textarea class="input" data-list="${k}" rows="9">${esc(o[k].join("\n"))}</textarea></div>`).join("")}</div>
       <div class="mt"><button class="btn" id="savelists">${icon("check")}Salvar listas</button></div></section>` : ""}
+    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}Arquivos</h2><span class="muted small">O OneDrive dos pedidos</span></div>
+      <div id="drivebody">${spinner()}</div></section>` : ""}
     <p class="muted small mt" id="version">Pauta ${esc(BOOT.version || "")}</p>
   </div>`;
-  $("#logout")?.addEventListener("click", logout);
-  $("#addkey")?.addEventListener("click", addPasskey);
   if (ME.is_admin) loadDrive();
-  $("#rename")?.addEventListener("click", async () => {
-    try {
-      ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value, email: $("#myemail").value })) };
-      BOOT = await api("GET", "/api/boot");
-      renderShell();
-      toast("Salvo");
-      viewTeam();
-    } catch (e) { toast(e.message, true); }
-  });
+  if (ME.is_admin && BOOT.meta?.enabled) loadMeta();
+  const back = query?.get("meta");  // the way back from Meta's login (/api/meta/callback)
+  if (back) {
+    history.replaceState(null, "", "#/configuracoes");
+    if (back === "conectado") toast("Meta conectada");
+    else toast(META_ERRORS[query.get("motivo")] || "Não foi possível conectar à Meta; tente de novo", true);
+  }
   $$("[data-m]").forEach((b) => b.addEventListener("click", async () => {
     const body = b.dataset.admin !== undefined ? { is_admin: b.dataset.admin === "1" } : { disabled: b.dataset.dis === "1" };
-    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
+    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewSettings(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
-  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name)));
+  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
@@ -1295,6 +1671,79 @@ async function viewTeam() {
   });
 }
 
+// ---------- perfil (decision 10) --------------------------------------------------------------
+
+// What is about the person signed in, and only them: name, WhatsApp, e-mail, their passkeys
+// (a label each, add one here, remove one while another stays, a link for a new phone) and
+// the way out of every device. Removing a passkey signs the other devices out; the server
+// re-issues this one's cookie in the same answer, so the page carries on without a reload.
+// The team's settings are on Configurações.
+const KEY_KINDS = { internal: "Face ID, digital ou PIN", hybrid: "celular, pelo QR", usb: "chave USB", nfc: "chave NFC", ble: "chave Bluetooth" };
+function passkeyRow(k, alone) {
+  const kinds = (k.transports || "").split(",").filter(Boolean).map((t) => KEY_KINDS[t] || t).join(", ");
+  const made = fmtDate(String(k.created).slice(0, 10), { day: "numeric", month: "short", year: "numeric" });
+  const used = k.last_used ? `usada ${esc(ago(k.last_used))}` : "nunca usada";
+  return `<div class="member" data-pk="${esc(k.id)}">${icon("key", "keyic")}
+    <div class="who"><b>${esc(k.label || "Passkey")}</b><span>criada em ${esc(made)} · ${used}${kinds ? ` · ${esc(kinds)}` : ""}</span></div>
+    <div class="row-gap"><button class="btn ghost small" data-relabel="${esc(k.id)}" data-label="${esc(k.label)}">${icon("edit")}Renomear</button>
+      <button class="btn ghost small danger" data-remove="${esc(k.id)}" data-label="${esc(k.label || "Passkey")}" ${alone ? 'disabled title="Adicione outra passkey antes de tirar esta"' : ""}>${icon("trash")}Remover</button></div></div>`;
+}
+
+async function viewProfile() {
+  const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
+  app.innerHTML = `<div style="max-width:760px">
+    <div class="head"><div><h1>Perfil</h1><p>Como você aparece para o time e como entra na Pauta.</p></div></div>
+    <section class="panel" id="me">
+      <div class="member">${avatar(ME.name, "lg round", ME.avatar)}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
+        <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
+      ${ME.auth ? `<div class="form-grid mt">
+        <div class="field"><label>Seu nome</label><input class="input" id="myname" autocomplete="name" value="${esc(ME.name)}"></div>
+        <div class="field"><label>WhatsApp <span class="muted">(opcional)</span></label><input class="input" id="mywa" inputmode="tel" autocomplete="tel" placeholder="+55 11 90000-0000" value="${esc(ME.whatsapp || "")}">
+          <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
+        <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
+          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
+      </div>
+      <div class="mt"><button class="btn" id="saveme">${icon("check")}Salvar</button></div>` : ""}
+    </section>
+    ${ME.auth ? `<section class="panel mt" id="passkeys">
+      <div class="panel-head"><h2>${icon("key")}Passkeys</h2><span class="muted small">${keys.length} ${keys.length === 1 ? "aparelho" : "aparelhos"}</span></div>
+      <p class="muted small" style="margin-top:-6px">Cada aparelho em que você entra tem a própria passkey. Dê nomes para saber qual é qual e tire a de um aparelho que você não usa mais.</p>
+      ${keys.map((k) => passkeyRow(k, keys.length === 1)).join("")}
+      <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
+        <button class="btn" id="newlink">${icon("link")}Link de nova passkey</button></div>
+      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
+      <div id="mv-me"></div>
+    </section>
+    <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
+      <p class="muted small" style="margin-top:-6px">Sair encerra a Pauta em todos os aparelhos em que você entrou; as passkeys continuam valendo para entrar de novo.</p>
+      <button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></section>` : ""}
+  </div>`;
+  $("#saveme")?.addEventListener("click", async () => {
+    try {
+      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value };
+      ME = { ...ME, ...(await api("PATCH", "/api/me", body)) };
+      BOOT = await api("GET", "/api/boot");
+      renderShell();
+      toast("Salvo");
+      viewProfile();
+    } catch (e) { toast(e.message, true); }
+  });
+  $("#addkey")?.addEventListener("click", async () => { if (await addPasskey()) viewProfile(); });
+  $("#newlink")?.addEventListener("click", () => makeMoveLink("me", ME.name, true));
+  $("#logout")?.addEventListener("click", logout);
+  $$("[data-relabel]").forEach((b) => b.addEventListener("click", async () => {
+    const label = prompt("Nome deste aparelho (por exemplo “iPhone do Piero”)", b.dataset.label);
+    if (label === null) return;
+    try { await api("PATCH", `/api/me/passkeys/${b.dataset.relabel}`, { label }); viewProfile(); }
+    catch (e) { toast(e.message, true); }
+  }));
+  $$("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela sai da Pauta agora e só volta a entrar com outra passkey. Este aparelho continua.`)) return;
+    try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
+    catch (e) { toast(e.message, true); }
+  }));
+}
+
 // The OneDrive card: connect with a code (device code flow), see the account, disconnect.
 let DRIVE_TIMER;
 async function loadDrive(doc) {
@@ -1321,7 +1770,8 @@ async function loadDrive(doc) {
     toast("OneDrive desconectado");
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
-  if (doc.state === "connected") { toast("OneDrive conectado"); await refreshBoot(); }
+  // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
+  if (doc.state === "connected") { await refreshBoot(); toast("OneDrive conectado"); }
   if (doc.state === "expired") toast("O código expirou; gere outro", true);
   if (doc.state === "denied") toast("A conexão foi recusada na conta Microsoft", true);
 }
@@ -1351,6 +1801,170 @@ function driveBody(d) {
     ${q}
     <div class="row-gap mt">${d.error ? `<button class="btn primary" id="driveconnect">${icon("cloud")}Reconectar</button>` : ""}
       <button class="btn ghost danger" id="driveoff">Desconectar</button></div>`;
+}
+
+// The Meta card: connect the agency's business portfolio (Facebook Login for Business, a
+// full-page trip to facebook.com and back), then this month's numbers per ad account.
+const META_ERRORS = {
+  cancelado: "A conexão foi cancelada na Meta",
+  expirou: "O pedido de conexão expirou; tente de novo",
+};
+// a currency code Intl doesn't know (Meta's data, not ours) must not break the card
+const centsMoney = (c, cur) => {
+  if (c == null) return "—";
+  try { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100); }
+  catch (e) { return `${cur || "BRL"} ${(c / 100).toFixed(2)}`; }
+};
+const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
+
+async function loadMeta(refresh = false) {
+  if (!$("#metabody")) return;
+  let html = "", error = "";
+  try {
+    const [doc, clients, log] = await Promise.all([
+      api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients"), api("GET", "/api/meta/log")]);
+    html = metaBody(doc, clients, log);  // inside the try: an odd answer must not leave the spinner
+  } catch (e) { error = e.message || "não foi possível mostrar a Meta"; }
+  const box = $("#metabody");
+  if (!box) return;  // left the page while waiting
+  box.innerHTML = error
+    ? `<p class="warnbox">${esc(error)}</p>
+      <div class="row-gap mt"><button class="btn" id="metarefresh">${icon("swap")}Tentar de novo</button></div>`
+    : html;
+  // the Cliente column: picking saves at once; a suggestion is only a suggestion until picked
+  $$("select[data-link]").forEach((sel) => sel.addEventListener("change", async (e) => {
+    const el = e.currentTarget, value = el.value;
+    el.disabled = true;
+    try {
+      const row = await api("PATCH", `/api/meta/accounts/${el.dataset.link}`, { client: value ? Number(value) : null });
+      toast(row.client ? `Conta vinculada a ${row.client.name}` : "Conta desvinculada");
+      loadMeta();
+    } catch (err) { toast(err.message, true); el.disabled = false; }
+  }));
+  // Conectar Meta, Conectar outro portfólio and Adicionar contas are the same trip through
+  // Meta's login; the last one names the portfolio it is adding to (a re-login on it)
+  $$("[data-metaconnect]").forEach((b) => b.addEventListener("click", async (e) => {
+    const btn = e.currentTarget, business = btn.dataset.business;
+    if (business && !confirm("Na Meta, entre com o portfólio " + (btn.dataset.name || "") + " e marque todas as contas de anúncios que a Pauta deve ler: as que já estão aqui e as novas. Uma conta que ficar desmarcada pode sair da lista.")) return;
+    btn.disabled = true;
+    try { location.href = (await api("POST", "/api/meta/connect", business ? { business_id: business } : {})).url; }
+    catch (err) { toast(err.message, true); btn.disabled = false; }
+  }));
+  $("#metarefresh")?.addEventListener("click", (e) => { e.currentTarget.disabled = true; loadMeta(true); });
+  $$("[data-metaoff]").forEach((b) => b.addEventListener("click", async (e) => {
+    const btn = e.currentTarget, name = btn.dataset.name || "este portfólio";
+    if (!confirm(`Desconectar o portfólio ${name}? A Pauta esquece o acesso e para de ler as contas dele; as contas continuam na lista, sem números, até alguém reconectar. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio desse portfólio (Integrações → Apps conectados).`)) return;
+    try { await api("DELETE", `/api/meta/connections/${btn.dataset.metaoff}`); toast("Portfólio desconectado"); loadMeta(); }
+    catch (err) { toast(err.message, true); }
+  }));
+}
+
+const META_STATES = {
+  revoked: "acesso revogado na Meta; reconecte em Adicionar contas",
+};
+const stampBR = (iso) => {
+  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(" ", "T") + "Z");
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+};
+// one line of the Meta history: who did what to which portfolio or account
+function metaLogLine(l) {
+  const who = l.by?.name || "Alguém", d = l.detail || {}, port = d.business_name || l.business_id || "";
+  const text = {
+    connected: `<b>${esc(who)}</b> conectou o portfólio <b>${esc(port)}</b>`,
+    disconnected: `<b>${esc(who)}</b> desconectou o portfólio <b>${esc(port)}</b>`,
+    linked: `<b>${esc(who)}</b> vinculou a conta <b>${esc(d.account_name || d.account_id || "")}</b> a <b>${esc(d.client_name || "")}</b>`,
+    unlinked: `<b>${esc(who)}</b> desvinculou a conta <b>${esc(d.account_name || d.account_id || "")}</b>`,
+    revoked: `A Meta revogou o acesso ao portfólio <b>${esc(port)}</b>`,
+  }[l.kind] || esc(l.kind);
+  return `<li>${text} <span class="muted small">· ${esc(stampBR(l.at))}</span></li>`;
+}
+
+function metaBody(d, clients = [], log = []) {
+  if (!d.connected) {
+    return `<p class="muted">Conecte o portfólio empresarial da agência, ou o do cliente onde a Pauta foi adicionada, para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
+      <button class="btn primary" data-metaconnect>${icon("target")}Conectar Meta</button>`;
+  }
+  const accs = d.accounts || [], conns = d.connections || [];
+  // Ativo clients first, then the rest, each group as /api/clients orders them
+  const sorted = [...clients.filter((c) => c.state === "Ativo"), ...clients.filter((c) => c.state !== "Ativo")];
+  const pick = (a) => {
+    const cur = a.client?.id, sug = !cur && a.suggested ? a.suggested.id : null;
+    return `<select class="input small" data-link="${esc(a.id)}" aria-label="Cliente da conta ${esc(a.name)}"><option value="">— sem cliente —</option>
+      ${sorted.map((c) => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${esc(c.name)}${c.id === sug ? " (sugestão)" : ""}</option>`).join("")}</select>
+      ${sug ? `<span class="muted small hint">Sugestão: ${esc(a.suggested.name)}</span>` : ""}`;
+  };
+  // the connection belongs to the team: "conectado à Pauta em <data> (por <pessoa>)", never
+  // "conectado por" as if it were theirs. One block per portfolio, with its own buttons.
+  const block = (c) => {
+    const when = c.connected_at ? new Date(c.connected_at).toLocaleDateString("pt-BR") : "";
+    const name = c.business_name || c.business_id;
+    const state = c.state === "ok" ? "" : `<span class="warnline">${esc(META_STATES[c.state] || c.error || "problema na conexão")}</span>`;
+    return `<div class="member conn" data-conn="${esc(c.business_id)}"><div class="who"><b>Portfólio ${esc(name)}</b>
+      <span>conectado à Pauta${when ? ` em ${esc(when)}` : ""}${c.by_name ? ` (por ${esc(c.by_name)})` : ""}${c.last_sync ? ` · sincronizado ${esc(stampBR(c.last_sync))}` : ""}</span>${state}</div>
+      <div class="row-gap"><button class="btn primary small" data-metaconnect="add" data-business="${esc(c.business_id)}" data-name="${esc(name)}">${icon("plus")}Adicionar contas</button>
+        <button class="btn ghost small danger" data-metaoff="${esc(c.business_id)}" data-name="${esc(name)}">Desconectar</button></div></div>`;
+  };
+  // the numbers live in Campanhas (decision 8): here only the account, whose it is, the balance
+  const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""} data-business="${esc(a.business_id || "")}"><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}${a.business_name ? ` · Portfólio ${esc(a.business_name)}` : ""}</span></td>
+      <td class="pick">${pick(a)}</td>
+      ${a.stale ? `<td class="muted">não aparece mais na Meta</td>` : `<td class="r">${metaBalance(a)}</td>`}</tr>`).join("");
+  return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
+    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.</span>
+      <button class="btn small" data-metaconnect>${icon("target")}Conectar outro portfólio</button>
+      <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button></div>
+    <div id="metaconns">${conns.map(block).join("")}</div>
+    ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th>Cliente</th><th class="r">Saldo</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`
+    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta nos portfólios conectados.</div>`}
+    <p class="muted small mt">Cliente novo? Se a conta está num portfólio já conectado, toque em <b>Adicionar contas</b> nele e marque, na Meta, todas as contas que a Pauta deve ler. Se o cliente tem o próprio portfólio, <b>Conectar outro portfólio</b>. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar. Na coluna <b>Cliente</b>, diga de quem é cada conta: as campanhas dela entram em Campanhas e na página do cliente.</p>
+    ${log.length ? `<details class="mt" id="metalog"><summary class="muted small">Histórico</summary><ul class="metalog">${log.map(metaLogLine).join("")}</ul></details>` : ""}`;
+}
+
+// The Meta card on a client's page: the last 30 days' tracked campaigns (name, Resultados,
+// Custo por resultado, Valor gasto, like Ads Manager; decision 8) and the balance of each
+// linked account. Loaded after the page draws; never blocks it.
+async function loadClientMeta(c) {
+  const box = $("#clientmeta");
+  if (!box || !BOOT.meta?.enabled) return;
+  const card = (body) => `<div class="panel clientbox mt"><div class="panel-head"><h3>Meta</h3><a class="linkbtn small" href="#/campanhas">Campanhas</a></div>${body}</div>`;
+  let doc;
+  try { doc = await api("GET", `/api/clients/${c.id}/meta`); }
+  catch (e) {
+    if ($("#clientmeta")) box.innerHTML = card(`<p class="warnbox">${esc(e.message)}</p>`);
+    return;
+  }
+  if (!$("#clientmeta") || !doc.connected) return;
+  if (doc.error) {  // Meta failed: members get a neutral line, admins the reason
+    box.innerHTML = card(`<p class="warnbox">${esc(doc.error)}</p>`);
+    return;
+  }
+  let camps = null;
+  try { camps = (await api("GET", `/api/campaigns?client=${c.id}`)).clients.flatMap((x) => x.campaigns); }
+  catch { camps = null; }
+  if (!$("#clientmeta")) return;
+  if (!doc.accounts.length && !camps?.length) {
+    box.innerHTML = ME.is_admin ? card(`<p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/configuracoes">Vincule em Configurações → Meta.</a></p>`) : "";
+    return;
+  }
+  const line = (label, value) => `<div class="row"><span class="grow muted">${label}</span><b>${value}</b></div>`;
+  const list = camps === null ? `<p class="muted small">não foi possível ler as campanhas</p>`
+    : !camps.length ? `<p class="muted small">Nenhuma campanha acompanhada nos últimos 30 dias.</p>`
+    : camps.map((k) => `<div class="metaacc kcard" data-id="${k.id}"><a class="row" href="#/campanha/${k.id}"><b class="grow">${esc(k.name)}</b>${stateTag(k)}</a>
+      ${line("Resultados", k.results == null ? dash(NO_RESULTS) : `${esc(count(k.results))}<span class="muted small"> ${esc(resultLabel(k.result_indicator))}</span>`)}
+      ${line("Custo por resultado", k.results ? esc(centsMoney(k.cost_per_result_cents, k.currency)) : dash(NO_RESULTS))}
+      ${line("Valor gasto", esc(centsMoney(k.spend_cents, k.currency)))}</div>`).join("");
+  box.innerHTML = card(`<div class="muted small">Campanhas acompanhadas · últimos 30 dias</div>${list}
+    ${doc.accounts.length ? `<div class="metaacc balances">${doc.accounts.map((a) => line(`Saldo · ${esc(a.name)}`, a.stale ? `<span class="muted small">não aparece mais na Meta</span>` : metaBalance(a))).join("")}</div>` : ""}`);
+}
+
+function metaBalance(a) {
+  const b = a.balance || {};
+  // refused for permissions: the system user's task changed on Meta's side, and only a fresh
+  // connection (Adicionar contas) carries the new one; anything else Meta didn't answer
+  if (!b.available) return `<span class="muted" title="${esc(b.reason || "")}">${b.refused ? "sem permissão · reconecte em Adicionar contas" : "—"}</span>`;
+  if (b.remaining_cents != null) return `${esc(centsMoney(b.remaining_cents, a.currency))}<span class="muted small">até o limite</span>`;
+  return b.funding ? esc(b.funding) : "—";
 }
 
 async function makeInvite() {
@@ -1392,14 +2006,23 @@ function addMoveBar() {
 }
 
 // An admin's link for someone who hasn't moved: sent on WhatsApp, it's one tap and Face ID
-async function makeMoveLink(id, name) {
+// The same one-time link serves a domain move and a new (or lost) phone; only the words differ
+async function makeMoveLink(id, name, fresh = false) {
   const box = $(`#mv-${id}`);
+  const mine = id === "me";  // Perfil: the same link, made by the person for themselves
   try {
-    const mv = await api("POST", `/api/members/${id}/move`, {});
-    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
-    const msg = `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
-    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>Link de ${esc(firstName(name))} para ${esc(mv.to)}</b>
-      <div class="muted small">Só para ${esc(firstName(name))}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+    const mv = await api("POST", mine ? "/api/me/move" : `/api/members/${id}/move`, {});
+    // the person's own link is tapped right away (10 minutes); an admin's is sent and waited for
+    const until = mine ? "por 10 minutos" : "até " + new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    const msg = mine
+      ? `Meu link para criar uma passkey nova na Pauta (celular novo ou perdido). Abrir no aparelho novo, confirmar com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
+      : fresh
+        ? `Oi, ${firstName(name)}! Este é o seu link para criar uma passkey nova na Pauta (celular novo ou perdido). Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
+        : `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
+    const title = mine ? "Seu link de nova passkey" : fresh ? `Link de nova passkey de ${esc(firstName(name))}` : `Link de ${esc(firstName(name))} para ${esc(mv.to)}`;
+    const who = mine ? "Só para você" : `Só para ${esc(firstName(name))}`;
+    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>${title}</b>
+      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, ${esc(until)}.</div>
       <code class="invlink">${esc(mv.url)}</code>
       <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
       <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
@@ -1417,13 +2040,17 @@ async function showMove(token) {
   let info;
   try { info = await api("GET", `/api/move/${encodeURIComponent(token)}`); }
   catch (e) {
-    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
+    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta${ME.move ? `, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo` : ""}.</p><a class="btn big" href="#/">Ir para o login</a>`);
     return;
   }
-  const g = gate(`<h1>Olá, ${esc(firstName(info.name))}!</h1>
+  const g = gate(ME.move ? `<h1>Olá, ${esc(firstName(info.name))}!</h1>
     <p>A Pauta agora mora em <b>${esc(info.to)}</b>. Crie sua passkey aqui para continuar: é a mesma conta, com tudo o que você já fez.</p>
     <button class="btn primary big" id="moveok">${icon("key")}Criar passkey em ${esc(info.to)}</button>
-    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`);
+    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`
+    : `<h1>Olá, ${esc(firstName(info.name))}!</h1>
+    <p>Crie uma passkey neste aparelho para entrar na Pauta: é a mesma conta, com tudo o que você já fez.</p>
+    <button class="btn primary big" id="moveok">${icon("key")}Criar passkey neste aparelho</button>
+    <p class="fine">Dica: adicione a Pauta à tela de início do celular para abrir com um toque.</p>`);
   $("#moveok", g).addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
@@ -1489,9 +2116,11 @@ async function addPasskey() {
   try {
     await passkeyRegister({});
     toast("Passkey adicionada neste aparelho");
+    return true;
   } catch (e) {
     if (e.name === "InvalidStateError") toast("Este aparelho já tem uma passkey sua.");
     else if (e.name !== "NotAllowedError") toast(e.message, true);
+    return false;
   }
 }
 

@@ -9,13 +9,124 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- **Campanhas igual ao Gerenciador de Anúncios.** O período padrão passa a ser **Últimos 30
+  dias** (o do próprio Gerenciador: de ontem para trás, sem o dia de hoje), sempre com as
+  datas exatas; o navegador continua lembrando a última escolha e o endereço manda. As
+  colunas são as dele, na ordem dele: **Resultados** (o que o objetivo da campanha conta,
+  com o nome que o Gerenciador usa embaixo do número: "Conversas por mensagem iniciadas",
+  "Cadastros", "Cliques no link"...; "—" quando a Meta não registrou resultado para o
+  objetivo), **Custo por resultado**, **Valor gasto** (antes "Investido"), **Impressões**,
+  **Alcance** e **Orçamento** da campanha ("R$ 15,00 · diário" ou "R$ 450,00 · total").
+  Cada campanha mostra "ativa desde *dia*" ao lado do nome, para um período curto não
+  parecer falta de dados. Na página da campanha os cartões padrão são Resultados, Custo por
+  resultado e Valor gasto; Leads (cliques), Custo por lead, CTR, CPM e frequência seguem
+  no seletor. "Hoje" é o dia da conta de anúncios (fuso horário que a Meta informa; São
+  Paulo quando não há conta), não o do servidor: o período padrão, o "hoje incluso", a data
+  do Visto hoje e os dias que a sincronização relê seguem o fuso da conta. API:
+  `GET /api/campaigns` e `GET /api/campaigns/{id}` trazem `results`, `result_indicator`,
+  `cost_per_result_cents`, `daily_budget_cents` e `lifetime_budget_cents`; `results` deixa
+  de ser os cliques no link (`link_clicks` e `cpl_cents` continuam); sem `since`/`until` o
+  período é os últimos 30 dias e `today_included` vem `false`. Esquema v11 (aditivo).
+- **Equipe → Meta** passa a ter **uma conexão por portfólio empresarial** (o Login para
+  Empresas da Meta conecta um portfólio por vez, e o usuário do sistema da Pauta pode viver
+  no portfólio de um cliente): cada portfólio conectado aparece num bloco próprio,
+  "Portfólio *nome* conectado à Pauta em *data* (por *pessoa*)", com **Adicionar contas**
+  (entra de novo nesse portfólio) e **Desconectar** (só ele; o acesso do lado da Meta se
+  tira nas Configurações do negócio desse portfólio). Conectar um segundo portfólio não
+  derruba mais o primeiro: **Conectar outro portfólio** soma. As contas de anúncios de todos
+  os portfólios ficam na mesma tabela, cada uma dizendo de qual portfólio é; um acesso
+  revogado na Meta marca só aquele portfólio ("acesso revogado na Meta; reconecte em
+  Adicionar contas") e os outros seguem lendo e sincronizando. Um **Histórico** (quem
+  conectou, desconectou, vinculou ou desvinculou o quê, e quando) fecha o cartão e sai no
+  export. A conexão antiga é migrada sozinha na primeira subida (o arquivo do token ganha o
+  número do portfólio). API: `POST /api/meta/connect` aceita `{"business_id"}`, `DELETE
+  /api/meta/connections/{business_id}` substitui `DELETE /api/meta`, `GET /api/meta` traz
+  `connections`, novo `GET /api/meta/log`; `/metrics` ganha `meta.connections` e
+  `meta.revoked`; `pauta meta status` lista os portfólios. Esquema v10 (aditivo).
+- Aba **Campanhas** (quando a Meta está configurada; todo o time vê): um bloco por cliente
+  com as campanhas acompanhadas e os números do período (investido, leads = cliques no link,
+  custo por lead, alcance, impressões), mais o total do cliente. No topo, o **período** com
+  as opções do Gerenciador de Anúncios (hoje, ontem, últimos 7 ou 30 dias sem o dia de hoje,
+  este mês, mês passado, personalizado) sempre mostrando as datas exatas e um aviso "hoje
+  incluso"; a escolha fica no endereço e o navegador lembra a última. O check diário mora
+  nas mesmas linhas: **Visto hoje** por cliente (com nota opcional), "Hoje: 3 de 5 clientes
+  vistos", e quem ainda falta ver fica em cima. Tocar numa campanha abre a página dela:
+  escolha de métricas (investido, leads, custo por lead, alcance, impressões, CTR, CPM,
+  frequência e os resultados que a Meta reportar, como conversas iniciadas), cada uma com
+  o valor do período e um gráfico por dia. Administradores têm **Atualizar agora**, **Não
+  acompanhar** e "ver ignoradas". No celular, a aba entra no lugar de Financeiro/Quadro
+  (os dois continuam a um toque do Painel). **Equipe → Meta** agora só mapeia as contas
+  (conta, cliente e saldo; os totais do mês saíram, porque somavam campanhas encerradas) e,
+  quando a Meta recusa o saldo, diz o que fazer: "sem permissão · reconecte em Adicionar
+  contas". O cartão Meta da página do cliente lista as campanhas do mês com link para a aba.
+  API: `GET /api/campaigns` ganha `include_skipped=1`, `client=<id>`, `last_sync`,
+  `seen_today`/`seen`; novos `GET /api/campaigns/{id}?since&until` (a campanha com os dias)
+  e `POST /api/clients/{id}/reviews` (o Visto hoje).
+- Acompanhamento de campanhas (dados e sincronização; a tela vem a seguir): a Pauta passa a
+  guardar, por campanha e por dia, os números das contas de anúncios vinculadas a um cliente
+  (investido, impressões, alcance, cliques no link e as ações da Meta). As campanhas vêm da
+  própria Meta: toda campanha **ativa** de uma conta vinculada ganha uma linha sob o cliente,
+  encerra quando a Meta para de veicular e volta quando reativa; quem não quiser acompanhar
+  uma campanha marca "não acompanhar" e a sincronização não mexe mais nela. Um pedido
+  concluído de "Criar campanha" ou "Reativar campanha" cujo link do Gerenciador de Anúncios
+  traz o número da campanha fica ligado a ela (aparece na linha do tempo). A sincronização
+  roda sozinha no servidor (de hora em hora os dois últimos dias; de madrugada os últimos 28,
+  porque conversões chegam atrasadas), e também pela linha de comando (`pauta meta sync`,
+  `pauta meta status`). API: `GET /api/campaigns?since&until` (mês atual por padrão),
+  `PATCH /api/campaigns/{id}` e `POST /api/meta/sync` (administradores, uma vez a cada 15
+  minutos). O `/metrics` mostra a última sincronização; a exportação inclui as tabelas novas.
 - Para testar: qualquer branch pode ir para https://acc.pauta.cc antes do merge (Actions →
   *Deploy branch to acceptance*). Só o Eduardo pode disparar; a versão do ar não muda.
+- Equipe → **Meta** (para administradores, quando o servidor tem a Meta configurada):
+  **Conectar Meta** leva ao login da Meta, onde você escolhe o portfólio empresarial da
+  agência e as contas de anúncios. Na volta, a Pauta mostra cada conta com os números deste
+  mês: investido, alcance, impressões, cliques no link, custo por clique e o saldo (ou "sem
+  permissão", quando a Meta não deixa ler). A Pauta só lê; não altera nada na Meta. Primeiro
+  passo da fase 2 da decisão 8.
+- Equipe → Meta: a coluna **Cliente** diz de quem é cada conta de anúncios. A Pauta sugere
+  pelo nome (você confirma) e já vincula sozinha quando o número da conta está no cadastro do
+  cliente. Na página do cliente aparece um cartão **Meta** com os números deste mês das contas
+  vinculadas (investido, alcance, cliques no link, custo por clique e saldo). Uma conta que
+  sumir da lista da Meta continua aqui, marcada "não aparece mais na Meta".
+- Meta: a leitura faz duas chamadas por 50 contas (lista + lote), não uma por conta; se a
+  Meta não devolver os números de uma conta, só essa linha mostra "—" (o motivo ao passar o
+  mouse) e as outras continuam. Quando a Meta falha, a página do cliente diz "os números da
+  Meta estão indisponíveis no momento" (o motivo mesmo só para administradores) e a Pauta
+  espera um minuto antes de tentar de novo, a não ser que um administrador toque em
+  Atualizar. Desvincular uma conta agora vale: a próxima leitura não a vincula de volta.
 
 ### Fixed
 
+- Campanhas lista todo cliente com conta vinculada, mesmo sem campanha ativa (sumia como se
+  a conexão tivesse falhado), e mostra o Saldo da conta em cada bloco; `GET /api/campaigns`
+  traz `accounts` por cliente e `campaigns: []` para esses.
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
+- **Perfil** (`#/perfil`, no menu da conta e no avatar da barra de cima): a sua página, só
+  sua. Nome, **WhatsApp** (novo; só você vê) e e-mail do Gravatar
+  saem de Equipe e vêm para cá. As suas **passkeys** aparecem em lista, com nome (a Pauta
+  dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
+  **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma; o aparelho da
+  passkey removida sai da Pauta na hora, os outros continuam) ficam ao lado,
+  e o **Link de nova passkey** (celular novo ou perdido) agora você mesmo gera, com Copiar
+  e Enviar no WhatsApp: vale 10 minutos (é para abrir no aparelho novo na hora; o que o
+  administrador manda continua valendo 3 dias) e "Sair em todos os aparelhos" também o
+  cancela. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
+  traz `whatsapp`; `PATCH /api/me` aceita `name`, `email` e `whatsapp`; `GET /api/me/passkeys`,
+  `PATCH|DELETE /api/me/passkeys/{id}` (400 na última; o DELETE encerra as outras sessões
+  e devolve um cookie novo para esta), `POST /api/me/move`. Esquema v12
+  (aditivo).
+- **Link de nova passkey** em Configurações → Time: o administrador gera, para qualquer pessoa do time, um
+  link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de
+  aceitação). Antes, esse link só aparecia durante a mudança de endereço.
+
+### Changed
+
+- A aba **Equipe** agora se chama **Configurações** (ícone de engrenagem): é onde ficam o
+  time, os convites, a Meta, o Financeiro, as listas e os Arquivos (o OneDrive dos pedidos),
+  em seções com esse nome e nessa ordem. O endereço `#/equipe` (e qualquer link antigo que
+  comece com ele, inclusive a volta do login da Meta) abre `#/configuracoes` sozinho. As
+  mensagens que mandavam para "Equipe → Meta" ou "Equipe" agora dizem "Configurações → ...".
 
 ## [1.6.1] - 2026-10-31
 

@@ -11,9 +11,11 @@ from urllib.parse import urlparse
 
 import pytest
 
+from fakemeta import fetch
 from pauta import server as server_mod
 from pauta.auth import Auth, AuthError
 from pauta.db import SCHEMA_VERSION, Invalid, Store
+from pauta.ratelimit import RateLimiter
 from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join, login, start
 
 
@@ -312,3 +314,15 @@ def test_connections_are_capped(tight):
     time.sleep(0.5)  # the slot is free again
     reply = send_raw(tight, b"GET /healthz HTTP/1.0\r\n\r\n")
     assert reply.startswith(b"HTTP/1.0 200") and json.loads(reply.split(b"\r\n\r\n")[1])
+
+
+def test_the_meta_callback_is_rate_limited(store, auth):
+    """Meta's login lands here without a cookie, guarded by a one-time state alone: guesses
+    from one address count against the login bucket."""
+    httpd, base = start(store, auth, RateLimiter({"login": (2, 60)}))
+    try:
+        codes = [fetch(f"{base}/api/meta/callback?code=x&state=forged")[0] for _ in range(3)]
+        assert codes == [302, 302, 429]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

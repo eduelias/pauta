@@ -9,7 +9,8 @@ briefing; whoever runs the Meta ads works it through *A fazer → Em andamento �
 Concluído*, and every change lands on the request's timeline. It replaced the spreadsheet
 "Controle de Clientes e Campanhas".
 
-- Sign-in with **passkeys only** (Face ID, fingerprint, device PIN), by invite.
+- Sign-in with **passkeys only** (Face ID, fingerprint, device PIN), by invite. Each person
+  manages their own passkeys on *Perfil*; the team's settings live on *Configurações*.
 - Dashboard, board, list, clients, and a timeline with comments on every request.
 - Files on requests (images, short videos), kept in the team's OneDrive instead of on the
   server, with a view-only link to send the client.

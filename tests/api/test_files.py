@@ -154,7 +154,7 @@ def test_not_connected(team, drive):
     c = call(f"{base}/api/clients", {"name": "Ótica"}, nato)[1]
     call(f"{base}/api/requests", {"client": c["id"], "what": "x"}, nato)
     status, doc, _ = upload(base, 1, "a.png", b"abc", piero)
-    assert status == 409 and "Equipe" in doc["error"]
+    assert status == 409 and "Configurações" in doc["error"]
 
 
 def test_metrics_report_the_connection(filed, drive):

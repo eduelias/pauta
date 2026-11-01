@@ -4,8 +4,10 @@ import pytest
 
 from appserver import serve
 from fakegraph import CLIENT, FakeGraph
+from fakemeta import APP_ID, CONFIG_ID, FakeMeta, secret
 from pauta.auth import Auth
 from pauta.db import Store
+from pauta.meta import Meta
 from pauta.onedrive import OneDrive
 from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join
 
@@ -41,8 +43,35 @@ def drive_on(store, fake):
 
 
 @pytest.fixture()
-def site(store, auth, drive):
-    httpd = serve(store, auth, drive)
+def meta(store):
+    """Meta off (no app id, no secret). Tests about Meta override this with `meta_on`."""
+    return Meta(store.path)
+
+
+@pytest.fixture()
+def fake_meta():
+    """A fake Meta login and Graph on localhost (tests/fakemeta.py)."""
+    f = FakeMeta()
+    yield f
+    f.close()
+
+
+@pytest.fixture()
+def meta_on(store, fake_meta):
+    """Meta on, against the fake, with the app secret in its file; not connected yet."""
+    secret(store.path)
+    return Meta(
+        store.path,
+        app_id=APP_ID,
+        config_id=CONFIG_ID,
+        graph=fake_meta.graph,
+        dialog=fake_meta.dialog,
+    )
+
+
+@pytest.fixture()
+def site(store, auth, drive, meta):
+    httpd = serve(store, auth, drive, meta)
     yield f"http://127.0.0.1:{httpd.server_address[1]}", auth, store
     httpd.shutdown()
     httpd.server_close()

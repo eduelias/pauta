@@ -45,7 +45,7 @@ def test_moving_to_the_new_address(two_addresses, device):
     expect(page.locator("#movebar")).to_have_count(0)  # home: no bar
     assert sorted(c["rpId"] for c in d.passkeys()) == ["new.localhost", "old.localhost"]
 
-    page.goto(f"{new}/#/equipe")
+    page.goto(f"{new}/#/configuracoes")
     expect(page.locator(".member", has_text="Renato Lima").last).to_contain_text(
         "já em new.localhost"
     )
@@ -79,7 +79,7 @@ def test_an_admin_sends_a_link_and_it_is_one_tap(two_addresses, device):
     piero.page.get_by_role("button", name="Criar passkey e entrar").click()
     expect(piero.page.locator("#movebar")).to_be_visible()
 
-    admin.page.goto(f"{old}/#/equipe")
+    admin.page.goto(f"{old}/#/configuracoes")
     row = admin.page.locator(".member", has_text="Piero Sales")
     expect(row).to_contain_text("ainda não mudou")
     # three admin buttons never squeeze the name into a word-per-line column

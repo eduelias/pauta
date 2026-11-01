@@ -70,7 +70,7 @@ def test_sign_out_and_back_in_with_the_passkey(live, device):
     token, _ = auth.create_invite(admin=True)
     page = device().page
     join(page, base, token, "Renato Lima")
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/perfil")
     page.click("#logout")
     expect(page.locator("#login")).to_be_visible()
     expect(page.locator("#shell")).to_be_hidden()
@@ -87,7 +87,7 @@ def test_admin_invites_a_member_who_cannot_delete(live, device):
     join(admin, base, token, "Renato Lima")
     store.save_client({"name": "Padaria"})
     store.create_request({"client": 1, "what": "Novos criativos"}, 1)
-    admin.goto(f"{base}/#/equipe")
+    admin.goto(f"{base}/#/configuracoes")
     admin.click("#invite")
     link = admin.locator(".invlink").inner_text()
     assert link.startswith(f"{base}/#/entrar/")
@@ -135,12 +135,12 @@ def test_a_slow_screen_does_not_overwrite_the_next_one(live, device):
     # a locator, not wait_for_function: evaluating a string breaks the CSP (no unsafe-eval)
     page.locator("#app .spinner").wait_for(state="attached")
     assert held, "the list screen should be waiting on /api/requests"
-    page.goto(f"{base}/#/equipe")
-    expect(page.get_by_role("heading", name="Equipe")).to_be_visible()
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.get_by_role("heading", name="Configurações")).to_be_visible()
     with page.expect_response("**/api/requests"):
         held[0].continue_()
     page.wait_for_timeout(200)  # let the old screen's code run to the end
-    expect(page.get_by_role("heading", name="Equipe")).to_be_visible()
+    expect(page.get_by_role("heading", name="Configurações")).to_be_visible()
     expect(page.locator("#rows")).to_have_count(0)
 
 

@@ -5,8 +5,8 @@ import time
 import pytest
 
 from pauta import auth as auth_mod
-from pauta.auth import COOKIE, Auth, AuthError
-from pauta.db import Store
+from pauta.auth import COOKIE, Auth, AuthError, device_label
+from pauta.db import NotFound, Store
 from softpasskey import SoftPasskey
 
 
@@ -233,3 +233,112 @@ def test_rename_and_email(store, auth):
     assert len(store.members()[0]["avatar"]) == 64
     auth.set_email(aid, "")
     assert store.members()[0]["avatar"] == ""
+
+
+def test_whatsapp_is_free_text_like_a_clients(store, auth):
+    aid = add_account(store)
+    auth.set_whatsapp(aid, "  +55 (11)\t 9 0000-0000 \x07 ")
+    assert auth.viewer_for(_account(store, aid))["whatsapp"] == "+55 (11) 9 0000-0000"
+    auth.set_whatsapp(aid, "1" * 60)
+    assert len(auth.viewer_for(_account(store, aid))["whatsapp"]) == 40
+    auth.set_whatsapp(aid, None)
+    assert auth.viewer_for(_account(store, aid))["whatsapp"] == ""
+    assert auth_mod.OPEN_VIEWER["whatsapp"] == ""
+
+
+def _account(store, aid):
+    with store.db() as conn:
+        return dict(conn.execute("SELECT * FROM account WHERE id=?", (aid,)).fetchone())
+
+
+@pytest.mark.parametrize(
+    ("ua", "transports", "label"),
+    [
+        ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)", "internal", "iPhone"),
+        ("Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", "internal,hybrid", "iPad"),
+        ("Mozilla/5.0 (Linux; Android 15; Pixel 9)", "internal", "Android"),
+        ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "internal", "Mac"),
+        ("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "", "Windows"),
+        ("Mozilla/5.0 (X11; CrOS x86_64 14541.0.0)", "internal", "Chromebook"),
+        ("Mozilla/5.0 (X11; Linux x86_64)", "internal", "Linux"),
+        ("Mozilla/5.0 (Macintosh)", "hybrid", "Celular (pelo QR)"),  # a phone answered the QR
+        ("Mozilla/5.0 (Windows NT 10.0)", "usb,nfc", "Chave de segurança"),
+        ("", "", "Este aparelho"),
+        (None, None, "Este aparelho"),
+    ],
+)
+def test_a_passkeys_first_label_comes_from_the_device(ua, transports, label):
+    assert device_label(ua, transports) == label
+
+
+def test_passkeys_are_listed_labelled_and_removed_while_one_stays(store, auth):
+    token, _ = auth.create_invite()
+    opts = auth.register_options(invite=token, name="Ana")
+    phone = SoftPasskey()
+    acc = auth.register_verify(
+        opts["flow"], phone.create(opts["options"]), user_agent="Mozilla/5.0 (iPhone; ...)"
+    )
+    opts = auth.register_options(account=acc)
+    auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))
+    keys = auth.passkeys(acc["id"])
+    assert [k["label"] for k in keys] == ["iPhone", "Este aparelho"]
+    assert set(keys[0]) == {"id", "label", "transports", "rp_id", "created", "last_used"}
+    assert keys[0]["transports"] == "internal" and keys[0]["last_used"] is None
+    assert auth.passkeys(None) == []  # open mode
+
+    auth.relabel_passkey(acc["id"], keys[1]["id"], "  Mac\u200b do   trabalho " + "x" * 50)
+    assert auth.passkeys(acc["id"])[1]["label"].startswith("Mac do trabalho x")
+    assert len(auth.passkeys(acc["id"])[1]["label"]) == 40
+    with pytest.raises(NotFound):
+        auth.relabel_passkey(acc["id"], "nope", "x")
+    for bad in (None, 5, ["Mac"], {"label": "Mac"}):
+        with pytest.raises(AuthError, match="nome inválido"):  # JSON that isn't a string
+            auth.relabel_passkey(acc["id"], keys[1]["id"], bad)
+    assert auth.passkeys(acc["id"])[1]["label"].startswith("Mac do trabalho x")
+    other = add_account(store, "Bia")
+    with pytest.raises(NotFound):  # someone else's passkey is not found, not forbidden
+        auth.relabel_passkey(other, keys[0]["id"], "x")
+    with pytest.raises(NotFound):
+        auth.remove_passkey(other, keys[0]["id"])
+
+    cookie = cookie_value(auth.make_cookie(acc["id"], secure=False))
+    assert auth.account_from_cookie(cookie)["id"] == acc["id"]
+    auth.remove_passkey(acc["id"], keys[0]["id"])
+    assert [k["label"][:3] for k in auth.passkeys(acc["id"])] == ["Mac"]
+    assert auth.account_from_cookie(cookie) is None  # every session ended with it
+    cookie = cookie_value(auth.make_cookie(acc["id"], secure=False))
+    with pytest.raises(AuthError, match="única passkey"):
+        auth.remove_passkey(acc["id"], keys[1]["id"])
+    assert auth.account_from_cookie(cookie)["id"] == acc["id"]  # a refusal ends nothing
+    assert store.members()[0]["passkeys"] == 1
+
+
+def test_a_passkey_for_a_domain_pauta_left_is_not_the_one_that_stays(store, auth):
+    """After a move (decision 4) the old domain's passkeys linger on the account. They don't
+    sign in anywhere any more, so they can't count as "another one" when the person removes
+    the real last passkey; a leftover itself goes as long as a real one stays."""
+    token, _ = auth.create_invite()
+    opts = auth.register_options(invite=token, name="Ana")
+    acc = auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))
+    for _ in range(2):
+        opts = auth.register_options(account=acc)
+        auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))
+    real, old1, old2 = [k["id"] for k in auth.passkeys(acc["id"])]
+    with store.db() as db:
+        db.execute("UPDATE passkey SET rp_id='pauta.example'")  # all from the domain we left
+    for k in (real, old1, old2):
+        with pytest.raises(AuthError, match="única passkey"):  # none would sign in after
+            auth.remove_passkey(acc["id"], k)
+    with store.db() as db:
+        db.execute("UPDATE passkey SET rp_id='' WHERE id=?", (real,))  # as 1.5 made them
+    with pytest.raises(AuthError, match="única passkey"):
+        auth.remove_passkey(acc["id"], real)  # two would be left, neither of them usable
+    auth.remove_passkey(acc["id"], old1)  # the leftovers go while the real one stays
+    auth.remove_passkey(acc["id"], old2)
+    assert [k["id"] for k in auth.passkeys(acc["id"])] == [real]
+    with pytest.raises(AuthError, match="única passkey"):
+        auth.remove_passkey(acc["id"], real)
+    opts = auth.register_options(account=acc)
+    auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))  # on localhost
+    auth.remove_passkey(acc["id"], real)
+    assert [k["rp_id"] for k in auth.passkeys(acc["id"])] == ["localhost"]
