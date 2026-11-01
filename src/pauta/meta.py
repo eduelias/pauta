@@ -743,9 +743,10 @@ class Meta:
         return out
 
     def _read_one(self, business_id: str, business_name: str) -> list[dict]:
-        """One connection's list from Meta: /me/adaccounts, then every account's insights
-        and balance in batch requests of up to 50 reads (two per account)."""
-        doc = self._graph(
+        """One connection's list from Meta: /me/adaccounts (paged: a portfolio with more
+        than a hundred accounts lists them all), then every account's insights and balance
+        in batch requests of up to 50 reads (two per account)."""
+        rows = self._pages(
             "/me/adaccounts",
             {
                 # not business{name}: that field needs business_management, which this
@@ -757,9 +758,7 @@ class Meta:
             business_id,
         )
         out = []
-        for a in doc.get("data") or []:
-            if not isinstance(a, dict):
-                continue
+        for a in rows:
             aid = _digits(a.get("account_id") or a.get("id"))
             status = _int(a.get("account_status"))
             out.append(

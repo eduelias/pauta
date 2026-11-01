@@ -438,7 +438,7 @@ class FakeMeta:
                 need = "Requires business_management permission to access the field."
                 return 400, oauth_error(100, need)
             accounts = self.accounts_by_business.get(business, self.accounts)
-            return 200, {"data": accounts, "paging": {"cursors": {}}}
+            return self._page(accounts, q)  # the Graph pages this list too (limit, after)
         if self.throttle:
             return 400, oauth_error(4, "Application request limit reached")
         m = re.fullmatch(r"/act_(\d+)(/insights|/campaigns)?", path)
