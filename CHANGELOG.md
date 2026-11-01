@@ -102,6 +102,31 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   traz `accounts` por cliente e `campaigns: []` para esses.
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
+- **Perfil** (`#/perfil`, no menu da conta e no avatar da barra de cima): a sua página, só
+  sua. Nome, **WhatsApp** (novo; só você vê) e e-mail do Gravatar
+  saem de Equipe e vêm para cá. As suas **passkeys** aparecem em lista, com nome (a Pauta
+  dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
+  **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma; o aparelho da
+  passkey removida sai da Pauta na hora, os outros continuam) ficam ao lado,
+  e o **Link de nova passkey** (celular novo ou perdido) agora você mesmo gera, com Copiar
+  e Enviar no WhatsApp: vale 10 minutos (é para abrir no aparelho novo na hora; o que o
+  administrador manda continua valendo 3 dias) e "Sair em todos os aparelhos" também o
+  cancela. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
+  traz `whatsapp`; `PATCH /api/me` aceita `name`, `email` e `whatsapp`; `GET /api/me/passkeys`,
+  `PATCH|DELETE /api/me/passkeys/{id}` (400 na última; o DELETE encerra as outras sessões
+  e devolve um cookie novo para esta), `POST /api/me/move`. Esquema v12
+  (aditivo).
+- **Link de nova passkey** em Configurações → Time: o administrador gera, para qualquer pessoa do time, um
+  link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de
+  aceitação). Antes, esse link só aparecia durante a mudança de endereço.
+
+### Changed
+
+- A aba **Equipe** agora se chama **Configurações** (ícone de engrenagem): é onde ficam o
+  time, os convites, a Meta, o Financeiro, as listas e os Arquivos (o OneDrive dos pedidos),
+  em seções com esse nome e nessa ordem. O endereço `#/equipe` (e qualquer link antigo que
+  comece com ele, inclusive a volta do login da Meta) abre `#/configuracoes` sozinho. As
+  mensagens que mandavam para "Equipe → Meta" ou "Equipe" agora dizem "Configurações → ...".
 
 ## [1.6.1] - 2026-10-31
 

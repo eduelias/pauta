@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -32,13 +32,13 @@ CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,
     disabled INTEGER NOT NULL DEFAULT 0, session_gen INTEGER NOT NULL DEFAULT 0,
-    created TEXT NOT NULL DEFAULT (datetime('now'))
+    created TEXT NOT NULL DEFAULT (datetime('now')), whatsapp TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS passkey (
     id TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
     public_key BLOB NOT NULL, sign_count INTEGER NOT NULL DEFAULT 0, transports TEXT,
     created TEXT NOT NULL DEFAULT (datetime('now')), last_used TEXT,
-    rp_id TEXT NOT NULL DEFAULT ''
+    rp_id TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS invite (
     token_hash TEXT PRIMARY KEY, admin INTEGER NOT NULL DEFAULT 0,
@@ -379,6 +379,10 @@ def _account(v, db):
     return aid
 
 
+# what a person may change about their own account on Perfil; the name and e-mail have
+# their own rules in auth.py (uniqueness in the team)
+ACCOUNT_FIELDS = {"whatsapp": _text(40)}
+
 CLIENT_FIELDS = {
     "name": _text(80),
     "segment": _text(MAX_OPTION),
@@ -395,7 +399,7 @@ CLIENT_FIELDS = {
     "billed": _bool,
 }
 
-# Equipe → Financeiro (decision 7); the defaults are in finance.DEFAULTS
+# Configurações → Financeiro (decision 7); the defaults are in finance.DEFAULTS
 FINANCE_FIELDS = {
     "enabled": _bool,
     "currency": _choice(finance.CURRENCIES),
@@ -551,10 +555,17 @@ class Store:
             # v4: bumped to end every session of an account (logout, disable, enable)
             if "session_gen" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN session_gen INTEGER NOT NULL DEFAULT 0")
+            # v12: the person's own WhatsApp number (Perfil, decision 10); only they see
+            # it (GET /api/me), never /api/members, the boot data or the export
+            if "whatsapp" not in cols:
+                db.execute("ALTER TABLE account ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''")
             # v7: the domain a passkey belongs to (decision 4's move); '' until it's next used
             cols = {r[1] for r in db.execute("PRAGMA table_info(passkey)")}
             if "rp_id" not in cols:
                 db.execute("ALTER TABLE passkey ADD COLUMN rp_id TEXT NOT NULL DEFAULT ''")
+            # v12: a label per passkey ("iPhone", "Mac"), set when it's made, renamed on Perfil
+            if "label" not in cols:
+                db.execute("ALTER TABLE passkey ADD COLUMN label TEXT NOT NULL DEFAULT ''")
             # v7: an invite with an account is a move link: a passkey for that existing account
             cols = {r[1] for r in db.execute("PRAGMA table_info(invite)")}
             if "account" not in cols:
@@ -861,7 +872,8 @@ class Store:
     # One row per connected portfolio, mirroring the token files `meta.py` owns (it knows no
     # SQLite): the server calls sync_connections with meta.connections() at startup and on
     # every change. The row adds `last_sync`, written by the sync pass. `meta_log` is the
-    # short history Equipe shows: who connected, disconnected, linked or unlinked what.
+    # short history Configurações → Meta shows: who connected, disconnected, linked or
+    # unlinked what.
 
     LOG_KINDS = ("connected", "disconnected", "linked", "unlinked", "revoked")
 

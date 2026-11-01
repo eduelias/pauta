@@ -9,7 +9,7 @@ Moving to a new domain (decision 4): a passkey only works on the domain it was m
 during a move both domains are configured, the new one first. Each ceremony uses the domain
 its page is on, and on the old one a signed-in person gets a one-time link that lets them make
 a passkey for the same account on the new one. An admin can make the same link for someone
-else (Equipe, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
+else (Configurações → Time, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
 
 Configuration (environment):
   PAUTA_AUTH=passkeys     turn accounts on
@@ -50,14 +50,14 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from .db import Store, gravatar
+from .db import ACCOUNT_FIELDS, NotFound, Store, gravatar
 
 COOKIE = "pauta_session"
 SESSION_DAYS = 180
 FLOW_SECONDS = 300
 RP_NAME = "Pauta"
 INVITE_DAYS = 7
-MOVE_SECONDS = 600  # the link a signed-in person makes for themselves
+MOVE_SECONDS = 600  # the link a signed-in person makes for themselves: tapped right away
 MOVE_LINK_DAYS = 3  # the link an admin makes and sends
 DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localhost"]
 
@@ -116,10 +116,32 @@ OPEN_VIEWER = {
     "account": None,
     "name": "Você",
     "email": "",
+    "whatsapp": "",
     "avatar": "",
     "is_admin": True,
 }
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+# the kind of device a passkey was made on, from the browser's User-Agent: its first label
+DEVICES = (
+    ("iPhone", "iPhone"),
+    ("iPad", "iPad"),
+    ("Android", "Android"),
+    ("Macintosh", "Mac"),
+    ("Windows", "Windows"),
+    ("CrOS", "Chromebook"),
+    ("Linux", "Linux"),
+)
+
+
+def device_label(user_agent: str = "", transports: str = "") -> str:
+    """A passkey's first label, for the list on Perfil: the device it was made on when the
+    browser says, a phone that answered a QR code, or a security key. The person may rename
+    it. "Este aparelho" when nothing better is known."""
+    kinds = {t for t in str(transports or "").split(",") if t}
+    if kinds and "internal" not in kinds:
+        return "Celular (pelo QR)" if "hybrid" in kinds else "Chave de segurança"
+    ua = str(user_agent or "")
+    return next((name for needle, name in DEVICES if needle in ua), "Este aparelho")
 
 
 class Auth:
@@ -185,11 +207,17 @@ class Auth:
         return None
 
     def end_sessions(self, account_id: int | None) -> None:
-        """Sign the account out everywhere: every cookie issued so far stops working."""
+        """Sign the account out everywhere: every cookie issued so far stops working, and so
+        does any new-passkey link the person made for themselves (one an admin made for them
+        is the admin's to keep: `created_by` is the admin)."""
         if account_id is None:
             return
         with self.store.db() as db:
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
+            db.execute(
+                "UPDATE invite SET expires=0 WHERE account=? AND created_by=?",
+                (account_id, account_id),
+            )
 
     def viewer(self, cookie_header: str | None) -> dict:
         """Who is looking. Anonymous visitors see only the login page."""
@@ -205,6 +233,7 @@ class Auth:
             "account": acc["id"] if acc else None,
             "name": acc["name"] if acc else None,
             "email": acc["email"] if acc else "",
+            "whatsapp": acc["whatsapp"] if acc else "",
             "avatar": gravatar(acc["email"]) if acc else "",
             "is_admin": bool(acc and acc["is_admin"]),
         }
@@ -406,7 +435,7 @@ class Auth:
         )
         return {"flow": fid, "options": json.loads(options_to_json(options))}
 
-    def register_verify(self, fid: str, credential: dict) -> dict:
+    def register_verify(self, fid: str, credential: dict, user_agent: str = "") -> dict:
         flow = self._take_flow(fid, "register")
         _check_credential(credential)
         try:
@@ -451,8 +480,8 @@ class Auth:
                     (flow["name"], flow["handle"], int(first or inv["admin"])),
                 ).lastrowid
             db.execute(
-                "INSERT INTO passkey(id, account, public_key, sign_count, transports, rp_id) "
-                "VALUES (?,?,?,?,?,?)",
+                "INSERT INTO passkey(id, account, public_key, sign_count, transports, rp_id, "
+                "label) VALUES (?,?,?,?,?,?,?)",
                 (
                     cred_id,
                     account_id,
@@ -460,10 +489,58 @@ class Auth:
                     v.sign_count,
                     transports,
                     flow["rp_id"],
+                    device_label(user_agent, transports),
                 ),
             )
             row = db.execute("SELECT * FROM account WHERE id=?", (account_id,)).fetchone()
         return dict(row)
+
+    # ---- the account's passkeys (Perfil, decision 10) -------------------------------------
+
+    def passkeys(self, account_id: int | None) -> list[dict]:
+        """This person's passkeys: label, transports, when made and last used. Never the key."""
+        if account_id is None:
+            return []
+        with self.store.db() as db:
+            rows = db.execute(
+                "SELECT id, label, transports, rp_id, created, last_used FROM passkey "
+                "WHERE account=? ORDER BY created, rowid",
+                (account_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def relabel_passkey(self, account_id: int, cred_id: str, label) -> None:
+        if not isinstance(label, str):
+            raise AuthError("nome inválido")
+        with self.store.db() as db:
+            done = db.execute(
+                "UPDATE passkey SET label=? WHERE id=? AND account=?",
+                (clean_name(label), str(cred_id or ""), account_id),
+            ).rowcount
+        if not done:
+            raise NotFound("passkey não encontrada")
+
+    def remove_passkey(self, account_id: int, cred_id: str) -> None:
+        """Take a passkey off the account, as long as another one stays: without any, the
+        person could never sign in again and nobody else could make them a link. The
+        account's sessions end with it (the removed device is usually the point), so the
+        caller re-issues the cookie of the device doing the removing. Only a passkey that
+        still signs in counts as "another one": a leftover for a domain Pauta left (decision
+        4) can't be the one that stays."""
+        cred_id = str(cred_id or "")
+        with self.store.db() as db:
+            db.execute("BEGIN IMMEDIATE")  # two removals at once can't both see "two left"
+            mine = {
+                r[0]: r[1]
+                for r in db.execute("SELECT id, rp_id FROM passkey WHERE account=?", (account_id,))
+            }
+            if cred_id not in mine:
+                raise NotFound("passkey não encontrada")
+            usable = [k for k, rp in mine.items() if k != cred_id and (not rp or rp in self.rp_ids)]
+            if not usable:
+                raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
+            db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
+            db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
 
     # ---- login with a discoverable passkey ------------------------------------------------
 
@@ -564,6 +641,14 @@ class Auth:
             ):
                 raise AuthError("esse e-mail já é de outra pessoa da equipe")
             db.execute("UPDATE account SET email=? WHERE id=?", (email, account_id))
+
+    def set_whatsapp(self, account_id: int, number) -> None:
+        """Optional, free text like a client's: only the person sees it (`GET /api/me`)."""
+        with self.store.db() as db:
+            db.execute(
+                "UPDATE account SET whatsapp=? WHERE id=?",
+                (ACCOUNT_FIELDS["whatsapp"](number, db), account_id),
+            )
 
 
 def _check_credential(credential) -> None:

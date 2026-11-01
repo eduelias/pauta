@@ -437,6 +437,10 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .member .who b { display: flex; align-items: center; gap: 8px; }
 .member .who span { font-size: 13px; color: var(--muted); }
 .member.off { opacity: .5; }
+/* Configurações → the line to Perfil; Perfil → the key in front of each passkey */
+.profile-link { display: inline-flex; align-items: center; gap: 10px; margin: -8px 0 18px; font-weight: 650; }
+.profile-link:hover { text-decoration: none; color: var(--accent); }
+.member .keyic { flex: 0 0 auto; color: var(--muted); }
 .qrbox { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
 .qr { width: 180px; height: 180px; padding: 10px; background: #fff; border-radius: 14px;
   border: 1px solid var(--line); }
@@ -532,7 +536,7 @@ aside .kv { grid-template-columns: 88px 1fr; }
   padding: 8px 12px; font-size: 14px; }
 /* the Meta card's ad accounts: a plain table that scrolls sideways on a phone */
 .scrollx { overflow-x: auto; margin-top: 10px; }
-/* Equipe → Meta: one block per connected portfolio, and the short history under the table */
+/* Configurações → Meta: one block per connected portfolio, and the short history under the table */
 .row-gap .grow { flex: 1 1 240px; min-width: 0; }
 .member.conn .who .warnline { display: block; color: var(--danger); font-size: 13px; margin-top: 2px; }
 .metalog { list-style: none; padding: 0; margin: 8px 0 0; font-size: 13.5px; color: var(--muted); }

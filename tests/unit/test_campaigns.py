@@ -45,8 +45,8 @@ def test_schema_v8_gains_the_tracking_tables(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "11"
-        assert SCHEMA_VERSION == 11
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"campaign", "review", "insight"} <= tables
     assert store.campaign_rows("2026-01-01", "2026-12-31") == []
@@ -73,7 +73,8 @@ def test_schema_v10_gains_the_ads_manager_columns(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "11"
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
     assert store.meta_accounts()[0]["timezone_name"] == ""
     row = store.table("campaign")[0]
     assert row["daily_budget_cents"] is None and row["lifetime_budget_cents"] is None

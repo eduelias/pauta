@@ -44,7 +44,7 @@ def test_connect_round_trip(team, fake_meta):
     url = start(base, nato)
     assert url.startswith(fake_meta.dialog)
     status, location, _ = through_meta(base, url)
-    assert status == 302 and location == "/#/equipe?meta=conectado"
+    assert status == 302 and location == "/#/configuracoes?meta=conectado"
 
     doc = call(f"{base}/api/meta", cookie=nato)[1]
     assert doc["connected"] and doc["error"] == ""
@@ -92,15 +92,15 @@ def test_connect_round_trip(team, fake_meta):
 
 def test_callback_needs_a_live_state(team, fake_meta, monkeypatch):
     base, nato, _, _ = team
-    erro = "/#/equipe?meta=erro&motivo="
+    erro = "/#/configuracoes?meta=erro&motivo="
     # nobody started it
     status, location, _ = fetch(f"{base}/api/meta/callback?code=x&state=forged")
     assert status == 302 and location == erro + "expirou"
     # started, and the callback loaded twice (Piero's browser did): connected both times
     url = start(base, nato)
     first = urlparse(fetch(url)[1]).query
-    assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/equipe?meta=conectado"
-    assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/equipe?meta=conectado"
+    assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/configuracoes?meta=conectado"
+    assert fetch(f"{base}/api/meta/callback?{first}")[1] == "/#/configuracoes?meta=conectado"
     # started, but too long ago
     query = urlparse(fetch(start(base, nato))[1]).query
     now = meta_mod.time.time()
@@ -111,7 +111,7 @@ def test_callback_needs_a_live_state(team, fake_meta, monkeypatch):
 
 def test_callback_when_cancelled_or_meta_refuses(team, fake_meta):
     base, nato, _, _ = team
-    erro = "/#/equipe?meta=erro&motivo="
+    erro = "/#/configuracoes?meta=erro&motivo="
     fake_meta.deny = True
     status, location, _ = through_meta(base, start(base, nato))
     assert location == erro + "cancelado"
@@ -224,7 +224,7 @@ def test_two_portfolios(team, fake_meta):
     # "Adicionar contas" on the client's portfolio: a re-login on it, the agency untouched
     exchanges = fake_meta.exchanges
     status, location, _ = through_meta(base, start(base, nato, OTHER_BUSINESS))
-    assert location == "/#/equipe?meta=conectado" and fake_meta.exchanges == exchanges + 1
+    assert location == "/#/configuracoes?meta=conectado" and fake_meta.exchanges == exchanges + 1
     doc = call(f"{base}/api/meta", cookie=nato)[1]
     assert len(doc["connections"]) == 2
     # ...and on a portfolio that isn't connected, or with a bad id

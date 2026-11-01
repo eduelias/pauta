@@ -104,7 +104,7 @@ def test_the_client_card_fee_void_and_not_billed(admin):
 def test_settings_hide_money_from_members_and_the_phone_tab(admin, live, device):
     base, store, open_device = admin
     page = open_device().page
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     panel = page.locator("#finsettings")
     expect(panel).to_be_visible()
     panel.locator("[data-fin=visibility]").select_option("admins")

@@ -15,7 +15,7 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   be http(s). Status keys (`todo/doing/waiting/done/cancelled`) are stable, labels are UI.
   Tipos, objetivos and segmentos are editable lists (`option` table).
 - `src/pauta/auth.py`: passkey-only accounts, modelled on dominion-archive's. One team, no
-  sign-up: invites only (`pauta invite --admin` for the first, then the Equipe page). The first
+  sign-up: invites only (`pauta invite --admin` for the first, then Configurações → Time). The first
   account is an admin. Without `PAUTA_AUTH=passkeys` the app runs open (local dev).
   Passkeys belong to a domain: during a move (decision 4) `PAUTA_RP_ID` lists the new home
   first and the old one after; each ceremony uses the domain its page is on, and a one-time
@@ -33,7 +33,10 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only (no CDNs, no external fonts);
   the one exception is `img-src https://gravatar.com` for people's avatars. Accounts may
   set an email, which is only used for that: teammates get the SHA-256 hash, never the
-  address. `d=blank` means no Gravatar shows the initials underneath.
+  address. `d=blank` means no Gravatar shows the initials underneath. `#/perfil` is the
+  person's own page (name, WhatsApp, e-mail, their passkeys, a link for a new phone);
+  `#/configuracoes` (until 1.6 "Equipe") is the team's: Time, Meta, Financeiro, Listas,
+  Arquivos (decision 10).
 
 ## Commands
 

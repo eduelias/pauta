@@ -83,6 +83,7 @@ const ICONS = {
   money: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>',
   sparkle: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
   chart: '<path d="M3 3v18h18"/><path d="m7 15 4-5 4 3 5-7"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
 };
 const icon = (name, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -194,7 +195,7 @@ const NAV = [
   ["#/quadro", "board", "Quadro"],
   ["#/pedidos", "list", "Pedidos"],
   ["#/clientes", "clients", "Clientes"],
-  ["#/equipe", "team", "Equipe"],
+  ["#/configuracoes", "gear", "Configurações"],
 ];
 
 const FIN_NAV = ["#/financeiro", "money", "Financeiro"];
@@ -208,7 +209,7 @@ function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
-  const nav = NAV.flatMap((e) => (e[0] === "#/equipe" && finVisible() ? [FIN_NAV, e]
+  const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
     : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
@@ -218,7 +219,7 @@ function renderShell() {
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
   $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
   const top = $("#topnew");
-  top.outerHTML = `<a href="#/equipe" id="topnew" aria-label="Equipe e conta">${avatar(ME.name, "md round", ME.avatar)}</a>`;
+  top.outerHTML = `<a href="#/perfil" id="topnew" aria-label="Seu perfil">${avatar(ME.name, "md round", ME.avatar)}</a>`;
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
@@ -241,14 +242,12 @@ function toggleMenu() {
   if (old) { old.remove(); return; }
   const m = document.createElement("div");
   m.className = "menu";
-  m.innerHTML = `<a href="#/equipe">${icon("user")}Minha conta e equipe</a>
-    ${ME.auth ? `<button data-act="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
-    <button data-act="logout">${icon("logout")}Sair</button>` : ""}`;
+  m.innerHTML = `<a href="#/perfil">${icon("user")}Meu perfil</a>
+    <a href="#/configuracoes">${icon("gear")}Configurações</a>
+    ${ME.auth ? `<button data-act="logout">${icon("logout")}Sair</button>` : ""}`;
   $(".side").appendChild(m);
   m.addEventListener("click", (e) => {
-    const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "logout") logout();
-    if (act === "addkey") addPasskey();
+    if (e.target.closest("[data-act]")?.dataset.act === "logout") logout();
     m.remove();
   });
   setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }));
@@ -268,7 +267,8 @@ const ROUTES = [
   [/^\/financeiro$/, viewFinance],
   [/^\/campanhas$/, viewCampaigns],
   [/^\/campanha\/(\d+)$/, viewCampaign],
-  [/^\/equipe$/, viewTeam],
+  [/^\/configuracoes$/, viewSettings],
+  [/^\/perfil$/, viewProfile],
 ];
 
 function hashParts() {
@@ -279,6 +279,12 @@ function hashParts() {
 
 async function route() {
   const { path, query } = hashParts();
+  if (path === "/equipe" || path.startsWith("/equipe/")) {
+    // the tab's name up to 1.6: bookmarks, Meta's way back and old links land on the new one
+    const q = query.toString();
+    history.replaceState(null, "", `#/configuracoes${path.slice(7)}${q ? "?" + q : ""}`);
+    return route();
+  }
   if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
   if (path.startsWith("/mudar/")) return showMove(path.slice(7));
   if (ME.auth && !ME.logged_in) return showGate();
@@ -536,7 +542,7 @@ function filesPanel(r) {
   const title = `<div class="section-title">${icon("clip")} Arquivos</div>`;
   if (!F.connected) {
     return `<div class="panel">${title}<p class="muted small">${ME.is_admin
-      ? `Conecte o OneDrive em <a href="#/equipe">Equipe</a> para anexar arquivos aos pedidos.`
+      ? `Conecte o OneDrive em <a href="#/configuracoes">Configurações → Arquivos</a> para anexar arquivos aos pedidos.`
       : "Os anexos ainda não estão ligados; um administrador conecta o OneDrive."}</p></div>`;
   }
   return `<div class="panel" id="files">
@@ -1194,7 +1200,7 @@ function bindPayBox(c, done) {
   }));
 }
 
-// Equipe → Financeiro: the team's conventions (admins)
+// Configurações → Financeiro: the team's conventions (admins)
 function financeSettingsPanel(fin) {
   const opt = (values, labels, cur) => values.map((v) => `<option value="${v}" ${v === cur ? "selected" : ""}>${labels[v]}</option>`).join("");
   return `<section class="panel mt" id="finsettings"><div class="panel-head"><h2>${icon("money")}Financeiro</h2><span class="muted small">Como o time cobra</span></div>
@@ -1415,7 +1421,7 @@ async function viewCampaigns(query) {
           : `<button class="btn ghost small" data-skip="${k.id}" data-name="${esc(k.name)}" title="Tirar da lista; a Meta não é alterada">Não acompanhar</button>`}</div>` : ""}
       </div>`).join("")}
     </div></section>`;
-  const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/equipe">Equipe → Meta</a>.` : ""}</div>`;
+  const empty = `<div class="panel empty"><span class="big">📣</span>Nenhuma campanha ativa nas contas vinculadas.${ME.is_admin ? ` Vincule contas em <a href="#/configuracoes">Configurações → Meta</a>.` : ""}</div>`;
   app.innerHTML = `<div>
     <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${checkable.length} ${checkable.length === 1 ? "cliente" : "clientes"}.</p></div>
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
@@ -1584,77 +1590,58 @@ async function viewCampaign(query, id) {
 
 // ---------- team, account, settings ---------------------------------------------------------
 
-async function viewTeam(query) {
+// Configurações (up to 1.6 "Equipe"): the team, then each module's settings, admins only
+// past the team. What is about the person signed in lives on Perfil (viewProfile).
+async function viewSettings(query) {
   const members = await api("GET", "/api/members");
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
-    <div class="head"><div><h1>Equipe</h1><p>Quem usa a Pauta, convites e listas.</p></div>
+    <div class="head"><div><h1>Configurações</h1><p>O time, as integrações e as listas da Pauta.</p></div>
       ${ME.is_admin ? `<div class="actions"><button class="btn" id="export">${icon("download")}Exportar dados</button></div>` : ""}</div>
-    <div class="grid2">
-      <section class="panel">
-        <div class="panel-head"><h2>Você</h2></div>
-        <div class="member">${avatar(ME.name, "md round", ME.avatar)}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
-          <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
-        ${ME.auth ? `<div class="field mt"><label>Seu nome</label><input class="input" id="myname" value="${esc(ME.name)}"></div>
-        <div class="field mt"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
-          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
-        <div class="mt"><button class="btn" id="rename">${icon("check")}Salvar</button></div>
-        <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button><button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></div>` : ""}
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2>Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
+    <a class="profile-link" href="#/perfil" id="toprofile">${avatar(ME.name, "round", ME.avatar)}Seu perfil →</a>
+    <section class="panel" id="time">
+        <div class="panel-head"><h2>${icon("team")}Time</h2><span class="muted small">${members.filter((m) => !m.disabled).length} pessoas</span></div>
         ${members.length ? members.map((m) => `<div class="member ${m.disabled ? "off" : ""}">${avatar(m.name, "md round", m.avatar)}
           <div class="who"><b>${esc(m.name)}${m.is_admin ? ` <span class="tag accent">Admin</span>` : ""}${m.disabled ? ` <span class="tag">Desativado</span>` : ""}</b>
           <span>${m.passkeys} passkey${m.passkeys === 1 ? "" : "s"}${m.last_seen ? ` · visto ${esc(ago(m.last_seen))}` : ""}${ME.move && !m.disabled ? (m.domains.includes(ME.move.to) ? ` · já em ${esc(ME.move.to)}` : " · ainda não mudou") : ""}</span></div>
           ${ME.is_admin && m.id !== ME.account ? `<div class="row-gap">
-            ${ME.move && !m.disabled && !m.domains.includes(ME.move.to) ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>` : ""}
+            ${ME.auth && !m.disabled ? (ME.move && !m.domains.includes(ME.move.to)
+              ? `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}">${icon("link")}Link para mudar</button>`
+              : `<button class="btn small" data-mv="${m.id}" data-name="${esc(m.name)}" data-new="1">${icon("key")}Link de nova passkey</button>`) : ""}
             <button class="btn ghost small" data-m="${m.id}" data-admin="${m.is_admin ? 0 : 1}">${m.is_admin ? "Tirar admin" : "Tornar admin"}</button>
             <button class="btn ghost small ${m.disabled ? "" : "danger"}" data-m="${m.id}" data-dis="${m.disabled ? 0 : 1}">${m.disabled ? "Reativar" : "Desativar"}</button></div>` : ""}
         </div><div id="mv-${m.id}"></div>`).join("") : `<div class="empty">Ninguém ainda.</div>`}
+        ${ME.is_admin && ME.auth ? `<div class="invite mt" id="invitebox"><h3>Convidar alguém</h3>
+          <p class="muted small" style="margin-top:4px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
+          <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
+            <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
+          <div id="qrbox"></div></div>` : ""}
       </section>
-    </div>
-    ${ME.is_admin && ME.auth ? `<section class="panel mt">
-      <div class="panel-head"><h2>Convidar alguém</h2></div>
-      <p class="muted" style="margin-top:-6px">A pessoa abre o link (ou aponta a câmera para o QR), digita o nome e cria uma passkey. Sem senha, sem cadastro.</p>
-      <div class="row-gap"><label class="toggle"><input type="checkbox" id="asadmin">Como administrador</label>
-        <button class="btn primary" id="invite">${icon("plus")}Gerar convite</button></div>
-      <div id="qrbox"></div></section>` : ""}
-    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}OneDrive</h2><span class="muted small">Arquivos dos pedidos</span></div>
-      <div id="drivebody">${spinner()}</div></section>` : ""}
     ${ME.is_admin && BOOT.meta?.enabled ? `<section class="panel mt" id="meta"><div class="panel-head"><h2>${icon("target")}Meta</h2><span class="muted small">Números das campanhas</span></div>
       <div id="metabody">${spinner()}</div></section>` : ""}
     ${ME.is_admin ? financeSettingsPanel(BOOT.finance) : ""}
-    ${ME.is_admin ? `<section class="panel mt"><div class="panel-head"><h2>Listas</h2><span class="muted small">Um item por linha</span></div>
+    ${ME.is_admin ? `<section class="panel mt" id="lists"><div class="panel-head"><h2>${icon("list")}Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
         <textarea class="input" data-list="${k}" rows="9">${esc(o[k].join("\n"))}</textarea></div>`).join("")}</div>
       <div class="mt"><button class="btn" id="savelists">${icon("check")}Salvar listas</button></div></section>` : ""}
+    ${ME.is_admin ? `<section class="panel mt" id="drive"><div class="panel-head"><h2>${icon("cloud")}Arquivos</h2><span class="muted small">O OneDrive dos pedidos</span></div>
+      <div id="drivebody">${spinner()}</div></section>` : ""}
     <p class="muted small mt" id="version">Pauta ${esc(BOOT.version || "")}</p>
   </div>`;
-  $("#logout")?.addEventListener("click", logout);
-  $("#addkey")?.addEventListener("click", addPasskey);
   if (ME.is_admin) loadDrive();
   if (ME.is_admin && BOOT.meta?.enabled) loadMeta();
   const back = query?.get("meta");  // the way back from Meta's login (/api/meta/callback)
   if (back) {
-    history.replaceState(null, "", "#/equipe");
+    history.replaceState(null, "", "#/configuracoes");
     if (back === "conectado") toast("Meta conectada");
     else toast(META_ERRORS[query.get("motivo")] || "Não foi possível conectar à Meta; tente de novo", true);
   }
-  $("#rename")?.addEventListener("click", async () => {
-    try {
-      ME = { ...ME, ...(await api("PATCH", "/api/me", { name: $("#myname").value, email: $("#myemail").value })) };
-      BOOT = await api("GET", "/api/boot");
-      renderShell();
-      toast("Salvo");
-      viewTeam();
-    } catch (e) { toast(e.message, true); }
-  });
   $$("[data-m]").forEach((b) => b.addEventListener("click", async () => {
     const body = b.dataset.admin !== undefined ? { is_admin: b.dataset.admin === "1" } : { disabled: b.dataset.dis === "1" };
-    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewTeam(); } catch (e) { toast(e.message, true); }
+    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewSettings(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
-  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name)));
+  $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
@@ -1684,6 +1671,79 @@ async function viewTeam(query) {
   });
 }
 
+// ---------- perfil (decision 10) --------------------------------------------------------------
+
+// What is about the person signed in, and only them: name, WhatsApp, e-mail, their passkeys
+// (a label each, add one here, remove one while another stays, a link for a new phone) and
+// the way out of every device. Removing a passkey signs the other devices out; the server
+// re-issues this one's cookie in the same answer, so the page carries on without a reload.
+// The team's settings are on Configurações.
+const KEY_KINDS = { internal: "Face ID, digital ou PIN", hybrid: "celular, pelo QR", usb: "chave USB", nfc: "chave NFC", ble: "chave Bluetooth" };
+function passkeyRow(k, alone) {
+  const kinds = (k.transports || "").split(",").filter(Boolean).map((t) => KEY_KINDS[t] || t).join(", ");
+  const made = fmtDate(String(k.created).slice(0, 10), { day: "numeric", month: "short", year: "numeric" });
+  const used = k.last_used ? `usada ${esc(ago(k.last_used))}` : "nunca usada";
+  return `<div class="member" data-pk="${esc(k.id)}">${icon("key", "keyic")}
+    <div class="who"><b>${esc(k.label || "Passkey")}</b><span>criada em ${esc(made)} · ${used}${kinds ? ` · ${esc(kinds)}` : ""}</span></div>
+    <div class="row-gap"><button class="btn ghost small" data-relabel="${esc(k.id)}" data-label="${esc(k.label)}">${icon("edit")}Renomear</button>
+      <button class="btn ghost small danger" data-remove="${esc(k.id)}" data-label="${esc(k.label || "Passkey")}" ${alone ? 'disabled title="Adicione outra passkey antes de tirar esta"' : ""}>${icon("trash")}Remover</button></div></div>`;
+}
+
+async function viewProfile() {
+  const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
+  app.innerHTML = `<div style="max-width:760px">
+    <div class="head"><div><h1>Perfil</h1><p>Como você aparece para o time e como entra na Pauta.</p></div></div>
+    <section class="panel" id="me">
+      <div class="member">${avatar(ME.name, "lg round", ME.avatar)}<div class="who"><b>${esc(ME.name)}${ME.is_admin ? ` <span class="tag accent">${icon("shield")}Admin</span>` : ""}</b>
+        <span>${ME.auth ? "Entra com passkey: Face ID, digital ou PIN do aparelho." : "Modo local, sem contas."}</span></div></div>
+      ${ME.auth ? `<div class="form-grid mt">
+        <div class="field"><label>Seu nome</label><input class="input" id="myname" autocomplete="name" value="${esc(ME.name)}"></div>
+        <div class="field"><label>WhatsApp <span class="muted">(opcional)</span></label><input class="input" id="mywa" inputmode="tel" autocomplete="tel" placeholder="+55 11 90000-0000" value="${esc(ME.whatsapp || "")}">
+          <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
+        <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
+          <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
+      </div>
+      <div class="mt"><button class="btn" id="saveme">${icon("check")}Salvar</button></div>` : ""}
+    </section>
+    ${ME.auth ? `<section class="panel mt" id="passkeys">
+      <div class="panel-head"><h2>${icon("key")}Passkeys</h2><span class="muted small">${keys.length} ${keys.length === 1 ? "aparelho" : "aparelhos"}</span></div>
+      <p class="muted small" style="margin-top:-6px">Cada aparelho em que você entra tem a própria passkey. Dê nomes para saber qual é qual e tire a de um aparelho que você não usa mais.</p>
+      ${keys.map((k) => passkeyRow(k, keys.length === 1)).join("")}
+      <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
+        <button class="btn" id="newlink">${icon("link")}Link de nova passkey</button></div>
+      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
+      <div id="mv-me"></div>
+    </section>
+    <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
+      <p class="muted small" style="margin-top:-6px">Sair encerra a Pauta em todos os aparelhos em que você entrou; as passkeys continuam valendo para entrar de novo.</p>
+      <button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></section>` : ""}
+  </div>`;
+  $("#saveme")?.addEventListener("click", async () => {
+    try {
+      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value };
+      ME = { ...ME, ...(await api("PATCH", "/api/me", body)) };
+      BOOT = await api("GET", "/api/boot");
+      renderShell();
+      toast("Salvo");
+      viewProfile();
+    } catch (e) { toast(e.message, true); }
+  });
+  $("#addkey")?.addEventListener("click", async () => { if (await addPasskey()) viewProfile(); });
+  $("#newlink")?.addEventListener("click", () => makeMoveLink("me", ME.name, true));
+  $("#logout")?.addEventListener("click", logout);
+  $$("[data-relabel]").forEach((b) => b.addEventListener("click", async () => {
+    const label = prompt("Nome deste aparelho (por exemplo “iPhone do Piero”)", b.dataset.label);
+    if (label === null) return;
+    try { await api("PATCH", `/api/me/passkeys/${b.dataset.relabel}`, { label }); viewProfile(); }
+    catch (e) { toast(e.message, true); }
+  }));
+  $$("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela sai da Pauta agora e só volta a entrar com outra passkey. Este aparelho continua.`)) return;
+    try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
+    catch (e) { toast(e.message, true); }
+  }));
+}
+
 // The OneDrive card: connect with a code (device code flow), see the account, disconnect.
 let DRIVE_TIMER;
 async function loadDrive(doc) {
@@ -1710,7 +1770,8 @@ async function loadDrive(doc) {
     toast("OneDrive desconectado");
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
-  if (doc.state === "connected") { toast("OneDrive conectado"); await refreshBoot(); }
+  // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
+  if (doc.state === "connected") { await refreshBoot(); toast("OneDrive conectado"); }
   if (doc.state === "expired") toast("O código expirou; gere outro", true);
   if (doc.state === "denied") toast("A conexão foi recusada na conta Microsoft", true);
 }
@@ -1883,7 +1944,7 @@ async function loadClientMeta(c) {
   catch { camps = null; }
   if (!$("#clientmeta")) return;
   if (!doc.accounts.length && !camps?.length) {
-    box.innerHTML = ME.is_admin ? card(`<p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/equipe">Vincule em Equipe → Meta.</a></p>`) : "";
+    box.innerHTML = ME.is_admin ? card(`<p class="muted small">Nenhuma conta da Meta vinculada. <a href="#/configuracoes">Vincule em Configurações → Meta.</a></p>`) : "";
     return;
   }
   const line = (label, value) => `<div class="row"><span class="grow muted">${label}</span><b>${value}</b></div>`;
@@ -1945,14 +2006,23 @@ function addMoveBar() {
 }
 
 // An admin's link for someone who hasn't moved: sent on WhatsApp, it's one tap and Face ID
-async function makeMoveLink(id, name) {
+// The same one-time link serves a domain move and a new (or lost) phone; only the words differ
+async function makeMoveLink(id, name, fresh = false) {
   const box = $(`#mv-${id}`);
+  const mine = id === "me";  // Perfil: the same link, made by the person for themselves
   try {
-    const mv = await api("POST", `/api/members/${id}/move`, {});
-    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
-    const msg = `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
-    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>Link de ${esc(firstName(name))} para ${esc(mv.to)}</b>
-      <div class="muted small">Só para ${esc(firstName(name))}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+    const mv = await api("POST", mine ? "/api/me/move" : `/api/members/${id}/move`, {});
+    // the person's own link is tapped right away (10 minutes); an admin's is sent and waited for
+    const until = mine ? "por 10 minutos" : "até " + new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    const msg = mine
+      ? `Meu link para criar uma passkey nova na Pauta (celular novo ou perdido). Abrir no aparelho novo, confirmar com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
+      : fresh
+        ? `Oi, ${firstName(name)}! Este é o seu link para criar uma passkey nova na Pauta (celular novo ou perdido). Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
+        : `Oi, ${firstName(name)}! A Pauta mudou para ${mv.to}. Toque no link, confirme com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. Depois adicione o endereço novo à tela de início. ${mv.url}`;
+    const title = mine ? "Seu link de nova passkey" : fresh ? `Link de nova passkey de ${esc(firstName(name))}` : `Link de ${esc(firstName(name))} para ${esc(mv.to)}`;
+    const who = mine ? "Só para você" : `Só para ${esc(firstName(name))}`;
+    box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>${title}</b>
+      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, ${esc(until)}.</div>
       <code class="invlink">${esc(mv.url)}</code>
       <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
       <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
@@ -1970,13 +2040,17 @@ async function showMove(token) {
   let info;
   try { info = await api("GET", `/api/move/${encodeURIComponent(token)}`); }
   catch (e) {
-    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo.</p><a class="btn big" href="#/">Ir para o login</a>`);
+    gate(`<h1>Link expirado</h1><p>${esc(e.message)}. Peça um link novo a quem administra a Pauta${ME.move ? `, ou abra a Pauta no endereço antigo e toque em "Mudar" de novo` : ""}.</p><a class="btn big" href="#/">Ir para o login</a>`);
     return;
   }
-  const g = gate(`<h1>Olá, ${esc(firstName(info.name))}!</h1>
+  const g = gate(ME.move ? `<h1>Olá, ${esc(firstName(info.name))}!</h1>
     <p>A Pauta agora mora em <b>${esc(info.to)}</b>. Crie sua passkey aqui para continuar: é a mesma conta, com tudo o que você já fez.</p>
     <button class="btn primary big" id="moveok">${icon("key")}Criar passkey em ${esc(info.to)}</button>
-    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`);
+    <p class="fine">Depois, adicione este endereço à tela de início do celular de novo: o ícone antigo abre o endereço antigo.</p>`
+    : `<h1>Olá, ${esc(firstName(info.name))}!</h1>
+    <p>Crie uma passkey neste aparelho para entrar na Pauta: é a mesma conta, com tudo o que você já fez.</p>
+    <button class="btn primary big" id="moveok">${icon("key")}Criar passkey neste aparelho</button>
+    <p class="fine">Dica: adicione a Pauta à tela de início do celular para abrir com um toque.</p>`);
   $("#moveok", g).addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
@@ -2042,9 +2116,11 @@ async function addPasskey() {
   try {
     await passkeyRegister({});
     toast("Passkey adicionada neste aparelho");
+    return true;
   } catch (e) {
     if (e.name === "InvalidStateError") toast("Este aparelho já tem uma passkey sua.");
     else if (e.name !== "NotAllowedError") toast(e.message, true);
+    return false;
   }
 }
 

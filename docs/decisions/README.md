@@ -15,4 +15,5 @@ both files.
 | [7](0007-financeiro.md) | Financeiro: a receivables ledger per client, with the team's conventions as settings | Proposed (this PR) |
 | [8](0008-campaign-tracking.md) | Acompanhamento: a daily check of every live campaign (manual), then its numbers from Meta | Proposed; phases 1–2 built on acceptance (PR 19) |
 | [9](0009-branch-deploys-to-acceptance.md) | Any branch on acceptance, by hand, by the owner, as its own user (amends 1) | Proposed |
+| [10](0010-perfil-e-configuracoes.md) | Perfil for the person (name, WhatsApp, passkeys, new-passkey link); Equipe becomes Configurações | Proposed (this PR) |
 | [11](0011-analytics.md) | Analytics: a first-party usage log inside the app, Plausible (cloud, EU) on the public site; no session replay | Proposed |

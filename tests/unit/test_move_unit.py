@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from pauta.auth import MOVE_LINK_DAYS, Auth, AuthError
+from pauta.auth import MOVE_LINK_DAYS, MOVE_SECONDS, Auth, AuthError
 from pauta.db import Store
 from softpasskey import SoftPasskey
 
@@ -124,6 +124,37 @@ def test_an_admin_link_lasts_days_and_survives_a_restart(store, moving):
     assert restarted.move_info(token) == {"name": "Renato", "to": "app.pauta.cc"}
     assert move(restarted, token, SoftPasskey("pauta.cc", NEW))["id"] == acc["id"]
     assert restarted.move_info(token) is None
+
+
+def test_a_self_made_link_lasts_minutes_and_ends_with_the_sessions(store, moving):
+    """The person taps their own link on the new phone right away, so it lives 10 minutes
+    and dies with "Sair em todos os aparelhos"; an admin's link for them is the admin's."""
+    acc, _ = join_old(moving)
+    admin = add_admin(store)
+    assert MOVE_SECONDS == 600
+    before = time.time()
+    mine, expires = moving.create_move(acc["id"], created_by=acc["id"])
+    assert before + 590 < expires <= time.time() + 600
+    theirs, _ = moving.create_move(acc["id"], MOVE_LINK_DAYS * 86400, created_by=admin)
+    assert moving.move_info(mine) and moving.move_info(theirs)
+
+    moving.end_sessions(acc["id"])
+    assert moving.move_info(mine) is None  # expired, not deleted: the row says so
+    assert moving.move_info(theirs) == {"name": "Renato", "to": "app.pauta.cc"}
+    with store.db() as db:
+        rows = db.execute("SELECT created_by, expires FROM invite WHERE account=?", (acc["id"],))
+        assert {(r[0], r[1] == 0) for r in rows} == {(acc["id"], True), (admin, False)}
+    # the admin signing out touches none of them
+    moving.end_sessions(admin)
+    assert moving.move_info(theirs) is not None
+    moving.end_sessions(None)  # open mode: nothing to do
+
+
+def add_admin(store, name="Edu"):
+    with store.db() as db:
+        return db.execute(
+            "INSERT INTO account(name, handle, is_admin) VALUES (?, ?, 1)", (name, f"h-{name}")
+        ).lastrowid
 
 
 def test_a_move_link_is_not_an_invite_and_an_invite_is_not_a_move_link(store, moving):

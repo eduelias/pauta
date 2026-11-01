@@ -1,5 +1,5 @@
-"""Files on a request in a real browser: connect OneDrive on Equipe, upload, share, remove.
-The OneDrive is the fake Graph (tests/fakegraph.py)."""
+"""Files on a request in a real browser: connect OneDrive on Configurações → Arquivos, upload,
+share, remove. The OneDrive is the fake Graph (tests/fakegraph.py)."""
 
 import pytest
 from playwright.sync_api import expect
@@ -25,13 +25,17 @@ def test_connect_upload_share_and_remove(live, device, fake):
     expect(page.locator("#mechip")).to_contain_text("Renato Lima")
 
     # connect: the page shows the code, then notices the approval by itself
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.get_by_role("button", name="Conectar OneDrive").click()
     expect(page.locator("#usercode")).to_have_text("ABCD-1234")
     expect(page.locator("#drive")).to_contain_text("microsoft.com/link")
     fake.approved = True
+    # the page polls the fake Graph for the approval: longer waits, a loaded machine is slow.
+    # The toast means the app refreshed its own state too, which the request page reads
+    # from (a hash navigation keeps the document, so it would otherwise see the old one)
+    expect(page.locator("#toast")).to_have_text("OneDrive conectado", timeout=20_000)
     expect(page.locator("#drive")).to_contain_text("piero@example.com", timeout=10_000)
-    expect(page.locator("#drive")).to_contain_text("A Pauta ocupa")
+    expect(page.locator("#drive")).to_contain_text("A Pauta ocupa", timeout=10_000)
 
     # upload two files to a request
     c = store.save_client({"name": "Clínica Bem Estar"})
@@ -46,28 +50,29 @@ def test_connect_upload_share_and_remove(live, device, fake):
             {"name": "briefing.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4"},
         ],
     )
-    expect(page.locator("#filelist .file")).to_have_count(2)
-    expect(page.locator("#tl")).to_contain_text("anexou criativo.png")
-    expect(page.locator("#tl")).to_contain_text("anexou briefing.pdf")
+    expect(page.locator("#filelist .file")).to_have_count(2, timeout=20_000)  # two uploads
+    expect(page.locator("#tl")).to_contain_text("anexou criativo.png", timeout=10_000)
+    expect(page.locator("#tl")).to_contain_text("anexou briefing.pdf", timeout=10_000)
     expect(page.locator("#filelist img")).to_have_count(1)  # a thumbnail for the image only
-    expect(page.locator("#filelist img")).to_have_js_property("naturalWidth", 1)
+    expect(page.locator("#filelist img")).to_have_js_property("naturalWidth", 1, timeout=10_000)
 
     # a view-only link for the client
     page.get_by_role("button", name="Link para o cliente").click()
-    expect(page.locator("#sharebox")).to_contain_text("https://1drv.ms/")
+    expect(page.locator("#sharebox")).to_contain_text("https://1drv.ms/", timeout=10_000)
     expect(page.locator("#sharebox")).to_contain_text("Enviar no WhatsApp")
 
     # remove one (it goes to OneDrive's recycle bin)
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Remover briefing.pdf").click()
-    expect(page.locator("#filelist .file")).to_have_count(1)
-    expect(page.locator("#tl")).to_contain_text("removeu o arquivo briefing.pdf")
+    expect(page.locator("#filelist .file")).to_have_count(1, timeout=10_000)
+    expect(page.locator("#tl")).to_contain_text("removeu o arquivo briefing.pdf", timeout=10_000)
     assert len(fake.deleted) == 1
 
     # disconnect: the request page says how to turn files back on
-    page.goto(f"{base}/#/equipe")
+    page.goto(f"{base}/#/configuracoes")
     page.once("dialog", lambda d: d.accept())
     page.get_by_role("button", name="Desconectar").click()
+    expect(page.locator("#toast")).to_have_text("OneDrive desconectado", timeout=10_000)  # same
     expect(page.get_by_role("button", name="Conectar OneDrive")).to_be_visible()
     page.goto(f"{base}/#/pedido/1")
     expect(page.locator(".panel", has_text="Arquivos")).to_contain_text("Conecte o OneDrive")
