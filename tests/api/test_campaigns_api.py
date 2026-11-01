@@ -413,29 +413,31 @@ def test_manual_sync_answers_at_once_and_refuses_a_second_while_it_runs(
     team, fake_meta, monkeypatch
 ):
     """Atualizar agora doesn't hold a server slot for the whole pass: 202 right away with
-    the previous `last_sync`, `syncing` on while the thread works, 409 "já está
-    sincronizando" to a second tap (or the scheduler) meanwhile, and `last_sync` moved
-    once it ended. The 15-minute limit counts from the pass that started, not the 409."""
+    the previous `last_sync` (the pass is still at its first Graph read when the answer
+    is in), `syncing` on while the thread works, 409 "já está sincronizando" to a second
+    tap (or the scheduler) meanwhile, and `last_sync` moved once it ended. The 15-minute
+    limit counts from the pass that started, not the 409."""
     base, nato, piero, m = synced(team, fake_meta)
     monkeypatch.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
-    fake_meta.slow = 0.1  # ~10 Graph reads: the pass takes about a second
-    time.sleep(1.1)  # `last_sync` has whole seconds: make sure the next one differs
     before = m["last_sync"]
-    t0 = time.time()
+    # the stamp has whole seconds: give this pass one that cannot be the previous one's
+    stamp = "2026-10-20T12:00:00Z"
+    monkeypatch.setattr(sync, "_stamp", lambda: stamp)
+    fake_meta.hold()  # every Graph answer waits: the pass is open until release()
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 202 and out == {"started": True, "last_sync": before}
-    assert time.time() - t0 < 0.5  # it didn't wait for the pass
     assert call(f"{base}/metrics")[1]["meta"]["syncing"] is True
     doc = call(f"{base}/api/campaigns", cookie=piero)[1]
     assert doc["syncing"] is True and doc["last_sync"] == before  # the UI polls this
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 409 and out["error"] == sync.BUSY and "já está sincronizando" in sync.BUSY
+    assert fake_meta.held.wait(30) and sync.running()
+    fake_meta.release()
     after = wait_sync(base)
-    assert after["last_sync"] != before and after["sync_error"] == ""
+    assert after["last_sync"] == stamp != before and after["sync_error"] == ""
     doc = call(f"{base}/api/campaigns", cookie=piero)[1]
     assert doc["syncing"] is False and doc["last_sync"] == after["last_sync"]
     # the busy answer didn't eat the next manual sync
-    fake_meta.slow = 0
     assert call(f"{base}/api/meta/sync", {}, nato)[0] == 202
     wait_sync(base)
 

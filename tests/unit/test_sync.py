@@ -450,33 +450,27 @@ def test_one_pass_at_a_time(team):
     is told "já está sincronizando" at once, and Meta is read once, not twice."""
     store, meta, fake, *_ = team
     sync.run(store, meta, days=2, today=TODAY)  # the campaigns are known: no history reads
-    fake.slow = 0.05  # each Graph answer takes a while: the first pass holds the lock
+    fake.hold()  # the first pass stops inside its first Graph read, holding the lock
     fake.calls.clear()
-    results, errors = [], []
-    ready = threading.Barrier(2)
-
-    def go():
-        ready.wait()
-        try:
-            results.append(sync.run(store, meta, days=2, today=TODAY))
-        except MetaError as e:
-            errors.append(e)
-
-    threads = [threading.Thread(target=go) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=30)
-    assert len(results) == 1 and len(errors) == 1
+    results = []
+    first = threading.Thread(
+        target=lambda: results.append(sync.run(store, meta, days=2, today=TODAY))
+    )
+    first.start()
+    assert fake.held.wait(30), "the first pass never reached Meta"
+    assert sync.running()
+    with pytest.raises(MetaError) as e:
+        sync.run(store, meta, days=2, today=TODAY)
+    assert str(e.value) == BUSY and e.value.status == 409 and e.value.reason == "busy"
+    assert "já está sincronizando" in BUSY
+    fake.release()
+    first.join(timeout=30)
+    assert not sync.running() and len(results) == 1
     assert results[0]["accounts"] == 2 and results[0]["errors"] == []
     assert results[0]["campaigns_new"] == 0
-    assert str(errors[0]) == BUSY and errors[0].status == 409 and errors[0].reason == "busy"
-    assert "já está sincronizando" in BUSY
     one_pass = list(fake.calls)
-    assert not sync.running()
     # the same pass alone makes the same calls: nothing was doubled
     fake.calls.clear()
-    fake.slow = 0
     sync.run(store, meta, days=2, today=TODAY)
     assert sorted(fake.calls) == sorted(one_pass)
 
@@ -484,7 +478,7 @@ def test_one_pass_at_a_time(team):
 def test_start_runs_on_a_thread_and_refuses_a_second(team, caplog):
     store, meta, fake, *_ = team
     caplog.set_level(logging.INFO, logger="pauta")
-    fake.slow = 0.05
+    fake.hold()
     thread = sync.start(store, meta, days=2)
     assert thread.daemon and sync.running()  # held before start() returned
     with pytest.raises(MetaError) as e:
@@ -493,11 +487,12 @@ def test_start_runs_on_a_thread_and_refuses_a_second(team, caplog):
     with pytest.raises(MetaError) as e:
         sync.run(store, meta, days=2)
     assert e.value.reason == "busy"
+    assert thread.is_alive() and meta.last_sync is None  # still on it
+    fake.release()
     thread.join(timeout=30)
     assert not sync.running() and meta.last_sync and meta.sync_error == ""
     assert store.sync_state()["last_sync"] == meta.last_sync
     # a pass that blows up on the thread is logged and shown, and the lock comes back
-    fake.slow = 0
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(sync, "_run", lambda *a, **k: 1 / 0)
         sync.start(store, meta, days=2).join(timeout=10)
@@ -539,13 +534,13 @@ def test_scheduler_tick_waits_when_a_manual_pass_runs(team, caplog):
     now = datetime(2026, 10, 21, 3, 11)
     s = sync.Scheduler(store, meta, clock=lambda: now)
     s.last_nightly = None
-    fake.slow = 0.05
+    fake.hold()
     thread = sync.start(store, meta, days=2)
     assert s.tick() is None
     assert s.last_hourly is None and s.last_nightly is None and meta.sync_error == ""
     assert any('"meta_sync_busy"' in r.getMessage() for r in caplog.records)
     assert not any('"meta_sync_failed"' in r.getMessage() for r in caplog.records)
+    fake.release()
     thread.join(timeout=30)
-    fake.slow = 0
     assert s.tick()["accounts"] == 2  # the next tick runs it (the nightly, here)
     assert s.last_hourly == now and s.last_nightly == now
