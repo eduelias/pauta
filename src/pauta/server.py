@@ -378,8 +378,10 @@ def make_handler(
                 self._json(400, {"error": str(e)})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
-            except (DriveError, MetaError) as e:
+            except DriveError as e:
                 self._json(e.status, {"error": str(e)})
+            except MetaError as e:  # `reason` is the fixed code: the UI waits on "busy"
+                self._json(e.status, {"error": str(e), "reason": e.reason})
 
         def _health(self, method: str):
             """For the deploy and uptime checks: no auth, no data, just "the DB answers"."""
@@ -876,8 +878,9 @@ def make_handler(
             """Atualizar agora: the hourly pass on its own thread, at most once every 15
             minutes. Answers 202 `{started, last_sync}` at once (`last_sync` is the one
             before: the UI polls GET /api/campaigns until it moves) instead of holding a
-            server slot for the tens of seconds a pass takes; 409 while a pass (this one's
-            or the scheduler's) is still running."""
+            server slot for the tens of seconds a pass takes; 409 `{error, reason: "busy"}`
+            while a pass (this one's or the scheduler's) is still running (the page then
+            waits for that one), 409 with another reason when Meta isn't connected."""
             if not meta.connected:
                 raise MetaError(NOT_CONNECTED, 409)
             with manual_lock:

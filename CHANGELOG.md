@@ -103,9 +103,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   foi sincronizado, "A sincronização não terminou; tente de novo", não "atualizados"). Só
   uma sincronização roda por vez: um segundo toque, ou a passagem automática de hora em
   hora chegando no meio, recebe "a Meta já está sincronizando" em vez de ler a Meta duas
-  vezes (a automática tenta de novo no minuto seguinte). API: `POST /api/meta/sync` passa
-  a responder **202** `{"started": true, "last_sync": <anterior>}` e **409** enquanto uma
-  passagem roda; `GET /api/campaigns` e `/metrics` trazem `sync_error` e `syncing`.
+  vezes (a automática tenta de novo no minuto seguinte; a página só espera a passagem que
+  já roda acabar). Sair de Campanhas no meio não avisa nada em outra tela. API: `POST
+  /api/meta/sync` passa a responder **202** `{"started": true, "last_sync": <anterior>}` e
+  **409** `{"error", "reason": "busy"}` enquanto uma passagem roda (os erros da Meta
+  trazem `reason`, o código fixo); `GET /api/campaigns` e `/metrics` trazem `sync_error`
+  e `syncing`.
 - Com dois ou mais portfólios conectados, uma conta vinculada a um cliente que nenhuma
   leitura ainda tinha colocado no seu portfólio ficava sem sincronizar, sem erro e sem
   aviso. A sincronização agora lê a lista de contas de cada portfólio antes (o que coloca

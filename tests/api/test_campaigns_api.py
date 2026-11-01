@@ -406,7 +406,7 @@ def test_manual_sync_is_for_admins_once_in_15_minutes(team, fake_meta, monkeypat
     status, out, _ = call(f"{base}/api/meta/connections/{BUSINESS}", cookie=nato, method="DELETE")
     assert status == 200 and not out["connected"]
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
-    assert status == 409 and out["error"] == NOT_CONNECTED
+    assert status == 409 and out["error"] == NOT_CONNECTED and out["reason"] != "busy"
 
 
 def test_manual_sync_answers_at_once_and_refuses_a_second_while_it_runs(
@@ -431,6 +431,7 @@ def test_manual_sync_answers_at_once_and_refuses_a_second_while_it_runs(
     assert doc["syncing"] is True and doc["last_sync"] == before  # the UI polls this
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 409 and out["error"] == sync.BUSY and "já está sincronizando" in sync.BUSY
+    assert out["reason"] == "busy"  # the page waits for the running pass on this code
     assert fake_meta.held.wait(30) and sync.running()
     fake_meta.release()
     after = wait_sync(base)
