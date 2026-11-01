@@ -1,6 +1,12 @@
 """A fake Meta on localhost: Facebook Login for Business's dialog, the code exchange and the
 few Graph reads Pauta makes (the system user, its portfolio, ad accounts, and, through the
-batch API, each account's insights and balance).
+batch API, each account's insights and balance), plus the campaign tracking reads: an
+account's campaigns (paged) and campaign-level insights by day or for a whole range.
+
+Insights are deterministic from the day of month (spend 10.00 + day cents, impressions
+100 × day, reach 80 × day, link clicks = day) for every ACTIVE campaign that had started, so
+a test can predict any sum; a range without `time_increment` gives one row per campaign
+with reach 500 × days.
 
 Tests never talk to the real Meta. Point a Meta at it with
 `Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake.graph, dialog=fake.dialog)` and
@@ -16,6 +22,7 @@ import re
 import threading
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -52,6 +59,84 @@ INSIGHTS = {
         "date_stop": "2026-10-31",
     },
 }
+# campaigns per ad account: 111 has two live ones started earlier in October 2026 and a
+# paused one; 222 has one live one. Tests sync "today" = TODAY.
+TODAY = date(2026, 10, 20)
+CAMPAIGNS = {
+    "111": [
+        {
+            "id": "23850001",
+            "name": "Limpeza de pele novembro",
+            "objective": "OUTCOME_ENGAGEMENT",
+            "effective_status": "ACTIVE",
+            "status": "ACTIVE",
+            "start_time": "2026-10-03T00:00:00-0300",
+            "created_time": "2026-10-02T18:12:00-0300",
+        },
+        {
+            "id": "23850002",
+            "name": "Botox outubro",
+            "objective": "OUTCOME_LEADS",
+            "effective_status": "ACTIVE",
+            "status": "ACTIVE",
+            "start_time": "2026-10-12T00:00:00-0300",
+            "created_time": "2026-10-11T09:00:00-0300",
+        },
+        {
+            "id": "23850003",
+            "name": "Peeling (pausada)",
+            "objective": "OUTCOME_TRAFFIC",
+            "effective_status": "PAUSED",
+            "status": "PAUSED",
+            "start_time": "2026-09-01T00:00:00-0300",
+            "stop_time": "2026-09-30T23:59:59-0300",
+            "created_time": "2026-08-30T10:00:00-0300",
+        },
+    ],
+    "222": [
+        {
+            "id": "23850004",
+            "name": "Panetone",
+            "objective": "OUTCOME_TRAFFIC",
+            "effective_status": "ACTIVE",
+            "status": "ACTIVE",
+            # no start_time: Pauta falls back to the creation date
+            "created_time": "2026-10-15T08:00:00-0300",
+        },
+    ],
+}
+
+
+def day_row(meta_id: str, day: date) -> dict:
+    """The fake's insight row for one campaign on one day (what the real Meta would send)."""
+    n = day.day
+    return {
+        "campaign_id": meta_id,
+        "spend": f"10.{n:02d}",
+        "impressions": str(100 * n),
+        "reach": str(80 * n),
+        "inline_link_clicks": str(n),
+        "actions": [
+            {"action_type": "link_click", "value": str(n)},
+            {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "2"},
+        ],
+        "date_start": day.isoformat(),
+        "date_stop": day.isoformat(),
+    }
+
+
+def expected(meta_id: str, since: date, until: date, start: date) -> dict:
+    """What Pauta should hold for a campaign over a range: the sums of `day_row`."""
+    days = [since + timedelta(days=i) for i in range((until - since).days + 1)]
+    days = [d for d in days if d >= start]
+    return {
+        "spend_cents": sum(1000 + d.day for d in days),
+        "impressions": sum(100 * d.day for d in days),
+        "link_clicks": sum(d.day for d in days),
+        "days": len(days),
+    }
+
+
 BALANCE = {
     "111": {
         "is_prepay_account": True,
@@ -105,6 +190,9 @@ class FakeMeta:
         self.fail_insights: set[str] = set()  # account ids whose insights answer 400 (#100)
         self.timeouts: set[str] = set()  # account ids whose batch items time out (null entries)
         self.token_invalid = False  # the token was revoked (code 190)
+        self.campaigns = {k: [dict(c) for c in v] for k, v in CAMPAIGNS.items()}
+        self.fail_campaigns: set[str] = set()  # account ids whose campaign list answers 400
+        self.throttle = False  # every read answers code 4 (too many calls)
         self.down = False  # Meta answers 500
         self.deny = False  # the person cancels in the dialog
         self.exchanges = 0
@@ -246,10 +334,19 @@ class FakeMeta:
                 need = "Requires business_management permission to access the field."
                 return 400, oauth_error(100, need)
             return 200, {"data": self.accounts, "paging": {"cursors": {}}}
-        m = re.fullmatch(r"/act_(\d+)(/insights)?", path)
+        if self.throttle:
+            return 400, oauth_error(4, "Application request limit reached")
+        m = re.fullmatch(r"/act_(\d+)(/insights|/campaigns)?", path)
         if not m or m.group(1) not in BALANCE:
             return 400, oauth_error(100, "Unsupported get request")
         aid = m.group(1)
+        if m.group(2) == "/campaigns":
+            if aid in self.fail_campaigns:
+                return 400, oauth_error(100, "Unsupported get request")
+            assert q.get("fields") and "effective_status" in q["fields"], q
+            return self._page(self.campaigns.get(aid, []), q)
+        if m.group(2) and q.get("level") == "campaign":
+            return self._campaign_insights(aid, q)
         if m.group(2):
             assert q.get("date_preset") == "this_month"
             if aid in self.fail_insights:
@@ -259,3 +356,54 @@ class FakeMeta:
         if self.refuse_balance:
             return 400, oauth_error(200, "(#200) Requires business_management or ads_management")
         return 200, {"id": f"act_{aid}", **BALANCE[aid]}
+
+    # ---- campaign tracking reads ---------------------------------------------------------
+
+    @staticmethod
+    def _page(items: list, q: dict) -> tuple[int, dict]:
+        """Cursor paging the Graph way: `limit` items from `after` (the index, as a cursor),
+        `paging.next` only while there is more."""
+        limit = int(q.get("limit") or 25)
+        start = int(q["after"]) if q.get("after") else 0
+        chunk = items[start : start + limit]
+        paging: dict = {"cursors": {"before": str(start), "after": str(start + len(chunk))}}
+        if start + len(chunk) < len(items):
+            paging["next"] = "https://graph.facebook.com/next"
+        return 200, {"data": chunk, "paging": paging}
+
+    def _campaign_insights(self, aid: str, q: dict) -> tuple[int, dict]:
+        rng = json.loads(q["time_range"])
+        since, until = date.fromisoformat(rng["since"]), date.fromisoformat(rng["until"])
+        assert since <= until, rng
+        wanted = None
+        if q.get("filtering"):
+            (flt,) = json.loads(q["filtering"])
+            assert flt == {**flt, "field": "campaign.id", "operator": "IN"}, flt
+            wanted = set(flt["value"])
+        live = [
+            c
+            for c in self.campaigns.get(aid, [])
+            if c["effective_status"] == "ACTIVE" and (wanted is None or c["id"] in wanted)
+        ]
+        rows = []
+        for c in live:
+            raw = (c.get("start_time") or c.get("created_time") or "")[:10]
+            if not raw:  # a campaign Meta can't date has nothing to report
+                continue
+            start = date.fromisoformat(raw)
+            if q.get("time_increment") == "1":
+                day = max(since, start)
+                while day <= until:
+                    rows.append(day_row(c["id"], day))
+                    day += timedelta(days=1)
+            elif start <= until:
+                days = (until - max(since, start)).days + 1
+                rows.append(
+                    {
+                        "campaign_id": c["id"],
+                        "reach": str(500 * days),
+                        "date_start": since.isoformat(),
+                        "date_stop": until.isoformat(),
+                    }
+                )
+        return self._page(rows, q)

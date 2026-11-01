@@ -9,6 +9,19 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- Acompanhamento de campanhas (dados e sincronização; a tela vem a seguir): a Pauta passa a
+  guardar, por campanha e por dia, os números das contas de anúncios vinculadas a um cliente
+  (investido, impressões, alcance, cliques no link e as ações da Meta). As campanhas vêm da
+  própria Meta: toda campanha **ativa** de uma conta vinculada ganha uma linha sob o cliente,
+  encerra quando a Meta para de veicular e volta quando reativa; quem não quiser acompanhar
+  uma campanha marca "não acompanhar" e a sincronização não mexe mais nela. Um pedido
+  concluído de "Criar campanha" ou "Reativar campanha" cujo link do Gerenciador de Anúncios
+  traz o número da campanha fica ligado a ela (aparece na linha do tempo). A sincronização
+  roda sozinha no servidor (de hora em hora os dois últimos dias; de madrugada os últimos 28,
+  porque conversões chegam atrasadas), e também pela linha de comando (`pauta meta sync`,
+  `pauta meta status`). API: `GET /api/campaigns?since&until` (mês atual por padrão),
+  `PATCH /api/campaigns/{id}` e `POST /api/meta/sync` (administradores, uma vez a cada 15
+  minutos). O `/metrics` mostra a última sincronização; a exportação inclui as tabelas novas.
 - Para testar: qualquer branch pode ir para https://acc.pauta.cc antes do merge (Actions →
   *Deploy branch to acceptance*). Só o Eduardo pode disparar; a versão do ar não muda.
 - Equipe → **Meta** (para administradores, quando o servidor tem a Meta configurada):

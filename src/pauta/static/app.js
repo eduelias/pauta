@@ -494,7 +494,7 @@ function linkField(name, value, placeholder) {
 }
 
 function timeline(r) {
-  const who = (e) => `<b>${esc(e.account_name || (ME.auth ? "Alguém" : "Você"))}</b>`;
+  const who = (e) => `<b>${esc(e.account_name || (e.kind === "campaign" ? "A Pauta" : ME.auth ? "Alguém" : "Você"))}</b>`;
   return r.events.slice().reverse().map((e) => {
     if (e.kind === "comment") {
       return `<div class="ev comment"><div class="ic">${icon("msg")}</div><div class="body">${who(e)}<span class="when">${esc(ago(e.at))}</span><div class="bubble">${esc(e.text)}</div></div></div>`;
@@ -509,6 +509,7 @@ function timeline(r) {
     if (e.kind === "edited") what = `editou ${esc(e.text)}`;
     if (e.kind === "file") { what = `anexou <b>${esc(e.text)}</b>`; ic = "clip"; }
     if (e.kind === "unfile") { what = `removeu o arquivo ${esc(e.text)}`; ic = "trash"; }
+    if (e.kind === "campaign") { what = "vinculou a campanha da Meta ao pedido"; ic = "link"; }
     return `<div class="ev"><div class="ic">${icon(ic)}</div><div class="body">${who(e)} ${what}<span class="when">${esc(ago(e.at))}</span></div></div>`;
   }).join("");
 }

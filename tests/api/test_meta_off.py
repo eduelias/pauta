@@ -15,6 +15,8 @@ def test_off_by_default(team):
         "enabled": False,
         "connected": False,
         "error": "",
+        "last_sync": None,
+        "sync_error": "",
     }
 
 

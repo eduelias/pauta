@@ -1,4 +1,4 @@
-"""The `pauta` command: invite, users, backup, demo and --version."""
+"""The `pauta` command: invite, users, backup, demo, onedrive, meta and --version."""
 
 import os
 import sqlite3
@@ -139,3 +139,80 @@ def test_onedrive(state, fake, monkeypatch, capsys):
     fake.close()  # Microsoft unreachable
     with pytest.raises(SystemExit, match="onedrive: o OneDrive não respondeu"):
         cli.main(["onedrive", "connect"])
+
+
+def test_meta_sync_and_status(state, fake_meta, monkeypatch, capsys):
+    from test_meta import connect
+
+    from fakemeta import APP_ID, CONFIG_ID, TODAY, secret
+    from pauta import sync
+    from pauta.meta import Meta
+
+    with pytest.raises(SystemExit, match="PAUTA_META_APP_ID"):
+        cli.main(["meta", "status"])
+    store = Store(state / "pauta.db")
+    secret(store.path)
+
+    def from_env(path):
+        return Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake_meta.graph)
+
+    monkeypatch.setattr(cli.Meta, "from_env", staticmethod(from_env))
+    with pytest.raises(SystemExit, match="not connected"):
+        cli.main(["meta", "status"])
+    with pytest.raises(SystemExit, match="meta: a Meta não está conectada"):
+        cli.main(["meta", "sync"])
+    connect(from_env(store.path), fake_meta)
+    clinic = store.save_client({"name": "Clínica"})
+    store.sync_meta_accounts([{"id": "111", "name": "Clínica"}, {"id": "222", "name": "P"}])
+    store.link_meta_account("111", clinic["id"])
+    real = sync.run
+    monkeypatch.setattr(sync, "run", lambda s, m, *, days: real(s, m, days=days, today=TODAY))
+    cli.main(["meta", "sync", "--days", "3"])
+    out = capsys.readouterr().out
+    assert "1 account(s), 2 new campaign(s)" in out and "request(s) linked" in out
+    cli.main(["meta", "status"])
+    out = capsys.readouterr().out
+    assert "connected to Agência Exemplo" in out and "2 ad account(s), 1 linked" in out
+    assert "last sync 20" in out
+    fake_meta.fail_campaigns.add("111")
+    with pytest.raises(SystemExit) as e:
+        cli.main(["meta", "sync"])
+    assert e.value.code == 1 and "account 111:" in capsys.readouterr().err
+    with pytest.raises(SystemExit, match="problem: a Meta não respondeu"):
+        cli.main(["meta", "status"])
+
+
+def test_serve_starts_the_sync_scheduler_when_meta_is_on(state, monkeypatch, capsys):
+    from fakemeta import APP_ID, CONFIG_ID, secret
+    from pauta import sync
+
+    class FakeServer:
+        def __init__(self, addr, handler):
+            pass
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    started = []
+
+    class FakeScheduler:
+        def __init__(self, store, meta):
+            started.append(meta)
+
+        def start(self):
+            started.append("started")
+
+    monkeypatch.setattr(cli, "ThreadingHTTPServer", FakeServer)
+    monkeypatch.setattr(sync, "Scheduler", FakeScheduler)
+    monkeypatch.setenv("PAUTA_META_APP_ID", APP_ID)
+    monkeypatch.setenv("PAUTA_META_CONFIG_ID", CONFIG_ID)
+    state.mkdir(parents=True, exist_ok=True)
+    secret(state / "pauta.db")
+    monkeypatch.setenv("PAUTA_META_SYNC", "off")
+    cli.main(["serve"])
+    assert started == []
+    monkeypatch.delenv("PAUTA_META_SYNC")
+    cli.main(["serve"])
+    assert started[1:] == ["started"] and started[0].enabled
+    handler = obs.setup_logging()
+    obs.log.removeHandler(handler)

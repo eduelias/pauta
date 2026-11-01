@@ -167,8 +167,8 @@ def test_schema_v7_gains_the_meta_account_table(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "8"
-        assert SCHEMA_VERSION == 8
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
     assert store.meta_accounts() == []
     store.sync_meta_accounts([CLINIC])
     assert store.meta_accounts()[0]["client"]["name"] == "Antigo"

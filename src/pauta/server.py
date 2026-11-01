@@ -18,14 +18,15 @@ import sqlite3
 import threading
 import time
 import traceback
+from datetime import date
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, obs
+from . import __version__, obs, sync
 from .auth import MOVE_LINK_DAYS, Auth, AuthError
-from .db import Invalid, NotFound, Store
-from .meta import ACCOUNT_STATUS, Meta, MetaError
+from .db import EXPORT_TABLES, Invalid, NotFound, Store, valid_date
+from .meta import ACCOUNT_STATUS, NOT_CONNECTED, Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
 
@@ -61,6 +62,9 @@ QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or coun
 SENT = object()  # a route that wrote its own response (a redirect, an image)
 # what a member sees when Meta fails: the real reason ("conecte de novo") is the admin's
 META_DOWN = "os números da Meta estão indisponíveis no momento"
+MAX_PERIOD_DAYS = 400  # /api/campaigns refuses a longer range
+MANUAL_SYNC_SECONDS = 15 * 60  # "Atualizar agora" (POST /api/meta/sync) at most this often
+SYNC_TOO_SOON = "a última atualização foi há menos de 15 minutos; espere um pouco"
 
 
 def _stale(row: dict) -> dict:
@@ -102,6 +106,10 @@ def make_handler(
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
     meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
+    state = store.sync_state()  # the last sync outlives a restart, for /metrics
+    meta.last_sync, meta.sync_error = state["last_sync"], state["sync_error"]
+    manual_sync = {"at": 0.0}  # when an admin last asked for a sync, with its lock
+    manual_lock = threading.Lock()
     slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
     # method, path, handler, access, raw (the body is a file, not JSON)
     routes: list[tuple[str, re.Pattern, str, str, bool]] = []
@@ -387,6 +395,8 @@ def make_handler(
                     "enabled": meta.enabled,
                     "connected": meta.connected,
                     "error": meta.error,
+                    "last_sync": meta.last_sync,
+                    "sync_error": meta.sync_error,
                 },
             }
             self._json(200, doc)
@@ -456,6 +466,7 @@ def make_handler(
                 "finance": store.finance_settings(),
                 "payments": [p for c in store.clients() for p in store.client(c["id"])["payments"]],
                 "meta_account": store.meta_accounts(),
+                **{t: store.table(t) for t in EXPORT_TABLES},
             }
 
         # ---- requests ---------------------------------------------------------------------
@@ -583,6 +594,69 @@ def make_handler(
                     for a in linked
                 ],
             }
+
+        # ---- campaign tracking (decision 8): per campaign, tracked ones only, by day --------
+
+        def _period(self) -> tuple[str, str, str]:
+            """`since` and `until` from the query (this month so far by default, in the
+            server's local date) as ISO strings, plus today's."""
+            q = parse_qs(urlparse(self.path).query)
+            today = date.today()
+            since = valid_date(q.get("since", [""])[0]) or today.replace(day=1).isoformat()
+            until = valid_date(q.get("until", [""])[0]) or today.isoformat()
+            if since > until:
+                raise Invalid("o início do período vem depois do fim")
+            if (date.fromisoformat(until) - date.fromisoformat(since)).days >= MAX_PERIOD_DAYS:
+                raise Invalid(f"período grande demais (máximo {MAX_PERIOD_DAYS} dias)")
+            return since, until, today.isoformat()
+
+        @route("GET", "/api/campaigns")
+        def campaigns(self, viewer, _body):
+            """Every tracked campaign by client with the period's sums; `reach` comes from
+            Meta for the period as a whole (null when Meta won't say: never the list's
+            problem)."""
+            since, until, today = self._period()
+            clients = store.campaign_rows(since, until)
+            pairs = [
+                (k["account_id"], k["meta_id"])
+                for c in clients
+                for k in c["campaigns"]
+                if k["meta_id"] and k["account_id"]
+            ]
+            reach: dict = {}
+            if pairs and meta.connected:
+                try:
+                    reach = meta.reach(pairs, date.fromisoformat(since), date.fromisoformat(until))
+                except MetaError:
+                    reach = {}
+            for c in clients:
+                for k in c["campaigns"]:
+                    results = k["results"]
+                    k["cpl_cents"] = round(k["spend_cents"] / results) if results else None
+                    k["reach"] = reach.get(k["meta_id"])
+            return {
+                "since": since,
+                "until": until,
+                "today_included": until >= today,
+                "clients": clients,
+            }
+
+        @route("PATCH", f"/api/campaigns/{ID}")
+        def campaign_state(self, viewer, body, cid):
+            return store.set_campaign_state(int(cid), body.get("state"), viewer["account"])
+
+        @route("POST", "/api/meta/sync", "admin")
+        def meta_sync(self, viewer, _body):
+            """Atualizar agora: the hourly pass, at most once every 15 minutes."""
+            if not meta.connected:
+                raise MetaError(NOT_CONNECTED, 409)
+            with manual_lock:
+                wait = manual_sync["at"] + MANUAL_SYNC_SECONDS - time.time()
+                if wait > 0:
+                    raise Reply(429, {"error": SYNC_TOO_SOON, "retry_in_s": round(wait)})
+                manual_sync["at"] = time.time()
+            obs.event("meta_sync_requested", account=viewer["account"])
+            return sync.run(store, meta, days=sync.HOURLY_DAYS)
 
         # ---- finance (decision 7) ---------------------------------------------------------
 

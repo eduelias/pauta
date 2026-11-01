@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -113,6 +113,35 @@ CREATE TABLE IF NOT EXISTS meta_account (
     created TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS meta_account_client ON meta_account(client);
+CREATE TABLE IF NOT EXISTS campaign (
+    id INTEGER PRIMARY KEY, client INTEGER REFERENCES client(id) ON DELETE CASCADE,
+    account_id TEXT NOT NULL DEFAULT '', meta_id TEXT UNIQUE,
+    name TEXT NOT NULL DEFAULT '', objective TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'active', effective_status TEXT NOT NULL DEFAULT '',
+    started TEXT, ended TEXT,
+    request INTEGER UNIQUE REFERENCES request(id) ON DELETE SET NULL,
+    every_days INTEGER, note TEXT NOT NULL DEFAULT '', last_seen TEXT,
+    created_by INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now')),
+    updated TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS campaign_client ON campaign(client);
+CREATE INDEX IF NOT EXISTS campaign_account ON campaign(account_id);
+CREATE TABLE IF NOT EXISTS review (
+    id INTEGER PRIMARY KEY,
+    campaign INTEGER NOT NULL REFERENCES campaign(id) ON DELETE CASCADE,
+    "on" TEXT NOT NULL, account INTEGER REFERENCES account(id),
+    note TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL DEFAULT '',
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS review_campaign ON review(campaign);
+CREATE TABLE IF NOT EXISTS insight (
+    meta_id TEXT NOT NULL, day TEXT NOT NULL,
+    spend_cents INTEGER NOT NULL DEFAULT 0, impressions INTEGER NOT NULL DEFAULT 0,
+    reach INTEGER NOT NULL DEFAULT 0, link_clicks INTEGER NOT NULL DEFAULT 0,
+    actions TEXT NOT NULL DEFAULT '{}', fetched TEXT NOT NULL,
+    PRIMARY KEY (meta_id, day)
+);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -128,6 +157,19 @@ PRIORITIES = ("Alta", "Média", "Baixa")
 BALANCES = ("Tem saldo", "Saldo baixo", "Sem saldo")
 ACCESS = ("Liberado", "Solicitado", "Pendente")
 CLIENT_STATES = ("Ativo", "Pausado", "Encerrado")
+# campaign tracking (decision 8): `skipped` is "Não acompanhar", never touched by the sync
+CAMPAIGN_STATES = ("active", "paused", "ended", "skipped")
+TRACKED_STATES = ("active", "paused", "ended")
+# a done request of one of these kinds is the one a Meta campaign came from (a team setting
+# in a later slice)
+TRACKING_KINDS = ("Criar campanha", "Reativar campanha")
+# the ways an Ads Manager link carries a campaign id
+CAMPAIGN_URL_ID = (
+    r"selected_campaign_ids=(\d+)",
+    r"campaign_id=(\d+)",
+    r"/campaigns/(\d+)",
+)
+EXPORT_TABLES = ("campaign", "review", "insight")
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -241,6 +283,11 @@ def _date(v, _db):
     except ValueError:
         raise Invalid(f"data inválida: {v}") from None
     return v
+
+
+def valid_date(v) -> str | None:
+    """A query-string date: `YYYY-MM-DD` or None when blank; Invalid otherwise."""
+    return _date(v, None)
 
 
 def _money(v, _db):
@@ -413,6 +460,16 @@ def digits(value) -> str:
     return "".join(c for c in str(value or "") if c.isdigit())
 
 
+def campaign_id_in(url: str) -> str | None:
+    """The Meta campaign id an Ads Manager link carries (`selected_campaign_ids=`,
+    `campaign_id=` or `/campaigns/<id>`), or None."""
+    for pat in CAMPAIGN_URL_ID:
+        m = re.search(pat, str(url or ""))
+        if m:
+            return m.group(1)
+    return None
+
+
 def fold(name: str) -> str:
     """A name for loose comparison: no accents, casefolded, only letters, digits and spaces."""
     plain = unicodedata.normalize("NFKD", str(name or ""))
@@ -479,6 +536,7 @@ class Store:
             for row in db.execute("SELECT id FROM client WHERE state='Ativo' AND billed"):
                 self._open_cycle(db, row[0], None)
             # v8: meta_account (decision 8, phase 2) is a new table: SCHEMA creates it
+            # v9: campaign, review and insight (campaign tracking) are new tables too
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -730,6 +788,263 @@ class Store:
                 "SELECT id, name FROM client ORDER BY state='Encerrado', name COLLATE NOCASE"
             ).fetchall()
         return suggest(name, [(r["id"], r["name"]) for r in rows])
+
+    # ---- campaigns and their numbers (decision 8) -------------------------------------------
+    # Tracked campaigns come from Meta: each sync lists an account's campaigns and a Pauta
+    # row follows each ACTIVE one, under the account's client. Numbers are kept per campaign
+    # and per day in `insight`, so a period is a sum (except reach, which Meta is asked for).
+
+    def sync_campaigns(self, account_id: str, metas: list[dict], today: str) -> dict:
+        """What Meta listed for one ad account. Only a linked account is tracked: an unlinked
+        one changes nothing. New rows appear only for ACTIVE campaigns (ended or archived ones
+        never show up unless asked); a known one follows Meta's status: ACTIVE reopens an
+        ended or paused row, anything else ends an active one. `skipped` is never touched.
+        Returns the new rows' meta ids (the caller fetches their history)."""
+        aid = digits(account_id)
+        out: dict = {"new": [], "ended": 0, "reopened": 0}
+        with self.db() as db:
+            row = db.execute(
+                "SELECT client FROM meta_account WHERE account_id=?", (aid,)
+            ).fetchone()
+            if not row or row["client"] is None:
+                return out
+            cid = row["client"]
+            for m in metas:
+                mid = digits(m.get("id"))
+                if not mid:
+                    continue
+                active = str(m.get("effective_status") or "") == "ACTIVE"
+                known = db.execute(
+                    "SELECT id, state FROM campaign WHERE meta_id=?", (mid,)
+                ).fetchone()
+                common = (
+                    str(m.get("name") or "")[:200],
+                    str(m.get("objective") or "")[:60],
+                    str(m.get("effective_status") or "")[:40],
+                    today,
+                    aid,
+                    cid,
+                )
+                if not known:
+                    if not active:
+                        continue
+                    db.execute(
+                        "INSERT INTO campaign(name, objective, effective_status, last_seen, "
+                        "account_id, client, meta_id, state, started) "
+                        "VALUES (?,?,?,?,?,?,?,'active',?)",
+                        (*common, mid, m.get("started") or today),
+                    )
+                    out["new"].append(mid)
+                    continue
+                db.execute(
+                    "UPDATE campaign SET name=?, objective=?, effective_status=?, last_seen=?, "
+                    "account_id=?, client=?, updated=datetime('now') WHERE id=?",
+                    (*common, known["id"]),
+                )
+                if known["state"] == "skipped":
+                    continue
+                if active and known["state"] in ("ended", "paused"):
+                    db.execute(
+                        "UPDATE campaign SET state='active', ended=NULL WHERE id=?", (known["id"],)
+                    )
+                    out["reopened"] += 1
+                elif not active and known["state"] == "active":
+                    db.execute(
+                        "UPDATE campaign SET state='ended', ended=? WHERE id=?",
+                        (today, known["id"]),
+                    )
+                    out["ended"] += 1
+        if out["new"] or out["ended"] or out["reopened"]:
+            obs.event(
+                "campaigns_synced",
+                client=cid,
+                new=len(out["new"]),
+                ended=out["ended"],
+                reopened=out["reopened"],
+            )
+        return out
+
+    def store_insights(self, rows: list[dict], fetched: str | None = None) -> int:
+        """Daily numbers per campaign, upserted by (meta_id, day). Returns how many rows."""
+        fetched = fetched or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        n = 0
+        with self.db() as db:
+            for r in rows:
+                mid, day = digits(r.get("meta_id")), str(r.get("day") or "")
+                if not mid or not DATE_RE.match(day):
+                    continue
+                actions = r.get("actions") or {}
+                db.execute(
+                    "INSERT INTO insight(meta_id, day, spend_cents, impressions, reach, "
+                    "link_clicks, actions, fetched) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(meta_id, day) DO UPDATE SET spend_cents=excluded.spend_cents, "
+                    "impressions=excluded.impressions, reach=excluded.reach, "
+                    "link_clicks=excluded.link_clicks, actions=excluded.actions, "
+                    "fetched=excluded.fetched",
+                    (
+                        mid,
+                        day,
+                        int(r.get("spend_cents") or 0),
+                        int(r.get("impressions") or 0),
+                        int(r.get("reach") or 0),
+                        int(r.get("link_clicks") or 0),
+                        json.dumps(actions, sort_keys=True, separators=(",", ":")),
+                        fetched,
+                    ),
+                )
+                n += 1
+        return n
+
+    def link_requests_to_campaigns(self) -> int:
+        """A campaign without a request takes the done tracking-kind request whose Ads Manager
+        link carries its Meta id; the request's timeline says so. Returns how many linked."""
+        n = 0
+        with self.db() as db:
+            orphans = db.execute(
+                "SELECT id, meta_id FROM campaign WHERE request IS NULL AND meta_id IS NOT NULL"
+            ).fetchall()
+            marks = ",".join("?" for _ in TRACKING_KINDS)
+            for c in orphans:
+                mid = c["meta_id"]
+                candidates = db.execute(
+                    "SELECT id, campaign_url FROM request WHERE status='done' "
+                    f"AND kind IN ({marks}) AND campaign_url LIKE ? AND id NOT IN "
+                    "(SELECT request FROM campaign WHERE request IS NOT NULL) ORDER BY id DESC",
+                    (*TRACKING_KINDS, f"%{mid}%"),
+                ).fetchall()
+                rid = next(
+                    (r["id"] for r in candidates if campaign_id_in(r["campaign_url"]) == mid), None
+                )
+                if rid is None:
+                    continue
+                db.execute(
+                    "UPDATE campaign SET request=?, updated=datetime('now') WHERE id=?",
+                    (rid, c["id"]),
+                )
+                db.execute(
+                    "INSERT INTO event(request, kind, text) VALUES (?,'campaign',?)",
+                    (rid, f"meta:{mid}"),
+                )
+                n += 1
+        return n
+
+    def campaign_rows(self, since: str, until: str, states: tuple = TRACKED_STATES) -> list[dict]:
+        """Per client (by name), its campaigns (active first, then by name) with the period's
+        sums from `insight`: spend, impressions, link clicks and actions by type. `results`
+        is the link clicks (the team's lead definition; a setting may change it later)."""
+        marks = ",".join("?" for _ in states)
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT k.id, k.client, c.name AS client_name, k.account_id, k.meta_id, k.name, "
+                "k.objective, k.state, k.effective_status, k.started, k.ended, k.request, "
+                "k.every_days, k.note, k.last_seen FROM campaign k JOIN client c ON c.id=k.client "
+                f"WHERE k.state IN ({marks}) "
+                "ORDER BY c.name COLLATE NOCASE, c.id, k.state<>'active', "
+                "k.name COLLATE NOCASE, k.id",
+                states,
+            ).fetchall()
+            sums = db.execute(
+                "SELECT meta_id, SUM(spend_cents) AS spend_cents, SUM(impressions) AS impressions, "
+                "SUM(link_clicks) AS link_clicks FROM insight WHERE day BETWEEN ? AND ? "
+                "GROUP BY meta_id",
+                (since, until),
+            ).fetchall()
+            acts = db.execute(
+                "SELECT meta_id, actions FROM insight WHERE day BETWEEN ? AND ? AND actions<>'{}'",
+                (since, until),
+            ).fetchall()
+        totals = {r["meta_id"]: dict(r) for r in sums}
+        actions: dict[str, dict[str, int]] = {}
+        for r in acts:
+            bag = actions.setdefault(r["meta_id"], {})
+            for k, v in json.loads(r["actions"]).items():
+                bag[k] = bag.get(k, 0) + int(v)
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            t = totals.get(d["meta_id"]) or {}
+            d.update(
+                spend_cents=int(t.get("spend_cents") or 0),
+                impressions=int(t.get("impressions") or 0),
+                link_clicks=int(t.get("link_clicks") or 0),
+                actions=actions.get(d["meta_id"], {}),
+            )
+            d["results"] = d["link_clicks"]
+            cname = d.pop("client_name")
+            if not out or out[-1]["id"] != d["client"]:
+                out.append({"id": d["client"], "name": cname, "campaigns": []})
+            out[-1]["campaigns"].append(d)
+        return out
+
+    def campaign(self, cid: int, since: str | None = None, until: str | None = None) -> dict:
+        """One campaign with its daily rows in the range (all of them when no range)."""
+        with self.db() as db:
+            row = db.execute(
+                "SELECT k.*, c.name AS client_name FROM campaign k "
+                "LEFT JOIN client c ON c.id=k.client WHERE k.id=?",
+                (cid,),
+            ).fetchone()
+            if not row:
+                raise NotFound("campanha não encontrada")
+            days = db.execute(
+                "SELECT day, spend_cents, impressions, reach, link_clicks, actions, fetched "
+                "FROM insight WHERE meta_id=? AND day BETWEEN ? AND ? ORDER BY day",
+                (row["meta_id"], since or "0000-00-00", until or "9999-99-99"),
+            ).fetchall()
+        out = dict(row)
+        out["days"] = [{**dict(d), "actions": json.loads(d["actions"])} for d in days]
+        return out
+
+    def set_campaign_state(self, cid: int, state, by: int | None = None) -> dict:
+        """Não acompanhar (`skipped`: the sync leaves it alone from then on) or Acompanhar
+        again (`active`, which the next sync corrects if Meta says otherwise)."""
+        if state not in ("skipped", "active"):
+            raise Invalid("estado inválido: use skipped ou active")
+        with self.db() as db:
+            row = db.execute("SELECT state FROM campaign WHERE id=?", (cid,)).fetchone()
+            if not row:
+                raise NotFound("campanha não encontrada")
+            if row["state"] == state:
+                raise Invalid("a campanha já está assim")
+            if state == "active" and row["state"] != "skipped":
+                raise Invalid(
+                    "só uma campanha ignorada volta a ser acompanhada; a Meta decide o resto"
+                )
+            db.execute(
+                "UPDATE campaign SET state=?, ended=CASE WHEN ?='active' THEN NULL ELSE ended END, "
+                "updated=datetime('now') WHERE id=?",
+                (state, state, cid),
+            )
+        obs.event("campaign_state", account=by, campaign=cid, state=state)
+        return self.campaign(cid)
+
+    def table(self, name: str) -> list[dict]:
+        """Every row of one of the tracking tables, for the export."""
+        if name not in EXPORT_TABLES:
+            raise Invalid("tabela desconhecida")
+        with self.db() as db:
+            rows = db.execute(f"SELECT * FROM {name} ORDER BY 1, 2").fetchall()
+        out = [dict(r) for r in rows]
+        if name == "insight":
+            for r in out:
+                r["actions"] = json.loads(r["actions"])
+        return out
+
+    def sync_state(self) -> dict:
+        """When the Meta sync last ran and how it went, kept across restarts."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT key, value FROM meta WHERE key IN ('sync_at', 'sync_error')"
+            ).fetchall()
+        got = {r["key"]: r["value"] for r in rows}
+        return {"last_sync": got.get("sync_at") or None, "sync_error": got.get("sync_error") or ""}
+
+    def set_sync_state(self, at: str, error: str) -> None:
+        with self.db() as db:
+            db.executemany(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                [("sync_at", at), ("sync_error", error or "")],
+            )
 
     # ---- finance (decision 7) ---------------------------------------------------------------
 

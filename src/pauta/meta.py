@@ -20,6 +20,13 @@ doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers 
 return comes back with `numbers: false` and a reason; only a revoked token or a throttle
 fails the whole list.
 
+Campaign tracking (`sync.py`) reads more: each linked account's campaign list (paged) and
+its per-campaign daily insights for a range, plus the period's reach per campaign (reach
+doesn't add up over days, so it is asked for as a whole and kept for an hour). Meta keeps 37
+months of insights; older `since` dates are clamped. `cmd_serve` starts the sync scheduler
+(an hourly pass over the last two days, a nightly one over the last 28) unless
+PAUTA_META_SYNC=off; `last_sync` and `sync_error` on this object feed /metrics.
+
 Revoking access is the client's side: Business Settings → Integrations → Connected apps.
 "Desconectar" only forgets the token here.
 
@@ -35,6 +42,8 @@ Configuration:
                          environment, the database, the logs or an answer. Missing or empty
                          turns Meta off
   <db>.meta-token        written by Pauta when connected (mode 600)
+  PAUTA_META_SYNC        "off" keeps the in-process sync scheduler from starting (the CLI's
+                         `pauta meta sync` still works); anything else, or unset, runs it
 """
 
 from __future__ import annotations
@@ -53,6 +62,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
@@ -71,6 +81,11 @@ BATCH = 50  # the Graph batch API's maximum per request
 MAX_PENDING = 20
 INSIGHTS_FIELDS = "spend,impressions,reach,inline_link_clicks,cost_per_inline_link_click"
 BALANCE_FIELDS = "is_prepay_account,funding_source_details,spend_cap,amount_spent"
+CAMPAIGN_FIELDS = "id,name,objective,effective_status,status,start_time,stop_time,created_time"
+DAILY_FIELDS = "campaign_id,spend,impressions,reach,inline_link_clicks,actions"
+REACH_SECONDS = 3600  # a period's reach per campaign is kept this long
+HISTORY_MONTHS = 37  # Meta keeps this much insight history
+MAX_PAGES = 200  # paging stops here whatever Meta says: never loop forever
 
 UNAVAILABLE = "a Meta não respondeu; tente de novo"
 REVOKED = "a conexão com a Meta foi revogada ou expirou; conecte de novo"
@@ -120,6 +135,50 @@ def _int(value) -> int:
         return 0
 
 
+def _day(value) -> str | None:
+    """The date part of a Graph timestamp ("2026-10-03T00:00:00-0300"), in the account's
+    own time zone as Meta wrote it, or None."""
+    text = str(value or "")[:10]
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
+
+
+def earliest(today: date) -> date:
+    """The oldest day Meta still serves insights for: today minus 37 months."""
+    months = today.year * 12 + today.month - 1 - HISTORY_MONTHS
+    first = date(months // 12, months % 12 + 1, 1)
+    last_day = (first.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return first.replace(day=min(today.day, last_day.day))
+
+
+def clamp_since(since: date, today: date | None = None) -> date:
+    return max(since, earliest(today or date.today()))
+
+
+def actions_map(items) -> dict[str, int]:
+    """Meta's `actions` list ([{action_type, value}, ...]) as {action_type: int}."""
+    out: dict[str, int] = {}
+    for a in items if isinstance(items, list) else []:
+        if isinstance(a, dict) and a.get("action_type"):
+            out[str(a["action_type"])] = out.get(str(a["action_type"]), 0) + _int(a.get("value"))
+    return out
+
+
+def _time_range(since: date, until: date) -> str:
+    return json.dumps(
+        {"since": since.isoformat(), "until": until.isoformat()}, separators=(",", ":")
+    )
+
+
+def _filter_ids(meta_ids) -> str:
+    return json.dumps(
+        [{"field": "campaign.id", "operator": "IN", "value": [str(m) for m in meta_ids]}],
+        separators=(",", ":"),
+    )
+
+
 def _minor(value) -> int | None:
     """Ad account money fields (spend_cap, amount_spent) come in the currency's minor unit
     already, as strings."""
@@ -155,6 +214,9 @@ class Meta:
         self._failed: tuple[float, MetaError] | None = None  # the last failed read
         self._reading = threading.Lock()  # one Meta read at a time (accounts())
         self.error = ""  # why the connection stopped working, until reconnected
+        self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
+        self.sync_error = ""  # what the last sync ran into, "" when it went well
+        self._reach: dict[tuple, tuple[float, dict[str, int]]] = {}
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
         self.on_read: Callable[[list[dict]], None] | None = None
@@ -553,3 +615,148 @@ class Meta:
             # with a spending limit, what is left before Meta stops delivering
             "remaining_cents": max(0, cap - (spent or 0)) if cap else None,
         }
+
+    # ---- campaign tracking reads (sync.py) ---------------------------------------------------
+
+    def _pages(self, path: str, params: dict, step: str) -> list[dict]:
+        """Every `data` entry of a paged Graph list, following `paging.cursors.after`."""
+        out: list[dict] = []
+        query = dict(params)
+        for _ in range(MAX_PAGES):
+            doc = self._graph(path, query, step)
+            out.extend(d for d in doc.get("data") or [] if isinstance(d, dict))
+            paging = doc.get("paging") if isinstance(doc.get("paging"), dict) else {}
+            after = (paging.get("cursors") or {}).get("after") if paging else None
+            if not paging.get("next") or not after or after == query.get("after"):
+                break
+            query["after"] = after
+        return out
+
+    def campaigns(self, account_id: str) -> list[dict]:
+        """Every campaign of one ad account, as {id, name, objective, effective_status,
+        status, started, stopped}: dates are `YYYY-MM-DD` (the start date, or the creation
+        date when Meta has no start)."""
+        aid = "".join(c for c in str(account_id) if c.isdigit())
+        rows = self._pages(
+            f"/act_{aid}/campaigns", {"fields": CAMPAIGN_FIELDS, "limit": "100"}, "campaigns"
+        )
+        out = []
+        for c in rows:
+            cid = "".join(ch for ch in str(c.get("id") or "") if ch.isdigit())
+            if not cid:
+                continue
+            out.append(
+                {
+                    "id": cid,
+                    "name": str(c.get("name") or ""),
+                    "objective": str(c.get("objective") or ""),
+                    "effective_status": str(c.get("effective_status") or ""),
+                    "status": str(c.get("status") or ""),
+                    "started": _day(c.get("start_time")) or _day(c.get("created_time")),
+                    "stopped": _day(c.get("stop_time")),
+                }
+            )
+        return out
+
+    def daily_insights(
+        self,
+        account_id: str,
+        since: date,
+        until: date,
+        meta_ids: list[str] | None = None,
+        today: date | None = None,
+    ) -> list[dict]:
+        """One row per campaign per day in the range: {meta_id, day, spend_cents, impressions,
+        reach, link_clicks, actions}. `since` is clamped to what Meta still keeps; an empty
+        range asks nothing. `meta_ids` narrows the read to those campaigns."""
+        aid = "".join(c for c in str(account_id) if c.isdigit())
+        since = clamp_since(since, today)
+        if since > until:
+            return []
+        params = {
+            "level": "campaign",
+            "time_increment": "1",
+            "time_range": _time_range(since, until),
+            "fields": DAILY_FIELDS,
+            "limit": "500",
+        }
+        if meta_ids:
+            params["filtering"] = _filter_ids(meta_ids)
+        out = []
+        for r in self._pages(f"/act_{aid}/insights", params, "insights"):
+            mid = "".join(c for c in str(r.get("campaign_id") or "") if c.isdigit())
+            day = _day(r.get("date_start"))
+            if not mid or not day:
+                continue
+            out.append(
+                {
+                    "meta_id": mid,
+                    "day": day,
+                    "spend_cents": cents(r.get("spend")) or 0,
+                    "impressions": _int(r.get("impressions")),
+                    "reach": _int(r.get("reach")),
+                    "link_clicks": _int(r.get("inline_link_clicks")),
+                    "actions": actions_map(r.get("actions")),
+                }
+            )
+        return out
+
+    def reach(
+        self, pairs: list[tuple[str, str]], since: date, until: date, today: date | None = None
+    ) -> dict[str, int]:
+        """The period's reach per campaign ({meta_id: people}) for (account_id, meta_id)
+        pairs: one batched read per account, kept for an hour per (account, period). Reach
+        doesn't add over days, so this is the only honest period number. A campaign Meta
+        says nothing about is left out (the caller shows a dash)."""
+        since = clamp_since(since, today)
+        if since > until or not pairs:
+            return {}
+        by_account: dict[str, list[str]] = {}
+        for account_id, meta_id in pairs:
+            aid = "".join(c for c in str(account_id) if c.isdigit())
+            by_account.setdefault(aid, []).append(str(meta_id))
+        now = time.time()
+        out: dict[str, int] = {}
+        todo: list[str] = []
+        with self._lock:
+            for aid, ids in by_account.items():
+                hit = self._reach.get((aid, since, until))
+                if hit and now - hit[0] < REACH_SECONDS and all(m in hit[1] for m in ids):
+                    out.update({m: hit[1][m] for m in ids if hit[1][m] is not None})
+                else:
+                    todo.append(aid)
+        if not todo:
+            return out
+        reads = [
+            f"act_{aid}/insights?"
+            + urllib.parse.urlencode(
+                {
+                    "level": "campaign",
+                    "time_range": _time_range(since, until),
+                    "fields": "campaign_id,reach",
+                    "filtering": _filter_ids(by_account[aid]),
+                    "limit": "500",
+                }
+            )
+            for aid in todo
+        ]
+        answers: list = []
+        for i in range(0, len(reads), BATCH):
+            answers.extend(self._batch(reads[i : i + BATCH]))
+        for aid, (status, doc) in zip(todo, answers, strict=True):
+            if status != 200:
+                code = self._code(doc)
+                if code == 190 or self._throttle(code):
+                    raise self._fail(status or 0, doc, "reach")
+                obs.event("meta_reach_missing", logging.WARNING, status=status, code=code)
+                continue
+            got: dict[str, int | None] = dict.fromkeys(by_account[aid], None)
+            for r in doc.get("data") or []:
+                mid = "".join(c for c in str(r.get("campaign_id") or "") if c.isdigit())
+                if mid in got:
+                    got[mid] = _int(r.get("reach"))
+            with self._lock:
+                self._reach = {k: v for k, v in self._reach.items() if now - v[0] < REACH_SECONDS}
+                self._reach[(aid, since, until)] = (now, got)
+            out.update({m: v for m, v in got.items() if v is not None})
+        return out

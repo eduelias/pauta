@@ -127,12 +127,20 @@ def test_revoked_token_answers_409(team, fake_meta):
         "enabled": True,
         "connected": True,
         "error": REVOKED,
+        "last_sync": None,
+        "sync_error": "",
     }
 
 
 def test_metrics(team):
     base, nato, _, _ = team
-    assert call(f"{base}/metrics")[1]["meta"] == {"enabled": True, "connected": False, "error": ""}
+    assert call(f"{base}/metrics")[1]["meta"] == {
+        "enabled": True,
+        "connected": False,
+        "error": "",
+        "last_sync": None,
+        "sync_error": "",
+    }
     through_meta(base, start(base, nato))
     assert call(f"{base}/metrics")[1]["meta"]["connected"] is True
 

@@ -1,4 +1,4 @@
-"""pauta serve | invite | move-link | users | backup | demo | onedrive"""
+"""pauta serve | invite | move-link | users | backup | demo | onedrive | meta"""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, obs
+from . import __version__, obs, sync
 from .auth import MOVE_LINK_DAYS, Auth
 from .db import Store
+from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
 
 
@@ -27,11 +28,15 @@ def cmd_serve(args) -> None:
 
     store = Store(db_path())
     auth = Auth(store)
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth))
+    meta = Meta.from_env(store.path)
+    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth, meta=meta))
     mode = f"passkeys on {','.join(auth.rp_ids)}" if auth.enabled else "open (no accounts)"
     print(f"pauta on http://{args.host}:{args.port} ({mode}), db {store.path}", flush=True)
     obs.setup_logging()
     obs.event("start", version=__version__, auth="passkeys" if auth.enabled else "open")
+    if meta.enabled and os.environ.get("PAUTA_META_SYNC") != "off":
+        sync.Scheduler(store, meta).start()
+        obs.event("meta_sync_scheduled")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -293,6 +298,42 @@ def cmd_onedrive(args) -> None:
         sys.exit(f"problem: {st['error']}")
 
 
+def cmd_meta(args) -> None:
+    """sync: one pass of the campaign sync (the hourly one by default, --days for more);
+    status: the connection, the linked accounts and the last sync."""
+    store = Store(db_path())
+    meta = Meta.from_env(store.path)
+    if not meta.enabled:
+        sys.exit("PAUTA_META_APP_ID/PAUTA_META_CONFIG_ID or the secret file are missing")
+    if args.action == "sync":
+        try:
+            out = sync.run(store, meta, days=args.days)
+        except MetaError as e:
+            sys.exit(f"meta: {e}")
+        print(
+            f"{out['accounts']} account(s), {out['campaigns_new']} new campaign(s), "
+            f"{out['insight_rows']} day row(s), {out['linked']} request(s) linked"
+        )
+        for err in out["errors"]:
+            print(f"account {err['account']}: {err['error']}", file=sys.stderr)
+        if out["errors"]:
+            sys.exit(1)
+        return
+    st = meta.status()
+    if not st["connected"]:
+        sys.exit("not connected (Equipe → Meta → Conectar Meta)")
+    accounts = store.meta_accounts()
+    linked = sum(1 for a in accounts if a["client"])
+    print(f"connected to {st['business_name']} since {st['connected_at']}")
+    print(f"{len(accounts)} ad account(s), {linked} linked to a client")
+    last = store.sync_state()
+    print(f"last sync {last['last_sync'] or 'never'}")
+    if last["sync_error"]:
+        sys.exit(f"problem: {last['sync_error']}")
+    if st["error"]:
+        sys.exit(f"problem: {st['error']}")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="pauta")
     p.add_argument("--version", action="version", version=f"pauta {__version__}")
@@ -326,6 +367,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("action", choices=["status", "connect", "disconnect"])
     s.add_argument("--poll", type=float, default=5, help=argparse.SUPPRESS)
     s.set_defaults(fn=cmd_onedrive)
+    s = sub.add_parser("meta", help="the Meta connection and the campaign sync")
+    s.add_argument("action", choices=["sync", "status"])
+    s.add_argument("--days", type=int, default=sync.HOURLY_DAYS, help="days back to sync")
+    s.set_defaults(fn=cmd_meta)
     args = p.parse_args(argv)
     args.fn(args)
 
