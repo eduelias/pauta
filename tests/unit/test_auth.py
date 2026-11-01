@@ -297,8 +297,13 @@ def test_passkeys_are_listed_labelled_and_removed_while_one_stays(store, auth):
     with pytest.raises(NotFound):
         auth.remove_passkey(other, keys[0]["id"])
 
+    cookie = cookie_value(auth.make_cookie(acc["id"], secure=False))
+    assert auth.account_from_cookie(cookie)["id"] == acc["id"]
     auth.remove_passkey(acc["id"], keys[0]["id"])
     assert [k["label"][:3] for k in auth.passkeys(acc["id"])] == ["Mac"]
+    assert auth.account_from_cookie(cookie) is None  # every session ended with it
+    cookie = cookie_value(auth.make_cookie(acc["id"], secure=False))
     with pytest.raises(AuthError, match="única passkey"):
         auth.remove_passkey(acc["id"], keys[1]["id"])
+    assert auth.account_from_cookie(cookie)["id"] == acc["id"]  # a refusal ends nothing
     assert store.members()[0]["passkeys"] == 1

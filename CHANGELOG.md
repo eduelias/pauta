@@ -106,13 +106,15 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   sua. Nome, **WhatsApp** (novo; só você vê) e e-mail do Gravatar
   saem de Equipe e vêm para cá. As suas **passkeys** aparecem em lista, com nome (a Pauta
   dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
-  **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma) ficam ao lado,
+  **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma; o aparelho da
+  passkey removida sai da Pauta na hora, os outros continuam) ficam ao lado,
   e o **Link de nova passkey** (celular novo ou perdido) agora você mesmo gera, com Copiar
   e Enviar no WhatsApp: vale 10 minutos (é para abrir no aparelho novo na hora; o que o
   administrador manda continua valendo 3 dias) e "Sair em todos os aparelhos" também o
   cancela. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
   traz `whatsapp`; `PATCH /api/me` aceita `name`, `email` e `whatsapp`; `GET /api/me/passkeys`,
-  `PATCH|DELETE /api/me/passkeys/{id}` (400 na última), `POST /api/me/move`. Esquema v12
+  `PATCH|DELETE /api/me/passkeys/{id}` (400 na última; o DELETE encerra as outras sessões
+  e devolve um cookie novo para esta), `POST /api/me/move`. Esquema v12
   (aditivo).
 - **Link de nova passkey** em Configurações → Time: o administrador gera, para qualquer pessoa do time, um
   link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de

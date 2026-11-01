@@ -485,9 +485,11 @@ def make_handler(
 
         @route("DELETE", f"/api/me/passkeys/{CRED}")
         def remove_passkey(self, viewer, _body, cred):
+            """Removing a passkey signs the account out everywhere (the device that had it
+            above all); this device gets a fresh cookie and stays in."""
             aid = self._own_account(viewer)
             auth.remove_passkey(aid, cred)
-            return auth.passkeys(aid)
+            return auth.passkeys(aid), auth.make_cookie(aid, self._secure())
 
         @route("POST", "/api/me/move")
         def my_move_link(self, viewer, _body):

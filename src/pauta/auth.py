@@ -520,7 +520,9 @@ class Auth:
 
     def remove_passkey(self, account_id: int, cred_id: str) -> None:
         """Take a passkey off the account, as long as another one stays: without any, the
-        person could never sign in again and nobody else could make them a link."""
+        person could never sign in again and nobody else could make them a link. The
+        account's sessions end with it (the removed device is usually the point), so the
+        caller re-issues the cookie of the device doing the removing."""
         with self.store.db() as db:
             db.execute("BEGIN IMMEDIATE")  # two removals at once can't both see "two left"
             mine = [
@@ -531,6 +533,7 @@ class Auth:
             if len(mine) < 2:
                 raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
             db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
+            db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
 
     # ---- login with a discoverable passkey ------------------------------------------------
 

@@ -1675,7 +1675,9 @@ async function viewSettings(query) {
 
 // What is about the person signed in, and only them: name, WhatsApp, e-mail, their passkeys
 // (a label each, add one here, remove one while another stays, a link for a new phone) and
-// the way out of every device. The team's settings are on Configurações.
+// the way out of every device. Removing a passkey signs the other devices out; the server
+// re-issues this one's cookie in the same answer, so the page carries on without a reload.
+// The team's settings are on Configurações.
 const KEY_KINDS = { internal: "Face ID, digital ou PIN", hybrid: "celular, pelo QR", usb: "chave USB", nfc: "chave NFC", ble: "chave Bluetooth" };
 function passkeyRow(k, alone) {
   const kinds = (k.transports || "").split(",").filter(Boolean).map((t) => KEY_KINDS[t] || t).join(", ");
@@ -1736,7 +1738,7 @@ async function viewProfile() {
     catch (e) { toast(e.message, true); }
   }));
   $$("[data-remove]").forEach((b) => b.addEventListener("click", async () => {
-    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela deixa de entrar na Pauta até ganhar outra.`)) return;
+    if (!confirm(`Remover a passkey “${b.dataset.label}”? O aparelho dela sai da Pauta agora e só volta a entrar com outra passkey. Este aparelho continua.`)) return;
     try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
     catch (e) { toast(e.message, true); }
   }));

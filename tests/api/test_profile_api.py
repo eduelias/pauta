@@ -5,7 +5,7 @@ import json
 import time
 
 from pauta.auth import MOVE_SECONDS, Auth
-from softpasskey import ORIGIN, SoftPasskey, call, join, start
+from softpasskey import ORIGIN, SoftPasskey, call, join, login, start
 
 
 def register_more(base, cookie, key):
@@ -71,16 +71,30 @@ def test_my_passkeys_label_remove_and_the_last_one_stays(team):
     assert call(f"{base}/api/me/passkeys/{first}", None, piero, "DELETE")[0] == 404
     assert call(f"{base}/api/me/passkeys/{'x' * 20}", None, None, "DELETE")[0] == 401
 
-    status, keys, _ = call(f"{base}/api/me/passkeys/{first}", None, nato, "DELETE")
+    # the phone that owns `first` is signed in too; removing its passkey signs it out at
+    # once, while the laptop doing the removing gets a fresh cookie in the same answer
+    status, _, phone = login(base, nato_key)
+    assert status == 200 and phone.startswith("pauta_session=")  # same generation as nato's
+    status, keys, headers = call(f"{base}/api/me/passkeys/{first}", None, nato, "DELETE")
     assert status == 200 and [k["label"] for k in keys] == ["Este aparelho"]
+    fresh = (headers.get("Set-Cookie") or "").split(";")[0]
+    assert fresh.startswith("pauta_session=") and fresh != nato
+    assert "HttpOnly" in headers["Set-Cookie"] and "SameSite=Strict" in headers["Set-Cookie"]
+    assert call(f"{base}/api/me/passkeys", cookie=phone)[0] == 401
+    assert call(f"{base}/api/me/passkeys", cookie=nato)[0] == 401  # the old cookie too
+    assert call(f"{base}/api/me", cookie=fresh)[1]["name"] == "Renato Lima"
+    assert call(f"{base}/api/me", cookie=piero)[1]["name"] == "Piero"  # nobody else
+    nato = fresh
     assert call(f"{base}/api/me/passkeys/{keys[0]['id']}", None, nato, "DELETE")[0] == 400
     members = call(f"{base}/api/members", cookie=piero)[1]
     assert next(m for m in members if m["name"] == "Renato Lima")["passkeys"] == 1
-    # the removed passkey no longer signs in; the session it had stays (it's a cookie)
+    # the removed passkey no longer signs in
     _, opts, _ = call(f"{base}/api/passkey/login/options", {})
     body = {"flow": opts["flow"], "credential": nato_key.get(opts["options"], "")}
     status, err, _ = call(f"{base}/api/passkey/login/verify", body)
     assert status == 400 and "não está cadastrada" in err["error"]
+    # a refused removal (the last one) changes nothing: this cookie still works
+    assert call(f"{base}/api/me", cookie=nato)[1]["name"] == "Renato Lima"
 
 
 def test_my_own_new_passkey_link(team):

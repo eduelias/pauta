@@ -147,3 +147,16 @@ def test_a_link_for_my_new_phone(live, device):
     other.expected.add((404, "/api/move/"))
     other.page.goto(url)  # spent
     expect(other.page.get_by_role("heading", name="Link expirado")).to_be_visible()
+
+    # the phone is lost after all: removing its passkey from the laptop signs the phone out
+    # at once, while the laptop carries on (a fresh cookie came with the answer)
+    page.once("dialog", lambda d: d.accept())
+    rows(page).nth(1).get_by_role("button", name="Remover").click()
+    expect(page.locator(".toast")).to_have_text("Passkey removida")
+    expect(rows(page)).to_have_count(1)
+    phone.page.reload()
+    expect(phone.page.locator("#login")).to_be_visible()
+    expect(phone.page.locator("#mechip")).to_be_hidden()
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.locator("#mechip")).to_contain_text("Piero")
+    expect(page.locator(".member", has_text="Piero Sales")).to_be_visible()
