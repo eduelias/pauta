@@ -282,6 +282,12 @@ campaign per day, the history fetch for the new campaigns reached back to 29 Oct
 `actions` list parsed, no errors. So the account-wide total that confused him is gone from
 the data model: from here on Pauta only sums tracked campaigns' daily rows.
 
+Slice B (`6d784cb`) followed the same night: the **Campanhas** tab with the period picker,
+per-client rows with tracked campaigns and the period's numbers, **Visto hoje** on the client
+rows, the campaign page with metric chips and SVG daily charts, Equipe → Meta trimmed to
+accounts and mapping, and the balance line saying "sem permissão · reconecte em Adicionar
+contas". acc.pauta.cc runs it as `1.6.2.dev8`; Piero's test cycle starts there.
+
 ### More than one ad account (Piero, 2026-10-31)
 
 Piero's next remark: "só tá aceitando uma conta"; the ideal is to connect each new client's
