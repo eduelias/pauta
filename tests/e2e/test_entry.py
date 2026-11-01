@@ -28,6 +28,7 @@ SCREENS = [
     ("#/cliente/1", lambda p: p.locator("#cname")),
     ("#/financeiro", lambda p: p.get_by_role("heading", name="Financeiro", exact=True)),
     ("#/configuracoes", lambda p: p.get_by_role("heading", name="Configurações", exact=True)),
+    ("#/perfil", lambda p: p.get_by_role("heading", name="Perfil", exact=True)),
 ]
 # what the sidebar (laptop) or tab bar (phone) links to, as Piero moves around; on the phone
 # Financeiro takes Quadro's slot (decision 7)

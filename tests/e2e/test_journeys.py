@@ -70,7 +70,7 @@ def test_sign_out_and_back_in_with_the_passkey(live, device):
     token, _ = auth.create_invite(admin=True)
     page = device().page
     join(page, base, token, "Renato Lima")
-    page.goto(f"{base}/#/configuracoes")
+    page.goto(f"{base}/#/perfil")
     page.click("#logout")
     expect(page.locator("#login")).to_be_visible()
     expect(page.locator("#shell")).to_be_hidden()

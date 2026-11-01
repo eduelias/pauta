@@ -99,6 +99,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 - du7: o porteiro do runner agora é `runner-job-guard.sh`; sem a extensão o runner recusava
   todo job, inclusive os deploys.
+- **Perfil** (`#/perfil`, no menu da conta e no avatar da barra de cima): a sua página, só
+  sua. Nome, **WhatsApp** (novo; só você e os administradores veem) e e-mail do Gravatar
+  saem de Equipe e vêm para cá. As suas **passkeys** aparecem em lista, com nome (a Pauta
+  dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
+  **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma) ficam ao lado,
+  e o **Link de nova passkey** (celular novo ou perdido) agora você mesmo gera, com Copiar
+  e Enviar no WhatsApp. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
+  traz `whatsapp`; `PATCH /api/me` aceita `name`, `email` e `whatsapp`; `GET /api/me/passkeys`,
+  `PATCH|DELETE /api/me/passkeys/{id}` (400 na última), `POST /api/me/move`. Esquema v12
+  (aditivo).
 - **Link de nova passkey** em Configurações → Time: o administrador gera, para qualquer pessoa do time, um
   link de uso único para criar uma passkey nova (celular novo, perdido, ou o ambiente de
   aceitação). Antes, esse link só aparecia durante a mudança de endereço.

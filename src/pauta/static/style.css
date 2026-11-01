@@ -437,6 +437,10 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .member .who b { display: flex; align-items: center; gap: 8px; }
 .member .who span { font-size: 13px; color: var(--muted); }
 .member.off { opacity: .5; }
+/* Configurações → the line to Perfil; Perfil → the key in front of each passkey */
+.profile-link { display: inline-flex; align-items: center; gap: 10px; margin: -8px 0 18px; font-weight: 650; }
+.profile-link:hover { text-decoration: none; color: var(--accent); }
+.member .keyic { flex: 0 0 auto; color: var(--muted); }
 .qrbox { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
 .qr { width: 180px; height: 180px; padding: 10px; background: #fff; border-radius: 14px;
   border: 1px solid var(--line); }

@@ -60,11 +60,13 @@ RATE_BUCKETS = {
     "/api/passkey/login/options": "login",
     "/api/passkey/login/verify": "login",
     "/api/move": "register",
+    "/api/me/move": "invite",
     # Meta's login sends the browser back here with no cookie: a one-time state is all that
     # guards it, so guesses are counted like login attempts
     "/api/meta/callback": "login",
 }
 ID = r"(\d{1,9})"
+CRED = r"([A-Za-z0-9_-]{8,1400})"  # a passkey's credential id, base64url
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
 AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
 QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
@@ -460,7 +462,44 @@ def make_handler(
                 auth.rename(viewer["account"], body["name"])
             if "email" in body:
                 auth.set_email(viewer["account"], body["email"])
+            if "whatsapp" in body:
+                auth.set_whatsapp(viewer["account"], body["whatsapp"])
             return self._me(auth.viewer(self.headers.get("Cookie")))
+
+        # ---- the person's own passkeys (Perfil, decision 10) ------------------------------
+
+        def _own_account(self, viewer) -> int:
+            if viewer["account"] is None:
+                raise Reply(400, {"error": "sem contas no modo local"})
+            return viewer["account"]
+
+        @route("GET", "/api/me/passkeys")
+        def my_passkeys(self, viewer, _body):
+            return auth.passkeys(viewer["account"])
+
+        @route("PATCH", f"/api/me/passkeys/{CRED}")
+        def relabel_passkey(self, viewer, body, cred):
+            aid = self._own_account(viewer)
+            auth.relabel_passkey(aid, cred, body.get("label"))
+            return auth.passkeys(aid)
+
+        @route("DELETE", f"/api/me/passkeys/{CRED}")
+        def remove_passkey(self, viewer, _body, cred):
+            aid = self._own_account(viewer)
+            auth.remove_passkey(aid, cred)
+            return auth.passkeys(aid)
+
+        @route("POST", "/api/me/move")
+        def my_move_link(self, viewer, _body):
+            """The same one-time link an admin makes (move_link), for yourself: a new or
+            lost phone, sent to your own WhatsApp or opened from the box on Perfil."""
+            aid = self._own_account(viewer)
+            if not auth.enabled or not auth.home:
+                raise Reply(
+                    400, {"error": "links de nova passkey precisam de passkeys (PAUTA_AUTH)"}
+                )
+            token, expires = auth.create_move(aid, MOVE_LINK_DAYS * 86400, created_by=aid)
+            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
 
         @route("GET", "/api/boot")
         def boot(self, viewer, _body):
@@ -1050,7 +1089,11 @@ def make_handler(
 
         @route("POST", "/api/passkey/register/verify", "open")
         def register_verify(self, viewer, body):
-            acc = auth.register_verify(body.get("flow"), body.get("credential") or {})
+            acc = auth.register_verify(
+                body.get("flow"),
+                body.get("credential") or {},
+                user_agent=self.headers.get("User-Agent", ""),
+            )
             return auth.viewer_for(acc), auth.make_cookie(acc["id"], self._secure())
 
         @route("POST", "/api/passkey/login/options", "open")

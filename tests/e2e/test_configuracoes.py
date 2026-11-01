@@ -35,11 +35,14 @@ def test_the_tab_is_called_configuracoes(people):
     tab.click()
     expect(admin.get_by_role("heading", name="Configurações", exact=True)).to_be_visible()
     expect(tab).to_have_class("on")
-    # the avatar in the sidebar opens the account menu, which also points here
+    # the avatar in the sidebar opens the account menu: the person's page, then this one
     admin.click("#mechip")
-    expect(admin.locator(".menu").get_by_role("link", name="Configurações")).to_have_attribute(
+    menu = admin.locator(".menu")
+    expect(menu.get_by_role("link", name="Meu perfil")).to_have_attribute("href", "#/perfil")
+    expect(menu.get_by_role("link", name="Configurações")).to_have_attribute(
         "href", "#/configuracoes"
     )
+    expect(menu).not_to_contain_text("Adicionar passkey")
 
 
 @pytest.mark.parametrize(
@@ -72,7 +75,11 @@ def test_sections_in_order_for_an_admin(people):
     expect(admin.locator("#drive")).to_be_visible()
     headings = admin.locator("#app section.panel > .panel-head h2").all_inner_texts()
     # Meta only shows with PAUTA_META_APP_ID; Acompanhamento has no settings panel yet
-    assert headings == ["Você", "Time", "Financeiro", "Listas", "Arquivos"]
+    assert headings == ["Time", "Financeiro", "Listas", "Arquivos"]
+    # what is about the person moved to Perfil: one line points there
+    expect(admin.locator("#toprofile")).to_contain_text("Seu perfil →")
+    expect(admin.locator("#toprofile")).to_have_attribute("href", "#/perfil")
+    expect(admin.locator("#myname")).to_have_count(0)
     time_panel = admin.locator("#time")
     expect(time_panel).to_contain_text("2 pessoas")
     expect(time_panel.get_by_role("heading", name="Convidar alguém")).to_be_visible()
@@ -85,7 +92,8 @@ def test_a_member_sees_the_team_and_nothing_to_administer(people):
     member.goto(f"{base}/#/configuracoes")
     expect(member.get_by_role("heading", name="Configurações", exact=True)).to_be_visible()
     headings = member.locator("#app section.panel > .panel-head h2").all_inner_texts()
-    assert headings == ["Você", "Time"]
+    assert headings == ["Time"]
+    expect(member.locator("#toprofile")).to_be_visible()
     expect(member.locator(".member", has_text="Renato Lima")).to_be_visible()
     for missing in ("#invite", "#drive", "#finsettings", "#lists", "#export", "[data-m]"):
         expect(member.locator(missing)).to_have_count(0)

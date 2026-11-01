@@ -226,6 +226,33 @@ def test_schema_v2_gets_the_ads_page_column(tmp_path):
     assert store.save_client({"ads_page": "x"}, 1)["ads_page"] == "x"
 
 
+def test_schema_v11_gets_whatsapp_and_passkey_labels(tmp_path):
+    """Perfil (decision 10): a WhatsApp per account and a label per passkey, both additive."""
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript(
+        "CREATE TABLE account (id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL "
+        "UNIQUE, email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0, disabled "
+        "INTEGER NOT NULL DEFAULT 0, session_gen INTEGER NOT NULL DEFAULT 0, created TEXT NOT "
+        "NULL DEFAULT (datetime('now')));"
+        "CREATE TABLE passkey (id TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES "
+        "account(id) ON DELETE CASCADE, public_key BLOB NOT NULL, sign_count INTEGER NOT NULL "
+        "DEFAULT 0, transports TEXT, created TEXT NOT NULL DEFAULT (datetime('now')), last_used "
+        "TEXT, rp_id TEXT NOT NULL DEFAULT '');"
+        "INSERT INTO account(name, handle) VALUES ('Antiga', 'h');"
+        "INSERT INTO passkey(id, account, public_key) VALUES ('k1', 1, x'00');"
+    )
+    conn.commit()
+    conn.close()
+    store = Store(tmp_path / "old.db")
+    with store.db() as db:
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
+        acc = dict(db.execute("SELECT * FROM account").fetchone())
+        key = dict(db.execute("SELECT * FROM passkey").fetchone())
+    assert acc["whatsapp"] == "" and key["label"] == ""
+    assert "whatsapp" not in store.members()[0]  # teammates never get the number
+
+
 # ---- finance: settings, cycles and the ledger (decision 7) ------------------------------
 
 

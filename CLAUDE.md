@@ -33,7 +33,10 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only (no CDNs, no external fonts);
   the one exception is `img-src https://gravatar.com` for people's avatars. Accounts may
   set an email, which is only used for that: teammates get the SHA-256 hash, never the
-  address. `d=blank` means no Gravatar shows the initials underneath.
+  address. `d=blank` means no Gravatar shows the initials underneath. `#/perfil` is the
+  person's own page (name, WhatsApp, e-mail, their passkeys, a link for a new phone);
+  `#/configuracoes` (until 1.6 "Equipe") is the team's: Time, Meta, Financeiro, Listas,
+  Arquivos (decision 10).
 
 ## Commands
 
