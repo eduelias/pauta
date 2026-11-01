@@ -18,26 +18,32 @@ import sqlite3
 import threading
 import time
 import traceback
-from datetime import date, timedelta
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import urlparse
 
-from . import __version__, obs, sync
-from .auth import MOVE_LINK_DAYS, Auth, AuthError
+from . import __version__, obs
+from .auth import Auth, AuthError
 from .db import (
-    CAMPAIGN_STATES,
-    EXPORT_TABLES,
-    TRACKED_STATES,
     Invalid,
     NotFound,
     Store,
-    period_results,
-    valid_date,
 )
-from .meta import ACCOUNT_STATUS, NOT_CONNECTED, Meta, MetaError, local_today
+from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .ratelimit import RateLimiter
+from .routes import META_DOWN as META_DOWN  # the tests import it from here
+from .routes import (
+    SENT,
+    Reply,
+    account,
+    campaigns,
+    clients,
+    finance,
+    requests,
+    team,
+)
 
 STATIC = Path(__file__).parent / "static"
 MAX_BODY = 256 * 1024
@@ -65,47 +71,15 @@ RATE_BUCKETS = {
     # guards it, so guesses are counted like login attempts
     "/api/meta/callback": "login",
 }
-ID = r"(\d{1,9})"
-CRED = r"([A-Za-z0-9_-]{8,1400})"  # a passkey's credential id, base64url
+
+
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
 AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
 QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
-SENT = object()  # a route that wrote its own response (a redirect, an image)
-# what a member sees when Meta fails: the real reason ("conecte de novo") is the admin's
-META_DOWN = "os números da Meta estão indisponíveis no momento"
-MAX_PERIOD_DAYS = 400  # /api/campaigns refuses a longer range
-DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default: "Últimos 30 dias", yesterday back
+
+
 MANUAL_SYNC_SECONDS = 15 * 60  # "Atualizar agora" (POST /api/meta/sync) at most this often
 SYNC_TOO_SOON = "a última atualização foi há menos de 15 minutos; espere um pouco"
-
-
-def _stale(row: dict, names: dict[str, str] | None = None) -> dict:
-    """A meta_account row as an account entry without numbers (not in Meta's latest list),
-    labelled with its portfolio (`names`: business id -> name)."""
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "currency": row["currency"],
-        "status": row["status"],
-        "status_label": ACCOUNT_STATUS.get(row["status"], ""),
-        "client": row["client"],
-        "seen": row["seen"],
-        "business_id": row.get("business_id") or "",
-        "business_name": (names or {}).get(row.get("business_id") or "", ""),
-    }
-
-
-class Reply(Exception):
-    def __init__(self, status: int, doc: dict | list):
-        super().__init__(status)
-        self.status, self.doc = status, doc
-
-
-def finance_visible(viewer: dict, settings: dict) -> bool:
-    """Who sees money: everyone, or admins only, per the team's setting; nobody when off."""
-    if not settings.get("enabled"):
-        return False
-    return settings.get("visibility") == "all" or bool(viewer.get("is_admin"))
 
 
 def make_handler(
@@ -128,15 +102,13 @@ def make_handler(
             meta.business_of.setdefault(row["id"], row["business_id"])
     state = store.sync_state()  # the last sync outlives a restart, for /metrics
     meta.last_sync, meta.sync_error = state["last_sync"], state["sync_error"]
-    manual_sync = {"at": 0.0}  # when an admin last asked for a sync, with its lock
-    manual_lock = threading.Lock()
     slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
     # method, path, handler, access, raw (the body is a file, not JSON)
-    routes: list[tuple[str, re.Pattern, str, str, bool]] = []
+    routes: list[tuple[str, re.Pattern, Callable, str, bool]] = []
 
     def route(method: str, pattern: str, access: str = "member", raw: bool = False):
         def deco(fn):
-            routes.append((method, re.compile(f"^{pattern}$"), fn.__name__, access, raw))
+            routes.append((method, re.compile(f"^{pattern}$"), fn, access, raw))
             return fn
 
         return deco
@@ -355,7 +327,7 @@ def make_handler(
                         raise Reply(429, {"error": f"muitas tentativas; espere {wait}s"})
                 viewer = auth.viewer(self.headers.get("Cookie"))
                 self._account = viewer["account"]
-                for m, pattern, name, access, raw in routes:
+                for m, pattern, fn, access, raw in routes:
                     match = pattern.match(path)
                     if m != method or not match:
                         continue
@@ -364,7 +336,7 @@ def make_handler(
                     if access == "admin" and not viewer["is_admin"]:
                         raise Reply(403, {"error": "só para administradores"})
                     body = self._body() if method in ("POST", "PUT", "PATCH") and not raw else {}
-                    out = getattr(self, name)(viewer, body, *match.groups())
+                    out = fn(self, viewer, body, *match.groups())
                     if out is SENT:
                         return
                     if isinstance(out, tuple):
@@ -466,722 +438,7 @@ def make_handler(
                 auth.set_whatsapp(viewer["account"], body["whatsapp"])
             return self._me(auth.viewer(self.headers.get("Cookie")))
 
-        # ---- the person's own passkeys (Perfil, decision 10) ------------------------------
-
-        def _own_account(self, viewer) -> int:
-            if viewer["account"] is None:
-                raise Reply(400, {"error": "sem contas no modo local"})
-            return viewer["account"]
-
-        @route("GET", "/api/me/passkeys")
-        def my_passkeys(self, viewer, _body):
-            return auth.passkeys(viewer["account"])
-
-        @route("PATCH", f"/api/me/passkeys/{CRED}")
-        def relabel_passkey(self, viewer, body, cred):
-            aid = self._own_account(viewer)
-            auth.relabel_passkey(aid, cred, body.get("label"))
-            return auth.passkeys(aid)
-
-        @route("DELETE", f"/api/me/passkeys/{CRED}")
-        def remove_passkey(self, viewer, _body, cred):
-            """Removing a passkey signs the account out everywhere (the device that had it
-            above all); this device gets a fresh cookie and stays in."""
-            aid = self._own_account(viewer)
-            auth.remove_passkey(aid, cred)
-            return auth.passkeys(aid), auth.make_cookie(aid, self._secure())
-
-        @route("POST", "/api/me/move")
-        def my_move_link(self, viewer, _body):
-            """The same one-time link an admin makes (move_link), for yourself: a new or
-            lost phone, sent to your own WhatsApp or opened from the box on Perfil. It lasts
-            minutes, not days (the person taps it on the new phone right away), and dies
-            with the session (end_sessions)."""
-            aid = self._own_account(viewer)
-            if not auth.enabled or not auth.home:
-                raise Reply(
-                    400, {"error": "links de nova passkey precisam de passkeys (PAUTA_AUTH)"}
-                )
-            token, expires = auth.create_move(aid, created_by=aid)
-            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
-
-        @route("GET", "/api/boot")
-        def boot(self, viewer, _body):
-            everyone = store.members()
-            fin = store.finance_settings()
-            members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["disabled"]]
-            # Gravatar ids by account, for avatars on requests and the timeline
-            avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
-            return {
-                "me": self._me(viewer),
-                "options": store.options(),
-                "members": members,
-                "avatars": avatars,
-                "version": __version__,
-                "files": {
-                    "enabled": drive.enabled,
-                    "connected": drive.connected,
-                    "max_mb": drive.max_bytes // (1024 * 1024),
-                },
-                "finance": {**fin, "visible": finance_visible(viewer, fin)},
-                "meta": {"enabled": meta.enabled},
-            }
-
-        @route("GET", "/api/export", "admin")
-        def export(self, viewer, _body):
-            return {
-                "exported": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "clients": store.clients(),
-                "requests": [store.request(r["id"]) for r in store.requests()],
-                "finance": store.finance_settings(),
-                "payments": [p for c in store.clients() for p in store.client(c["id"])["payments"]],
-                "meta_account": store.meta_accounts(),
-                **{t: store.table(t) for t in EXPORT_TABLES},
-            }
-
-        # ---- requests ---------------------------------------------------------------------
-
-        @route("GET", "/api/requests")
-        def list_requests(self, viewer, _body):
-            return store.requests()
-
-        @route("POST", "/api/requests")
-        def new_request(self, viewer, body):
-            return store.create_request(body, viewer["account"])
-
-        @route("GET", f"/api/requests/{ID}")
-        def get_request(self, viewer, _body, rid):
-            return store.request(int(rid))
-
-        @route("PATCH", f"/api/requests/{ID}")
-        def edit_request(self, viewer, body, rid):
-            return store.update_request(int(rid), body, viewer["account"])
-
-        @route("POST", f"/api/requests/{ID}/comments")
-        def comment(self, viewer, body, rid):
-            return store.comment(int(rid), body.get("text"), viewer["account"])
-
-        @route("DELETE", f"/api/requests/{ID}", "admin")
-        def delete_request(self, viewer, _body, rid):
-            store.delete_request(int(rid))  # its files stay in OneDrive
-            return {"ok": True}
-
-        # ---- files (in OneDrive) ----------------------------------------------------------
-
-        @route("POST", f"/api/requests/{ID}/files", raw=True)
-        def upload(self, viewer, _body, rid):
-            """The body is the file; its name comes URI-encoded in X-File-Name."""
-            # one upload per connection: after an error the rest of the body is unread
-            self.close_connection = True
-            folder = store.file_folder(int(rid))
-            length = (self.headers.get("Content-Length") or "").strip()
-            if not length.isdigit():
-                raise Reply(411, {"error": "envie o tamanho do arquivo"})
-            name = unquote(self.headers.get("X-File-Name") or "").strip()
-            if not name:
-                raise Reply(400, {"error": "o arquivo precisa de um nome"})
-            item = drive.upload(folder, name, int(length), self._reader())
-            obs.event("file_uploaded", bytes=item["size"])
-            return store.add_file(int(rid), item, viewer["account"])
-
-        @route("GET", f"/api/files/{ID}")
-        def download(self, viewer, _body, fid):
-            self._redirect(drive.download_url(store.file(int(fid))["item"]))
-            return SENT
-
-        @route("GET", f"/api/files/{ID}/thumb")
-        def thumb(self, viewer, _body, fid):
-            raw, ctype = drive.thumbnail(store.file(int(fid))["item"])
-            self.send_response(200)
-            self._headers(ctype, len(raw), {"Cache-Control": "private, max-age=86400"})
-            self._write(raw)
-            return SENT
-
-        @route("DELETE", f"/api/files/{ID}")
-        def remove_file(self, viewer, _body, fid):
-            f = store.file(int(fid))
-            if not viewer["is_admin"] and f["account"] != viewer["account"]:
-                raise Reply(403, {"error": "só quem enviou ou um administrador pode remover"})
-            drive.delete(f["item"])
-            return store.remove_file(int(fid), viewer["account"])
-
-        @route("POST", f"/api/requests/{ID}/share")
-        def share(self, viewer, _body, rid):
-            folder = store.request_folder(int(rid))
-            if not folder:
-                raise Reply(400, {"error": "envie um arquivo primeiro"})
-            return {"url": drive.share_link(folder)}
-
-        # ---- clients ----------------------------------------------------------------------
-
-        @route("GET", "/api/clients")
-        def list_clients(self, viewer, _body):
-            return store.clients()
-
-        @route("POST", "/api/clients")
-        def new_client(self, viewer, body):
-            body.pop("billed", None)
-            return self._client_for(viewer, store.save_client(body, by=viewer["account"]))
-
-        @route("GET", f"/api/clients/{ID}")
-        def get_client(self, viewer, _body, cid):
-            return self._client_for(viewer, store.client(int(cid)))
-
-        @route("PATCH", f"/api/clients/{ID}")
-        def edit_client(self, viewer, body, cid):
-            body.pop("billed", None)  # that one goes through /billing, with the finance check
-            return self._client_for(viewer, store.save_client(body, int(cid), viewer["account"]))
-
-        def _client_for(self, viewer, client: dict) -> dict:
-            if not finance_visible(viewer, store.finance_settings()):
-                client = {**client, "billing": None, "payments": []}
-            return client
-
-        @route("GET", f"/api/clients/{ID}/meta")
-        def client_meta(self, viewer, _body, cid):
-            """This client's linked ad accounts with this month's numbers (from the Meta
-            cache; a cold cache reads Meta). Meta off or not connected is not an error, and
-            neither is Meta failing: 200 with `error` (the reason for admins, a neutral line
-            for members) so the card says so instead of the page breaking."""
-            store.client(int(cid))  # 404 for an unknown client
-            if not meta.connected:
-                return {"connected": False, "accounts": []}
-            try:
-                live = {a["id"]: a for a in meta.accounts()}  # a cold cache syncs the rows
-            except MetaError as e:
-                if not store.client(int(cid))["meta_accounts"]:
-                    return {"connected": True, "accounts": []}  # nothing to show anyway
-                error = str(e) if viewer["is_admin"] else META_DOWN
-                return {"connected": True, "accounts": [], "error": error}
-            linked = store.client(int(cid))["meta_accounts"]
-            rows = {r["id"]: r for r in store.meta_accounts()}
-            names = {c["business_id"]: c["business_name"] for c in meta.connections()}
-            return {
-                "connected": True,
-                "accounts": [
-                    {**live[a["id"]], "stale": False}
-                    if a["id"] in live
-                    else {**_stale(rows[a["id"]], names), "stale": True}
-                    for a in linked
-                ],
-            }
-
-        # ---- campaign tracking (decision 8): per campaign, tracked ones only, by day --------
-
-        def _today(self) -> date:
-            """The team's today: the first linked ad account's day (its time zone), else the
-            default zone's. Never the server's own date (du7 runs on CET, Brazil is behind)."""
-            tz = next((a["timezone_name"] for a in store.meta_accounts() if a["client"]), "")
-            return local_today(tz)
-
-        def _period(self) -> tuple[str, str, str]:
-            """`since` and `until` from the query (Ads Manager's default when absent: the
-            last 30 days, yesterday back, today excluded) as ISO strings, plus today's, all
-            in the team's time zone."""
-            q = parse_qs(urlparse(self.path).query)
-            today = self._today()
-            yesterday = today - timedelta(days=1)
-            since = (
-                valid_date(q.get("since", [""])[0])
-                or (yesterday - timedelta(days=DEFAULT_PERIOD_DAYS - 1)).isoformat()
-            )
-            until = valid_date(q.get("until", [""])[0]) or yesterday.isoformat()
-            if since > until:
-                raise Invalid("o início do período vem depois do fim")
-            if (date.fromisoformat(until) - date.fromisoformat(since)).days >= MAX_PERIOD_DAYS:
-                raise Invalid(f"período grande demais (máximo {MAX_PERIOD_DAYS} dias)")
-            return since, until, today.isoformat()
-
-        def _reach(self, pairs: list[tuple[str, str]], since: str, until: str) -> dict:
-            """The period's reach per campaign from Meta; {} when Meta won't say (reach is
-            never the screen's problem: the caller shows a dash)."""
-            if not pairs or not meta.connected:
-                return {}
-            try:
-                return meta.reach(pairs, date.fromisoformat(since), date.fromisoformat(until))
-            except MetaError:
-                return {}
-
-        def _live_accounts(self) -> dict[str, dict]:
-            """Meta's latest account list by id (the cached read, as the client cards use);
-            {} when Meta isn't connected or won't say: a balance is never the list's
-            problem (the caller shows null)."""
-            if not meta.connected:
-                return {}
-            try:
-                return {a["id"]: a for a in meta.accounts()}
-            except MetaError:
-                return {}
-
-        @route("GET", "/api/campaigns")
-        def campaigns(self, viewer, _body):
-            """Every client with a tracked campaign or a linked ad account. Each comes
-            with its campaigns and the period's sums, Ads Manager's Resultados (`results`,
-            `result_indicator`, `cost_per_result_cents`), the lead cost (`cpl_cents`: spend
-            ÷ link clicks) and the campaign's budget; `reach` comes from Meta for the period
-            as a whole (null when Meta won't say: never the list's problem). A client whose
-            linked accounts hold no tracked campaign (a portfolio just connected, say) is
-            listed with `campaigns: []`, so it doesn't look like the connection failed.
-            `accounts` is the client's linked ad accounts with the balance from Meta's
-            cached list (null when Meta won't say). `include_skipped=1` adds the campaigns
-            marked Não acompanhar (so an admin can bring one back); `client=<id>` keeps one
-            client's. `last_sync` says how fresh the stored numbers are. `seen` counts the
-            clients with campaigns only: Visto hoje needs an active one."""
-            since, until, today = self._period()
-            q = parse_qs(urlparse(self.path).query)
-            states = CAMPAIGN_STATES if q.get("include_skipped", [""])[0] == "1" else TRACKED_STATES
-            clients = store.campaign_rows(since, until, states)
-            linked = [r for r in store.meta_accounts() if r["client"]]
-            listed = {c["id"] for c in clients}
-            for r in linked:  # clients with accounts and no campaign come after, by name
-                if r["client"]["id"] not in listed:
-                    listed.add(r["client"]["id"])
-                    clients.append({**r["client"], "campaigns": []})
-            client = q.get("client", [""])[0]
-            if client:
-                if not client.isdigit():
-                    raise Invalid("cliente inválido")
-                clients = [c for c in clients if c["id"] == int(client)]
-            pairs = [
-                (k["account_id"], k["meta_id"])
-                for c in clients
-                for k in c["campaigns"]
-                if k["meta_id"] and k["account_id"]
-            ]
-            reach = self._reach(pairs, since, until)
-            live = self._live_accounts()
-            portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
-            seen = store.seen_on(today)
-            for c in clients:
-                c["seen_today"] = seen.get(c["id"])
-                c["accounts"] = [
-                    {
-                        "id": r["id"],
-                        "name": r["name"],
-                        "currency": r["currency"],
-                        "business_name": (live.get(r["id"]) or {}).get("business_name")
-                        or portfolios.get(r["business_id"], ""),
-                        "balance": live[r["id"]]["balance"] if r["id"] in live else None,
-                    }
-                    for r in linked
-                    if r["client"]["id"] == c["id"]
-                ]
-                for k in c["campaigns"]:
-                    clicks = k["link_clicks"]
-                    k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
-                    k["reach"] = reach.get(k["meta_id"])
-            checkable = [c for c in clients if c["campaigns"]]
-            return {
-                "since": since,
-                "until": until,
-                "today_included": until >= today,
-                "last_sync": meta.last_sync,
-                # the daily check: how many of the clients with something to check someone
-                # has been through today
-                "seen": {
-                    "done": sum(1 for c in checkable if c["seen_today"]),
-                    "total": len(checkable),
-                },
-                "clients": clients,
-            }
-
-        @route("POST", f"/api/clients/{ID}/reviews")
-        def review_client(self, viewer, body, cid):
-            """Visto hoje: one `review` per active campaign of the client, dated today (the
-            team's day, not the server's), with this month's numbers as the snapshot (so
-            the note sits next to the numbers it was about). Returns the client's check
-            status."""
-            cid = int(cid)
-            store.client(cid)
-            note = str(body.get("note") or "").strip()[:500]
-            today = self._today()
-            since, until = today.replace(day=1).isoformat(), today.isoformat()
-            rows = [
-                k
-                for c in store.campaign_rows(since, until, ("active",))
-                if c["id"] == cid
-                for k in c["campaigns"]
-            ]
-            if not rows:
-                raise Invalid("este cliente não tem campanha ativa para marcar")
-            reach = self._reach(
-                [(k["account_id"], k["meta_id"]) for k in rows if k["meta_id"]], since, until
-            )
-            snaps = [
-                (
-                    k["id"],
-                    {
-                        "since": since,
-                        "until": until,
-                        "spend_cents": k["spend_cents"],
-                        "link_clicks": k["link_clicks"],
-                        "cpl_cents": round(k["spend_cents"] / k["link_clicks"])
-                        if k["link_clicks"]
-                        else None,
-                        "results": k["results"],
-                        "result_indicator": k["result_indicator"],
-                        "cost_per_result_cents": k["cost_per_result_cents"],
-                        "reach": reach.get(k["meta_id"]),
-                        "impressions": k["impressions"],
-                    },
-                )
-                for k in rows
-            ]
-            n = store.add_reviews(cid, until, viewer["account"], note, snaps)
-            obs.event("campaign_review", account=viewer["account"], client=cid, campaigns=n)
-            return {"client": cid, "campaigns": n, "seen_today": store.seen_on(until).get(cid)}
-
-        @route("GET", f"/api/campaigns/{ID}")
-        def campaign(self, viewer, _body, cid):
-            """One campaign for the period: the row, its daily rows (`days`), the period's
-            sums, cost per lead and Ads Manager's Resultados (summed over the days that had
-            a count; the latest indicator), and the period's reach from Meta (null when it
-            won't say)."""
-            since, until, today = self._period()
-            k = store.campaign(int(cid), since, until)
-            days = k["days"]
-            k["spend_cents"] = sum(d["spend_cents"] for d in days)
-            k["impressions"] = sum(d["impressions"] for d in days)
-            k["link_clicks"] = sum(d["link_clicks"] for d in days)
-            actions: dict[str, int] = {}
-            for d in days:
-                for name, n in d["actions"].items():
-                    actions[name] = actions.get(name, 0) + int(n)
-            k["actions"] = actions
-            counted = [d["results"] for d in days if d["results"] is not None]
-            k.update(period_results(sum(counted) if counted else None, k["spend_cents"]))
-            k["result_indicator"] = next(
-                (d["result_indicator"] for d in reversed(days) if d["result_indicator"]), ""
-            )
-            clicks = k["link_clicks"]
-            k["cpl_cents"] = round(k["spend_cents"] / clicks) if clicks else None
-            pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
-            k["reach"] = self._reach(pairs, since, until).get(k["meta_id"])
-            return {
-                "since": since,
-                "until": until,
-                "today_included": until >= today,
-                "last_sync": meta.last_sync,
-                "campaign": k,
-            }
-
-        @route("PATCH", f"/api/campaigns/{ID}")
-        def campaign_state(self, viewer, body, cid):
-            return store.set_campaign_state(int(cid), body.get("state"), viewer["account"])
-
-        @route("POST", "/api/meta/sync", "admin")
-        def meta_sync(self, viewer, _body):
-            """Atualizar agora: the hourly pass, at most once every 15 minutes."""
-            if not meta.connected:
-                raise MetaError(NOT_CONNECTED, 409)
-            with manual_lock:
-                wait = manual_sync["at"] + MANUAL_SYNC_SECONDS - time.time()
-                if wait > 0:
-                    raise Reply(429, {"error": SYNC_TOO_SOON, "retry_in_s": round(wait)})
-                manual_sync["at"] = time.time()
-            obs.event("meta_sync_requested", account=viewer["account"])
-            return sync.run(store, meta, days=sync.HOURLY_DAYS)
-
-        # ---- finance (decision 7) ---------------------------------------------------------
-
-        def _finance(self, viewer):
-            """Every finance route: 404 when the module is off, 403 when this person may not."""
-            fin = store.finance_settings()
-            if not fin["enabled"]:
-                raise Reply(404, {"error": "o financeiro está desligado"})
-            if not finance_visible(viewer, fin):
-                raise Reply(403, {"error": "só administradores veem o financeiro"})
-
-        @route("GET", "/api/finance")
-        def finance_panel(self, viewer, _body):
-            self._finance(viewer)
-            month = parse_qs(urlparse(self.path).query).get("month", [None])[0]
-            return store.finance(month=month)
-
-        @route("GET", "/api/finance/settings", "admin")
-        def finance_settings(self, viewer, _body):
-            return store.finance_settings()
-
-        @route("PATCH", "/api/finance/settings", "admin")
-        def edit_finance_settings(self, viewer, body):
-            return store.set_finance_settings(body)
-
-        @route("PATCH", f"/api/clients/{ID}/billing")
-        def edit_billing(self, viewer, body, cid):
-            self._finance(viewer)
-            return store.set_billing(int(cid), body, viewer["account"])
-
-        @route("POST", f"/api/clients/{ID}/payments")
-        def add_payment(self, viewer, body, cid):
-            self._finance(viewer)
-            return store.add_payment(int(cid), body, viewer["account"])
-
-        @route("DELETE", f"/api/payments/{ID}")
-        def void_payment(self, viewer, _body, pid):
-            self._finance(viewer)
-            return store.void_payment(int(pid), viewer["account"], viewer["is_admin"])
-
-        @route("DELETE", f"/api/clients/{ID}", "admin")
-        def delete_client(self, viewer, _body, cid):
-            query = parse_qs(urlparse(self.path).query)
-            with_requests = query.get("with_requests") == ["1"]
-            n = store.delete_client(int(cid), with_requests=with_requests)
-            return {"ok": True, "requests_deleted": n}
-
-        # ---- team and settings ------------------------------------------------------------
-
-        @route("GET", "/api/members")
-        def members(self, viewer, _body):
-            return store.members()
-
-        @route("PATCH", f"/api/members/{ID}", "admin")
-        def edit_member(self, viewer, body, aid):
-            auth.set_member(
-                int(aid),
-                disabled=body.get("disabled"),
-                is_admin=body.get("is_admin"),
-                by=viewer["account"],
-            )
-            return store.members()
-
-        @route("GET", "/api/onedrive", "admin")
-        def drive_status(self, viewer, _body):
-            """Also how the Configurações page waits for the code to be approved: each call while
-            a connection is pending asks Microsoft once."""
-            state = drive.poll() if drive.pending() else "idle"
-            return {**drive.status(quota=state != "pending"), "state": state}
-
-        @route("POST", "/api/onedrive/connect", "admin")
-        def drive_connect(self, viewer, _body):
-            drive.start_connect()
-            return {**drive.status(), "state": "pending"}
-
-        @route("DELETE", "/api/onedrive", "admin")
-        def drive_disconnect(self, viewer, _body):
-            drive.disconnect()
-            return {**drive.status(), "state": "idle"}
-
-        # ---- Meta (decision 8, phase 2): read-only ad account numbers ---------------------
-
-        @route("GET", "/api/meta", "admin")
-        def meta_status(self, viewer, _body):
-            """The connections (one per portfolio, with who connected it and its last sync)
-            and every account under them. Meta failing is reported in `error`, with the
-            accounts Pauta already knew (stale), never as a failed page: the admin still
-            sees each connection's state and can act on it."""
-            accounts, failed = None, ""
-            if meta.connected:
-                refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
-                try:
-                    accounts = meta.accounts(refresh=refresh)
-                except MetaError as e:
-                    accounts, failed = [], str(e)
-            out = meta.status()  # after the read: a 190 just now shows on its connection
-            out["connections"] = self._connections()
-            out["error"] = failed or out["error"]
-            if accounts is not None:
-                out["accounts"] = self._with_clients(accounts)
-            return out
-
-        def _connections(self) -> list[dict]:
-            """meta.connections() (the files, the truth) with what the rows add: the
-            connecting person's name and each connection's last sync."""
-            rows = {r["business_id"]: r for r in store.connections()}
-            out = []
-            for c in meta.connections():
-                row = rows.get(c["business_id"]) or {}
-                out.append({**c, "by_name": row.get("by_name"), "last_sync": row.get("last_sync")})
-            return out
-
-        def _with_clients(self, accounts: list[dict]) -> list[dict]:
-            """Each account with its Pauta client ({id, name} or null) and, when unlinked,
-            a suggested client by name (never saved: the admin picks). Accounts kept from
-            an earlier read but missing now come last, with `stale` and no numbers."""
-            rows = {r["id"]: r for r in store.meta_accounts()}
-            names = {c["id"]: c["name"] for c in store.clients()}
-            portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
-            out = []
-            for a in accounts:
-                row = rows.pop(a["id"], None)
-                client = row["client"] if row else None
-                sid = None if client else store.suggest_client(a["name"])
-                suggested = {"id": sid, "name": names[sid]} if sid in names else None
-                out.append({**a, "client": client, "suggested": suggested, "stale": False})
-            for row in rows.values():
-                out.append({**_stale(row, portfolios), "suggested": None, "stale": True})
-            return out
-
-        @route("PATCH", "/api/meta/accounts/([0-9]{3,20})", "admin")
-        def meta_link(self, viewer, body, aid):
-            if "client" not in body:
-                raise Invalid("informe o cliente (ou null para desvincular)")
-            row = store.link_meta_account(aid, body["client"], viewer["account"])
-            store.meta_log(
-                "linked" if row["client"] else "unlinked",
-                row["business_id"],
-                viewer["account"],
-                account_id=row["id"],
-                account_name=row["name"],
-                client_name=(row["client"] or {}).get("name"),
-            )
-            return row
-
-        @route("POST", "/api/meta/connect", "admin")
-        def meta_connect(self, viewer, body):
-            """The login URL. `business_id` set: "Adicionar contas" on that connection (a
-            re-login on the same portfolio); unset: "Conectar outro portfólio"."""
-            business = body.get("business_id") if isinstance(body, dict) else None
-            if business is not None and not (isinstance(business, str) and business.isdigit()):
-                raise Invalid("portfólio inválido")
-            return {"url": meta.start_connect(viewer["account"], business)}
-
-        @route("GET", "/api/meta/callback", "open")
-        def meta_callback(self, viewer, _body):
-            """Meta's login sends the admin back here. The SameSite=Strict cookie doesn't come
-            along on that cross-site redirect, so the one-time state is the authorization.
-            Whatever portfolio the login came back for is saved as its own connection."""
-            q = parse_qs(urlparse(self.path).query)
-            state, code = q.get("state", [""])[0], q.get("code", [""])[0]
-            try:
-                if q.get("error") or not code:  # cancelled or refused in Meta's dialog
-                    with contextlib.suppress(MetaError):
-                        meta.take_state(state)
-                    obs.event("meta_connect_cancelled", logging.WARNING)
-                    raise MetaError("cancelado", 400, "cancelado")
-                conn = meta.finish_connect(state, code)
-            except MetaError as e:
-                self._redirect(f"/#/configuracoes?meta=erro&motivo={e.reason}")
-                return SENT
-            if conn:  # not a repeated callback
-                store.meta_log(
-                    "connected",
-                    conn["business_id"],
-                    conn["by"],
-                    business_name=conn["business_name"],
-                )
-            self._redirect("/#/configuracoes?meta=conectado")
-            return SENT
-
-        @route("DELETE", "/api/meta/connections/([0-9]{1,30}|legacy)", "admin")
-        def meta_disconnect(self, viewer, _body, business_id):
-            """Forget one portfolio's token. Its accounts stay as rows (stale) so the
-            client mapping survives a reconnect."""
-            conn = next((c for c in meta.connections() if c["business_id"] == business_id), None)
-            if not conn:
-                raise NotFound("conexão não encontrada")
-            meta.disconnect(business_id)
-            store.meta_log(
-                "disconnected",
-                business_id,
-                viewer["account"],
-                business_name=conn["business_name"],
-            )
-            out = meta.status()
-            out["connections"] = self._connections()
-            return out
-
-        @route("GET", "/api/meta/log", "admin")
-        def meta_log(self, viewer, _body):
-            """The latest 20 lines of the Meta history, newest first, with the actor."""
-            return store.meta_log_rows(20)
-
-        @route("PUT", "/api/options/(kind|goal|segment)", "admin")
-        def options(self, viewer, body, lst):
-            store.set_options(lst, body.get("values"))
-            return store.options()
-
-        # ---- passkeys and invites ---------------------------------------------------------
-
-        @route("POST", "/api/invite", "admin")
-        def invite(self, viewer, body):
-            if not auth.enabled:
-                raise Reply(400, {"error": "convites precisam de passkeys (PAUTA_AUTH)"})
-            uses = body.get("uses") or 1
-            if not isinstance(uses, int) or isinstance(uses, bool):
-                raise Reply(400, {"error": "número de usos inválido"})
-            token, expires = auth.create_invite(
-                admin=body.get("admin") is True, uses=uses, created_by=viewer["account"]
-            )
-            return {"path": f"/#/entrar/{token}", "expires": expires}
-
-        @route("GET", "/api/invite/([A-Za-z0-9_-]{10,64})", "open")
-        def invite_info(self, viewer, _body, token):
-            info = auth.invite_info(token)
-            if not info:
-                raise Reply(404, {"error": "este convite não vale mais; peça um novo"})
-            return info
-
-        @route("POST", "/api/passkey/register/options", "open")
-        def register_options(self, viewer, body):
-            if not auth.enabled:
-                raise Reply(400, {"error": "passkeys estão desligadas"})
-            rp_id = auth.rp_for(self._page_origin())
-            if body.get("move"):
-                if rp_id != auth.rp_id:
-                    raise Reply(400, {"error": f"abra este link em {auth.home_host}"})
-                return auth.register_options(move=str(body["move"]), rp_id=rp_id)
-            if body.get("invite"):
-                return auth.register_options(
-                    invite=str(body["invite"]), name=body.get("name"), rp_id=rp_id
-                )
-            acc = auth.account_from_cookie(self.headers.get("Cookie"))
-            if not acc:
-                raise Reply(401, {"error": "entre primeiro para adicionar um aparelho"})
-            return auth.register_options(account=acc, rp_id=rp_id)
-
-        @route("POST", "/api/passkey/register/verify", "open")
-        def register_verify(self, viewer, body):
-            acc = auth.register_verify(
-                body.get("flow"),
-                body.get("credential") or {},
-                user_agent=self.headers.get("User-Agent", ""),
-            )
-            return auth.viewer_for(acc), auth.make_cookie(acc["id"], self._secure())
-
-        @route("POST", "/api/passkey/login/options", "open")
-        def login_options(self, viewer, _body):
-            if not auth.enabled:
-                raise Reply(400, {"error": "passkeys estão desligadas"})
-            return auth.login_options(auth.rp_for(self._page_origin()))
-
-        @route("POST", "/api/move")
-        def move(self, viewer, _body):
-            """From the old domain: a one-time link to make a passkey on the new one."""
-            hint = auth.move_hint(self._page_origin(), viewer["account"])
-            if not hint or viewer["account"] is None:
-                raise Reply(400, {"error": "a Pauta não está mudando de endereço"})
-            if hint["here"]:
-                raise Reply(400, {"error": f"você já está em {hint['to']}"})
-            token, _ = auth.create_move(viewer["account"])
-            return {"url": f"{hint['url']}/#/mudar/{token}"}
-
-        @route("POST", f"/api/members/{ID}/move", "admin")
-        def move_link(self, viewer, _body, mid):
-            """An admin's link for someone else: sent on WhatsApp, one tap and Face ID on the
-            home domain. Also the way back in after a lost phone."""
-            if not auth.enabled or not auth.home:
-                raise Reply(400, {"error": "links de mudança precisam de passkeys (PAUTA_AUTH)"})
-            token, expires = auth.create_move(
-                int(mid), MOVE_LINK_DAYS * 86400, created_by=viewer["account"]
-            )
-            return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
-
-        @route("GET", "/api/move/([A-Za-z0-9_-]{20,64})", "open")
-        def move_info(self, viewer, _body, token):
-            info = auth.move_info(token)
-            if not info:
-                raise Reply(404, {"error": "este link de mudança expirou"})
-            return info
-
-        @route("POST", "/api/passkey/login/verify", "open")
-        def login_verify(self, viewer, body):
-            acc = auth.login_verify(body.get("flow"), body.get("credential") or {})
-            return auth.viewer_for(acc), auth.make_cookie(acc["id"], self._secure())
-
-        @route("POST", "/api/logout", "open")
-        def logout(self, viewer, _body):
-            if auth.enabled:  # ends this person's sessions on every device, not just this one
-                auth.end_sessions(viewer["account"])
-            return {"ok": True}, auth.clear_cookie(self._secure())
-
+    # the rest of /api, by area; same table, same order as before the split
+    for area in (requests, clients, campaigns, finance, team, account):
+        area.install(route, store, auth, drive, meta)
     return Handler
