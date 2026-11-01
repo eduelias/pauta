@@ -57,7 +57,7 @@ SESSION_DAYS = 180
 FLOW_SECONDS = 300
 RP_NAME = "Pauta"
 INVITE_DAYS = 7
-MOVE_SECONDS = 600  # the link a signed-in person makes for themselves
+MOVE_SECONDS = 600  # the link a signed-in person makes for themselves: tapped right away
 MOVE_LINK_DAYS = 3  # the link an admin makes and sends
 DEV_ORIGINS = [f"http://localhost:{p}" for p in (8088, 8089)] + ["http://localhost"]
 
@@ -207,11 +207,17 @@ class Auth:
         return None
 
     def end_sessions(self, account_id: int | None) -> None:
-        """Sign the account out everywhere: every cookie issued so far stops working."""
+        """Sign the account out everywhere: every cookie issued so far stops working, and so
+        does any new-passkey link the person made for themselves (one an admin made for them
+        is the admin's to keep: `created_by` is the admin)."""
         if account_id is None:
             return
         with self.store.db() as db:
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
+            db.execute(
+                "UPDATE invite SET expires=0 WHERE account=? AND created_by=?",
+                (account_id, account_id),
+            )
 
     def viewer(self, cookie_header: str | None) -> dict:
         """Who is looking. Anonymous visitors see only the login page."""

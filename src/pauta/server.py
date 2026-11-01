@@ -492,13 +492,15 @@ def make_handler(
         @route("POST", "/api/me/move")
         def my_move_link(self, viewer, _body):
             """The same one-time link an admin makes (move_link), for yourself: a new or
-            lost phone, sent to your own WhatsApp or opened from the box on Perfil."""
+            lost phone, sent to your own WhatsApp or opened from the box on Perfil. It lasts
+            minutes, not days (the person taps it on the new phone right away), and dies
+            with the session (end_sessions)."""
             aid = self._own_account(viewer)
             if not auth.enabled or not auth.home:
                 raise Reply(
                     400, {"error": "links de nova passkey precisam de passkeys (PAUTA_AUTH)"}
                 )
-            token, expires = auth.create_move(aid, MOVE_LINK_DAYS * 86400, created_by=aid)
+            token, expires = auth.create_move(aid, created_by=aid)
             return {"url": f"{auth.home}/#/mudar/{token}", "expires": expires, "to": auth.home_host}
 
         @route("GET", "/api/boot")

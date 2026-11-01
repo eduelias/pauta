@@ -2,8 +2,9 @@
 (label, remove while one stays, a link for a new phone), and what teammates never see."""
 
 import json
+import time
 
-from pauta.auth import Auth
+from pauta.auth import MOVE_SECONDS, Auth
 from softpasskey import ORIGIN, SoftPasskey, call, join, start
 
 
@@ -85,7 +86,8 @@ def test_my_passkeys_label_remove_and_the_last_one_stays(team):
 def test_my_own_new_passkey_link(team):
     base, nato, piero, _ = team
     status, link, _ = call(f"{base}/api/me/move", {}, piero)
-    assert status == 200 and link["to"] == "localhost" and link["expires"] > 0
+    assert status == 200 and link["to"] == "localhost"
+    assert time.time() + MOVE_SECONDS - 10 < link["expires"] <= time.time() + MOVE_SECONDS
     assert link["url"].startswith(f"{ORIGIN}/#/mudar/")
     token = link["url"].rsplit("/", 1)[1]
     assert call(f"{base}/api/move/{token}")[1] == {"name": "Piero", "to": "localhost"}
@@ -98,6 +100,25 @@ def test_my_own_new_passkey_link(team):
     assert call(f"{base}/api/move/{token}")[0] == 404
     assert len(call(f"{base}/api/me/passkeys", cookie=piero)[1]) == 2
     assert call(f"{base}/api/me/move", {})[0] == 401
+
+
+def test_my_own_link_dies_with_my_sessions_an_admins_does_not(team):
+    """A self-made link is tied to the session that made it: "Sair em todos os aparelhos"
+    (or a logout anywhere) expires it. The admin's 3-day link for the same person stays."""
+    base, nato, piero, _ = team
+    mine = call(f"{base}/api/me/move", {}, piero)[1]["url"].rsplit("/", 1)[1]
+    status, theirs, _ = call(f"{base}/api/members/2/move", {}, nato)
+    assert status == 200 and theirs["expires"] > time.time() + 2 * 86400
+    theirs = theirs["url"].rsplit("/", 1)[1]
+    assert call(f"{base}/api/move/{mine}")[0] == call(f"{base}/api/move/{theirs}")[0] == 200
+
+    assert call(f"{base}/api/logout", {}, piero)[0] == 200
+    assert call(f"{base}/api/me/passkeys", cookie=piero)[0] == 401
+    assert call(f"{base}/api/move/{mine}")[0] == 404
+    assert call(f"{base}/api/move/{theirs}")[1] == {"name": "Piero", "to": "localhost"}
+    # nor can the dead link open a ceremony
+    status, err, _ = call(f"{base}/api/passkey/register/options", {"move": mine})
+    assert status == 400 and "expirou" in err["error"]
 
 
 def test_open_mode_has_no_passkeys_to_manage(tmp_path):

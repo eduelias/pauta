@@ -1709,7 +1709,7 @@ async function viewProfile() {
       ${keys.map((k) => passkeyRow(k, keys.length === 1)).join("")}
       <div class="row-gap mt"><button class="btn" id="addkey">${icon("key")}Adicionar passkey neste aparelho</button>
         <button class="btn" id="newlink">${icon("link")}Link de nova passkey</button></div>
-      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez.</p>
+      <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
       <div id="mv-me"></div>
     </section>
     <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
@@ -2009,7 +2009,8 @@ async function makeMoveLink(id, name, fresh = false) {
   const mine = id === "me";  // Perfil: the same link, made by the person for themselves
   try {
     const mv = await api("POST", mine ? "/api/me/move" : `/api/members/${id}/move`, {});
-    const until = new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+    // the person's own link is tapped right away (10 minutes); an admin's is sent and waited for
+    const until = mine ? "por 10 minutos" : "até " + new Date(mv.expires * 1000).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
     const msg = mine
       ? `Meu link para criar uma passkey nova na Pauta (celular novo ou perdido). Abrir no aparelho novo, confirmar com o Face ID (ou a digital) e pronto: é a mesma conta, com tudo. ${mv.url}`
       : fresh
@@ -2018,7 +2019,7 @@ async function makeMoveLink(id, name, fresh = false) {
     const title = mine ? "Seu link de nova passkey" : fresh ? `Link de nova passkey de ${esc(firstName(name))}` : `Link de ${esc(firstName(name))} para ${esc(mv.to)}`;
     const who = mine ? "Só para você" : `Só para ${esc(firstName(name))}`;
     box.innerHTML = `<div class="qrbox"><div style="flex:1;min-width:240px"><b>${title}</b>
-      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, até ${esc(until)}.</div>
+      <div class="muted small">${who}: quem tiver o link entra na conta. Vale uma vez, ${esc(until)}.</div>
       <code class="invlink">${esc(mv.url)}</code>
       <div class="row-gap"><button class="btn" data-copy="${esc(mv.url)}">${icon("link")}Copiar link</button>
       <a class="btn primary" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;

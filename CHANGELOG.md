@@ -108,7 +108,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   dá um ao criar: "iPhone", "Mac"...; dá para renomear), quando foi criada e usada;
   **Adicionar passkey neste aparelho** e **Remover** (enquanto sobrar uma) ficam ao lado,
   e o **Link de nova passkey** (celular novo ou perdido) agora você mesmo gera, com Copiar
-  e Enviar no WhatsApp. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
+  e Enviar no WhatsApp: vale 10 minutos (é para abrir no aparelho novo na hora; o que o
+  administrador manda continua valendo 3 dias) e "Sair em todos os aparelhos" também o
+  cancela. "Sair em todos os aparelhos" fecha a página. API: `GET /api/me`
   traz `whatsapp`; `PATCH /api/me` aceita `name`, `email` e `whatsapp`; `GET /api/me/passkeys`,
   `PATCH|DELETE /api/me/passkeys/{id}` (400 na última), `POST /api/me/move`. Esquema v12
   (aditivo).

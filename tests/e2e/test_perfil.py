@@ -121,6 +121,8 @@ def test_a_link_for_my_new_phone(live, device):
     box = page.locator("#mv-me .qrbox")
     expect(box).to_contain_text("Seu link de nova passkey")
     expect(box).to_contain_text("Só para você")
+    expect(box).to_contain_text("Vale uma vez, por 10 minutos")  # not an admin's 3 days
+    expect(page.locator("#passkeys")).to_contain_text("por 10 minutos")
     url = box.locator("code.invlink").inner_text()
     assert url.startswith(f"{base}/#/mudar/")
     expect(box.get_by_role("button", name="Copiar link")).to_be_visible()
