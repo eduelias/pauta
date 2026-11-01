@@ -1695,15 +1695,15 @@ async function loadMeta(refresh = false) {
   if (!$("#metabody")) return;
   let html = "", error = "";
   try {
-    const [doc, clients] = await Promise.all([api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients")]);
-    html = metaBody(doc, clients);  // inside the try: an odd answer must not leave the spinner
+    const [doc, clients, log] = await Promise.all([
+      api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients"), api("GET", "/api/meta/log")]);
+    html = metaBody(doc, clients, log);  // inside the try: an odd answer must not leave the spinner
   } catch (e) { error = e.message || "não foi possível mostrar a Meta"; }
   const box = $("#metabody");
   if (!box) return;  // left the page while waiting
   box.innerHTML = error
     ? `<p class="warnbox">${esc(error)}</p>
-      <div class="row-gap mt"><button class="btn primary" data-metaconnect>${icon("target")}Conectar de novo</button>
-        <button class="btn ghost danger" id="metaoff">Desconectar</button></div>`
+      <div class="row-gap mt"><button class="btn" id="metarefresh">${icon("swap")}Tentar de novo</button></div>`
     : html;
   // the Cliente column: picking saves at once; a suggestion is only a suggestion until picked
   $$("select[data-link]").forEach((sel) => sel.addEventListener("change", async (e) => {
@@ -1715,29 +1715,51 @@ async function loadMeta(refresh = false) {
       loadMeta();
     } catch (err) { toast(err.message, true); el.disabled = false; }
   }));
-  // Conectar, Conectar de novo and Adicionar contas are the same trip through Meta's login
+  // Conectar Meta, Conectar outro portfólio and Adicionar contas are the same trip through
+  // Meta's login; the last one names the portfolio it is adding to (a re-login on it)
   $$("[data-metaconnect]").forEach((b) => b.addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    if (btn.dataset.metaconnect === "add" && !confirm("Na Meta, marque todas as contas de anúncios que a Pauta deve ler: as que já estão aqui e as novas. Uma conta que ficar desmarcada pode sair da lista.")) return;
+    const btn = e.currentTarget, business = btn.dataset.business;
+    if (business && !confirm("Na Meta, entre com o portfólio " + (btn.dataset.name || "") + " e marque todas as contas de anúncios que a Pauta deve ler: as que já estão aqui e as novas. Uma conta que ficar desmarcada pode sair da lista.")) return;
     btn.disabled = true;
-    try { location.href = (await api("POST", "/api/meta/connect")).url; }
+    try { location.href = (await api("POST", "/api/meta/connect", business ? { business_id: business } : {})).url; }
     catch (err) { toast(err.message, true); btn.disabled = false; }
   }));
   $("#metarefresh")?.addEventListener("click", (e) => { e.currentTarget.disabled = true; loadMeta(true); });
-  $("#metaoff")?.addEventListener("click", async () => {
-    if (!confirm("Desconectar a Meta? A Pauta esquece o acesso e para de ler os números. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio (Integrações → Apps conectados).")) return;
-    try { await api("DELETE", "/api/meta"); toast("Meta desconectada"); loadMeta(); }
+  $$("[data-metaoff]").forEach((b) => b.addEventListener("click", async (e) => {
+    const btn = e.currentTarget, name = btn.dataset.name || "este portfólio";
+    if (!confirm(`Desconectar o portfólio ${name}? A Pauta esquece o acesso e para de ler as contas dele; as contas continuam na lista, sem números, até alguém reconectar. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio desse portfólio (Integrações → Apps conectados).`)) return;
+    try { await api("DELETE", `/api/meta/connections/${btn.dataset.metaoff}`); toast("Portfólio desconectado"); loadMeta(); }
     catch (err) { toast(err.message, true); }
-  });
+  }));
 }
 
-function metaBody(d, clients = []) {
+const META_STATES = {
+  revoked: "acesso revogado na Meta; reconecte em Adicionar contas",
+};
+const stampBR = (iso) => {
+  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(" ", "T") + "Z");
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+};
+// one line of the Meta history: who did what to which portfolio or account
+function metaLogLine(l) {
+  const who = l.by?.name || "Alguém", d = l.detail || {}, port = d.business_name || l.business_id || "";
+  const text = {
+    connected: `<b>${esc(who)}</b> conectou o portfólio <b>${esc(port)}</b>`,
+    disconnected: `<b>${esc(who)}</b> desconectou o portfólio <b>${esc(port)}</b>`,
+    linked: `<b>${esc(who)}</b> vinculou a conta <b>${esc(d.account_name || d.account_id || "")}</b> a <b>${esc(d.client_name || "")}</b>`,
+    unlinked: `<b>${esc(who)}</b> desvinculou a conta <b>${esc(d.account_name || d.account_id || "")}</b>`,
+    revoked: `A Meta revogou o acesso ao portfólio <b>${esc(port)}</b>`,
+  }[l.kind] || esc(l.kind);
+  return `<li>${text} <span class="muted small">· ${esc(stampBR(l.at))}</span></li>`;
+}
+
+function metaBody(d, clients = [], log = []) {
   if (!d.connected) {
-    return `<p class="muted">Conecte o portfólio empresarial da agência para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
+    return `<p class="muted">Conecte o portfólio empresarial da agência, ou o do cliente onde a Pauta foi adicionada, para a Pauta ler os números das campanhas. A Pauta só lê; não altera nada na Meta.</p>
       <button class="btn primary" data-metaconnect>${icon("target")}Conectar Meta</button>`;
   }
-  const since = d.connected_at ? new Date(d.connected_at).toLocaleDateString("pt-BR") : "";
-  const accs = d.accounts || [];
+  const accs = d.accounts || [], conns = d.connections || [];
   // Ativo clients first, then the rest, each group as /api/clients orders them
   const sorted = [...clients.filter((c) => c.state === "Ativo"), ...clients.filter((c) => c.state !== "Ativo")];
   const pick = (a) => {
@@ -1746,21 +1768,31 @@ function metaBody(d, clients = []) {
       ${sorted.map((c) => `<option value="${c.id}" ${c.id === cur ? "selected" : ""}>${esc(c.name)}${c.id === sug ? " (sugestão)" : ""}</option>`).join("")}</select>
       ${sug ? `<span class="muted small hint">Sugestão: ${esc(a.suggested.name)}</span>` : ""}`;
   };
+  // the connection belongs to the team: "conectado à Pauta em <data> (por <pessoa>)", never
+  // "conectado por" as if it were theirs. One block per portfolio, with its own buttons.
+  const block = (c) => {
+    const when = c.connected_at ? new Date(c.connected_at).toLocaleDateString("pt-BR") : "";
+    const name = c.business_name || c.business_id;
+    const state = c.state === "ok" ? "" : `<span class="warnline">${esc(META_STATES[c.state] || c.error || "problema na conexão")}</span>`;
+    return `<div class="member conn" data-conn="${esc(c.business_id)}"><div class="who"><b>Portfólio ${esc(name)}</b>
+      <span>conectado à Pauta${when ? ` em ${esc(when)}` : ""}${c.by_name ? ` (por ${esc(c.by_name)})` : ""}${c.last_sync ? ` · sincronizado ${esc(stampBR(c.last_sync))}` : ""}</span>${state}</div>
+      <div class="row-gap"><button class="btn primary small" data-metaconnect="add" data-business="${esc(c.business_id)}" data-name="${esc(name)}">${icon("plus")}Adicionar contas</button>
+        <button class="btn ghost small danger" data-metaoff="${esc(c.business_id)}" data-name="${esc(name)}">Desconectar</button></div></div>`;
+  };
   // the numbers live in Campanhas (decision 8): here only the account, whose it is, the balance
-  const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""}><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}</span></td>
+  const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""} data-business="${esc(a.business_id || "")}"><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}${a.business_name ? ` · Portfólio ${esc(a.business_name)}` : ""}</span></td>
       <td class="pick">${pick(a)}</td>
       ${a.stale ? `<td class="muted">não aparece mais na Meta</td>` : `<td class="r">${metaBalance(a)}</td>`}</tr>`).join("");
   return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
-    <div class="member"><div class="who"><b>Conectado: ${esc(d.business_name || "portfólio")}${since ? ` desde ${esc(since)}` : ""}</b>
-      <span>As contas de anúncios e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.</span></div>
-      <div class="row-gap">${d.error ? `<button class="btn primary small" data-metaconnect>${icon("target")}Conectar de novo</button>`
-        : `<button class="btn primary small" data-metaconnect="add">${icon("plus")}Adicionar contas</button>`}
-        <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button>
-        <button class="btn ghost small danger" id="metaoff">Desconectar</button></div></div>
+    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.</span>
+      <button class="btn small" data-metaconnect>${icon("target")}Conectar outro portfólio</button>
+      <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button></div>
+    <div id="metaconns">${conns.map(block).join("")}</div>
     ${accs.length ? `<div class="scrollx"><table class="mtable" id="metaaccounts"><thead><tr><th>Conta</th><th>Cliente</th><th class="r">Saldo</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`
-    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta neste portfólio.</div>`}
-    <p class="muted small mt">Cliente novo? Toque em <b>Adicionar contas</b> e marque, na Meta, todas as contas que a Pauta deve ler. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar. Na coluna <b>Cliente</b>, diga de quem é cada conta: as campanhas dela entram em Campanhas e na página do cliente.</p>`;
+    : `<div class="empty small">Nenhuma conta de anúncios liberada para a Pauta nos portfólios conectados.</div>`}
+    <p class="muted small mt">Cliente novo? Se a conta está num portfólio já conectado, toque em <b>Adicionar contas</b> nele e marque, na Meta, todas as contas que a Pauta deve ler. Se o cliente tem o próprio portfólio, <b>Conectar outro portfólio</b>. Ou, nas Configurações do negócio da Meta (Integrações → Apps conectados → Pauta), adicione a conta e toque em Atualizar. Na coluna <b>Cliente</b>, diga de quem é cada conta: as campanhas dela entram em Campanhas e na página do cliente.</p>
+    ${log.length ? `<details class="mt" id="metalog"><summary class="muted small">Histórico</summary><ul class="metalog">${log.map(metaLogLine).join("")}</ul></details>` : ""}`;
 }
 
 // The Meta card on a client's page: this month's tracked campaigns (name, Investido, Leads,

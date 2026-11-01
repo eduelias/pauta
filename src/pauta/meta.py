@@ -1,34 +1,63 @@
-"""The team's Meta business portfolio, read through the Marketing API (decision 8, phase 2).
+"""The team's Meta business portfolios, read through the Marketing API (decision 8, phase 2).
 
 An admin clicks "Conectar Meta" on Equipe. Pauta sends them to Facebook Login for Business
-with Du7's app and its login configuration (a system-user token, ANALYZE on the ad accounts,
-`ads_read` only); they pick the portfolio and its ad accounts and Meta sends them back to
+with Du7's app and its login configuration (a system-user token, MANAGE on the ad accounts,
+`ads_read` only); they pick ONE portfolio and its ad accounts and Meta sends them back to
 `/api/meta/callback` with a one-time code. Pauta exchanges the code, with the app secret, for
-the system user's token, which does not expire. The token lives in a file next to the
-database (like the OneDrive token), never in it, so backups and the export can't be turned
-into Meta access. Pauta only reads: it never creates, edits, pauses or pays for anything.
+the system user's token, which does not expire. Pauta only reads: it never creates, edits,
+pauses or pays for anything.
+
+Connections belong to the team, not to a person, and a team has several: Facebook Login for
+Business connects one business portfolio per login, and the system user Pauta gets lives in
+that portfolio (on acceptance, a client's). So Pauta keeps **one connection per connected
+portfolio**, keyed by the business id `/me` reports (`client_business_id`; the system user's
+own id when Meta doesn't say). Every read is the union over connections, each account tagged
+with its `business_id`; a revoked token (Graph error 190) marks only its connection.
+
+Token files, one per business, next to the database (like the OneDrive token), never in it,
+so backups and the export can't be turned into Meta access:
+
+  <db>.meta-token.<business_id>   {"access_token", "business_id", "business_name",
+                                   "connected_at", "by", "state", "error"}, mode 600
+  <db>.meta-token                 the single file releases before this one wrote: moved to
+                                  the per-business name when `Meta` is built. One without a
+                                  business id becomes <db>.meta-token.legacy, listed with a
+                                  "reconecte" state and never read
+
+`Meta` owns these files and knows no SQLite: `connections()` lists them (business_id, name,
+connected_at, by, state, error). The database mirrors them in `meta_connection` (plus
+`last_sync`, which the sync writes): the server binds `on_change` to `Store.sync_connections`
+and calls it once at startup, so the rows follow the files, never the other way round.
 
 The session cookie is SameSite=Strict, so it is not sent on the redirect back from
 facebook.com: the callback is authorized by the one-time `state` instead, made for the
-admin who clicked, kept in memory for 10 minutes and used once.
+admin who clicked (and for the business they were adding accounts to, if any), kept in
+memory for 10 minutes and used once. A login that comes back for another business than the
+one it was started for is saved under its own business: a connection never overwrites
+another.
 
-Reading is two HTTP calls per 50 accounts, not one per account: `/me/adaccounts`, then one
-Graph batch request carrying every account's insights and balance reads. The list is kept
-for 10 minutes; concurrent cold readers wait for one read and share it; a failure is
-remembered for a minute (two when Meta asked for a pause) so a page full of client cards
-doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers Meta won't
-return comes back with `numbers: false` and a reason; only a revoked token or a throttle
-fails the whole list.
+Reading is two HTTP calls per connection per 50 accounts, not one per account:
+`/me/adaccounts`, then one Graph batch request carrying every account's insights and balance
+reads, each with that connection's token and appsecret_proof. The union is kept for 10
+minutes; concurrent cold readers wait for one read and share it; a read that failed as a
+whole is remembered for a minute (two when Meta asked for a pause) so a page full of client
+cards doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers Meta
+won't return comes back with `numbers: false` and a reason; one connection Meta refuses is
+left out (a revoked token marks it `revoked` on `connections()`; Meta not answering for it
+is passing trouble) and the others still read; only a throttle, or every connection
+failing, fails the whole list.
 
 Campaign tracking (`sync.py`) reads more: each linked account's campaign list (paged) and
 its per-campaign daily insights for a range, plus the period's reach per campaign (reach
-doesn't add up over days, so it is asked for as a whole and kept for an hour). Meta keeps 37
-months of insights; older `since` dates are clamped. `cmd_serve` starts the sync scheduler
-(an hourly pass over the last two days, a nightly one over the last 28) unless
-PAUTA_META_SYNC=off; `last_sync` and `sync_error` on this object feed /metrics.
+doesn't add up over days, so it is asked for as a whole and kept for an hour). Those reads
+take the account's business (`business_id`, or the map `business_of` filled by the last
+account read and seeded by the server from `meta_account`; with a single connection, that
+one). Meta keeps 37 months of insights; older `since` dates are clamped. `cmd_serve` starts
+the sync scheduler (an hourly pass over the last two days, a nightly one over the last 28)
+unless PAUTA_META_SYNC=off; `last_sync` and `sync_error` on this object feed /metrics.
 
-Revoking access is the client's side: Business Settings → Integrations → Connected apps.
-"Desconectar" only forgets the token here.
+Revoking access is the portfolio's side: that business's Settings → Integrations →
+Connected apps. "Desconectar" only forgets that one token here.
 
 Configuration:
   PAUTA_META_APP_ID      the Meta app's id (public); unset turns Meta off
@@ -41,7 +70,7 @@ Configuration:
                          mode 600 (e.g. /var/lib/pauta/pauta.db.meta-secret). Never in the
                          environment, the database, the logs or an answer. Missing or empty
                          turns Meta off
-  <db>.meta-token        written by Pauta when connected (mode 600)
+  <db>.meta-token.<id>   written by Pauta per connected portfolio (mode 600)
   PAUTA_META_SYNC        "off" keeps the in-process sync scheduler from starting (the CLI's
                          `pauta meta sync` still works); anything else, or unset, runs it
 """
@@ -86,10 +115,14 @@ DAILY_FIELDS = "campaign_id,spend,impressions,reach,inline_link_clicks,actions"
 REACH_SECONDS = 3600  # a period's reach per campaign is kept this long
 HISTORY_MONTHS = 37  # Meta keeps this much insight history
 MAX_PAGES = 200  # paging stops here whatever Meta says: never loop forever
+LEGACY = "legacy"  # the business "id" of a pre-connection token file without one
 
 UNAVAILABLE = "a Meta não respondeu; tente de novo"
 REVOKED = "a conexão com a Meta foi revogada ou expirou; conecte de novo"
 NOT_CONNECTED = "a Meta não está conectada; um administrador conecta em Equipe"
+NO_BUSINESS = "a Meta não disse qual é o portfólio; tente de novo"
+UNKNOWN_BUSINESS = "este portfólio não está conectado"
+RECONNECT = "conexão antiga sem portfólio identificado; reconecte em Adicionar contas"
 NO_BALANCE = "sem permissão para ler o saldo"
 NO_NUMBERS = "a Meta não devolveu os números desta conta"
 NO_BALANCE_ANSWER = "a Meta não devolveu o saldo desta conta"
@@ -133,6 +166,10 @@ def _int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _digits(value) -> str:
+    return "".join(c for c in str(value or "") if c.isdigit())
 
 
 def _day(value) -> str | None:
@@ -188,6 +225,10 @@ def _minor(value) -> int | None:
         return None
 
 
+def _stamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 class Meta:
     def __init__(
         self,
@@ -204,22 +245,28 @@ class Meta:
         self.graph = graph.rstrip("/")
         self.dialog = dialog
         self.secret_file = Path(f"{db_path}.meta-secret")
-        self.token_file = Path(f"{db_path}.meta-token")
+        self.legacy_file = Path(f"{db_path}.meta-token")  # the single file of releases < v10
         self._lock = threading.Lock()
-        self._states: dict[str, tuple[int | None, float]] = {}  # state -> (account, expiry)
+        # state -> (account, business being re-logged into or None, expiry)
+        self._states: dict[str, tuple[int | None, str | None, float]] = {}
         # states that already connected: a second load of the same callback (a reload, the
         # browser retrying) says "conectado" again instead of "expirou"
         self._done: dict[str, float] = {}  # state -> expiry
         self._cache: tuple[float, list[dict]] | None = None
-        self._failed: tuple[float, MetaError] | None = None  # the last failed read
+        self._failed: tuple[float, MetaError] | None = None  # the last read that failed whole
         self._reading = threading.Lock()  # one Meta read at a time (accounts())
-        self.error = ""  # why the connection stopped working, until reconnected
         self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
         self.sync_error = ""  # what the last sync ran into, "" when it went well
         self._reach: dict[tuple, tuple[float, dict[str, int]]] = {}
+        # account id -> business id, from the last read; the server seeds it from the DB
+        self.business_of: dict[str, str] = {}
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
         self.on_read: Callable[[list[dict]], None] | None = None
+        # called with connections() after a connect, a disconnect or a state change; the
+        # server mirrors them into meta_connection (db.sync_connections)
+        self.on_change: Callable[[list[dict]], None] | None = None
+        self._migrate()
 
     @classmethod
     def from_env(cls, db_path: Path) -> Meta:
@@ -232,7 +279,7 @@ class Meta:
             redirect_uri=redirect,
         )
 
-    # ---- configuration and the token file -------------------------------------------------
+    # ---- configuration and the token files -----------------------------------------------
 
     def _secret(self) -> str:
         try:
@@ -244,23 +291,107 @@ class Meta:
     def enabled(self) -> bool:
         return bool(self.app_id and self.config_id and self._secret())
 
-    def _saved(self) -> dict | None:
+    def token_file(self, business_id: str) -> Path:
+        return self.legacy_file.with_name(f"{self.legacy_file.name}.{business_id}")
+
+    @staticmethod
+    def _load(path: Path) -> dict | None:
         try:
-            doc = json.loads(self.token_file.read_text())
+            doc = json.loads(path.read_text())
         except (OSError, ValueError):
             return None
         return doc if isinstance(doc, dict) and doc.get("access_token") else None
 
+    def _saved(self, business_id: str) -> dict | None:
+        return self._load(self.token_file(business_id)) if business_id else None
+
     def _save(self, doc: dict) -> None:
-        tmp = self.token_file.with_name(self.token_file.name + ".tmp")
+        target = self.token_file(doc["business_id"])
+        tmp = target.with_name(target.name + ".tmp")
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(doc, f)
-        os.replace(tmp, self.token_file)
+        os.replace(tmp, target)
+
+    def _migrate(self) -> None:
+        """The single `<db>.meta-token` of earlier releases becomes a per-business file (the
+        same bytes, so the mode stays 600). One without a business id can't be placed:
+        it is kept as `.legacy`, shown as "reconecte" and never read."""
+        doc = self._load(self.legacy_file)
+        if doc is None:
+            return
+        business_id = _digits(doc.get("business_id"))
+        target = self.token_file(business_id or LEGACY)
+        if target.exists():  # connected again since: the newer file wins
+            self.legacy_file.unlink()
+        else:
+            os.replace(self.legacy_file, target)
+        obs.event("meta_token_migrated", legacy=not business_id)
+
+    def _files(self) -> dict[str, dict]:
+        """Every connection's saved document, by business id (digits, or "legacy")."""
+        out: dict[str, dict] = {}
+        prefix = self.legacy_file.name + "."
+        try:
+            names = sorted(os.listdir(self.legacy_file.parent))
+        except OSError:
+            return out
+        for name in names:
+            if not name.startswith(prefix):
+                continue
+            business_id = name[len(prefix) :]
+            if not (business_id.isdigit() or business_id == LEGACY):
+                continue  # a .tmp, or something that isn't ours
+            doc = self._load(self.legacy_file.parent / name)
+            if doc:
+                out[business_id] = {**doc, "business_id": business_id}
+        return out
+
+    def _connection(self, business_id: str, doc: dict) -> dict:
+        state, error = str(doc.get("state") or "ok"), str(doc.get("error") or "")
+        if business_id == LEGACY:
+            state, error = "error", RECONNECT
+        return {
+            "business_id": business_id,
+            "business_name": str(doc.get("business_name") or ""),
+            "connected_at": str(doc.get("connected_at") or ""),
+            "by": doc.get("by") if isinstance(doc.get("by"), int) else None,
+            "state": state,
+            "error": error,
+        }
+
+    def connections(self) -> list[dict]:
+        """Every connected portfolio, oldest first, never the token: {business_id,
+        business_name, connected_at, by, state (ok|revoked|error), error}."""
+        if not self.enabled:
+            return []
+        conns = [self._connection(b, doc) for b, doc in self._files().items()]
+        return sorted(conns, key=lambda c: (c["connected_at"], c["business_id"]))
+
+    def _readable(self) -> list[dict]:
+        """The connections whose token is worth trying (not the legacy leftover)."""
+        return [c for c in self.connections() if c["business_id"] != LEGACY]
 
     @property
     def connected(self) -> bool:
-        return self.enabled and self._saved() is not None
+        """Something is connected (whatever its state): there is a portfolio to read."""
+        return bool(self.connections())
+
+    @property
+    def error(self) -> str:
+        """The first connection's trouble, for /metrics and the old callers; "" when fine."""
+        return next((c["error"] for c in self.connections() if c["error"]), "")
+
+    def _mark(self, business_id: str, state: str, error: str) -> None:
+        """A connection's state, kept in its file so it outlives a restart."""
+        doc = self._saved(business_id)
+        if doc and (doc.get("state") or "ok", doc.get("error") or "") != (state, error):
+            self._save({**doc, "business_id": business_id, "state": state, "error": error})
+        self._changed()
+
+    def _changed(self) -> None:
+        if self.on_change:
+            self.on_change(self.connections())
 
     # ---- HTTP -----------------------------------------------------------------------------
 
@@ -318,41 +449,65 @@ class Meta:
     def _throttle(code) -> bool:
         return code in THROTTLE_CODES or (isinstance(code, int) and 80000 <= code < 80100)
 
-    def _fail(self, status: int, doc: dict, step: str) -> MetaError:
-        """The error for a Graph answer that wasn't 200 (logged without any message text)."""
+    def _fail(self, status: int, doc: dict, step: str, business_id: str = "") -> MetaError:
+        """The error for a Graph answer that wasn't 200 (logged without any message text).
+        A 190 marks the one connection it came from as revoked; the others go on."""
         code = self._code(doc)
         obs.event("meta_error", logging.WARNING, status=status, code=code, step=step)
         if code == 190:
-            self.error = REVOKED
             self._cache = None
-            obs.event("meta_revoked", logging.ERROR)
+            obs.event("meta_revoked", logging.ERROR, business=business_id or None)
+            if business_id:
+                self._mark(business_id, "revoked", REVOKED)
             return MetaError(REVOKED, 409)
         if self._throttle(code):
             return MetaError(THROTTLED, 503)
         return MetaError(UNAVAILABLE)
 
-    def _graph(self, path: str, params: dict, step: str) -> dict:
-        saved = self._saved() if self.enabled else None
+    def _token(self, business_id: str) -> str:
+        saved = self._saved(business_id) if self.enabled else None
         if not saved:
-            raise MetaError(NOT_CONNECTED, 409)
-        status, doc = self._get(path, params, saved["access_token"])
+            raise MetaError(NOT_CONNECTED if not self.connected else UNKNOWN_BUSINESS, 409)
+        return saved["access_token"]
+
+    def _graph(self, path: str, params: dict, step: str, business_id: str) -> dict:
+        status, doc = self._get(path, params, self._token(business_id))
         if status != 200:
-            raise self._fail(status, doc, step)
+            raise self._fail(status, doc, step, business_id)
         return doc
+
+    def _business_for(self, account_id: str, business_id: str | None = None) -> str:
+        """Which connection reads an ad account: the one given, the one the last account
+        read saw it under, or, with a single connection, that one."""
+        if business_id:
+            return _digits(business_id) or business_id
+        aid = _digits(account_id)
+        known = self.business_of.get(aid)
+        if known:
+            return known
+        conns = self._readable()
+        if len(conns) == 1:
+            return conns[0]["business_id"]
+        raise MetaError(NOT_CONNECTED if not conns else UNKNOWN_BUSINESS, 409)
 
     # ---- connecting ----------------------------------------------------------------------
 
-    def start_connect(self, account_id: int | None) -> str:
-        """A one-time state for this admin and the URL of Meta's login dialog."""
+    def start_connect(self, account_id: int | None, business_id: str | None = None) -> str:
+        """A one-time state for this admin and the URL of Meta's login dialog. `business_id`
+        is the connection they are adding accounts to (a re-login on that portfolio);
+        None connects another portfolio."""
         if not self.enabled:
             raise MetaError("o servidor não tem a Meta configurada", 400, "desligado")
+        business_id = _digits(business_id) or None
+        if business_id and not self._saved(business_id):
+            raise MetaError(UNKNOWN_BUSINESS, 404)
         state = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
-            self._states = {s: v for s, v in self._states.items() if v[1] > now}
+            self._states = {s: v for s, v in self._states.items() if v[2] > now}
             while len(self._states) >= MAX_PENDING:  # the oldest go first
-                self._states.pop(min(self._states, key=lambda s: self._states[s][1]))
-            self._states[state] = (account_id, now + STATE_SECONDS)
+                self._states.pop(min(self._states, key=lambda s: self._states[s][2]))
+            self._states[state] = (account_id, business_id, now + STATE_SECONDS)
         query = {
             "client_id": self.app_id,
             "config_id": self.config_id,
@@ -361,28 +516,30 @@ class Meta:
             "redirect_uri": self.redirect_uri,
             "state": state,
         }
-        obs.event("meta_connect_started", account=account_id)
+        obs.event("meta_connect_started", account=account_id, business=business_id)
         return f"{self.dialog}?{urllib.parse.urlencode(query)}"
 
-    def take_state(self, state: str) -> int | None:
-        """Use up a state: the account that started it. Unknown, expired or used: MetaError."""
+    def take_state(self, state: str) -> tuple[int | None, str | None]:
+        """Use up a state: (the account that started it, the business it was re-logging
+        into or None). Unknown, expired or used: MetaError."""
         with self._lock:
             entry = self._states.pop(state or "", None)
-        if not entry or entry[1] < time.time():
+        if not entry or entry[2] < time.time():
             obs.event("meta_bad_state", logging.WARNING)
             raise MetaError("o pedido de conexão expirou; comece de novo", 400, "expirou")
-        return entry[0]
+        return entry[0], entry[1]
 
-    def finish_connect(self, state: str, code: str) -> None:
-        """Meta sent the admin back with a code: exchange it and keep the token."""
+    def finish_connect(self, state: str, code: str) -> dict | None:
+        """Meta sent the admin back with a code: exchange it and keep the token under the
+        business it belongs to. Returns the connection (None for a repeated callback)."""
         if not self.enabled:
             raise MetaError("o servidor não tem a Meta configurada", 400, "desligado")
         with self._lock:
             done = self._done.get(state or "", 0) > time.time()
         if done:
             obs.event("meta_callback_repeated")
-            return
-        by = self.take_state(state)
+            return None
+        by, wanted = self.take_state(state)
         if not code:
             raise MetaError("a Meta não mandou o código; tente de novo", 400)
         status, doc = self._get(
@@ -402,56 +559,68 @@ class Meta:
         status, me = self._get("/me", {"fields": "id,name,client_business_id"}, token)
         if status != 200:
             raise self._fail(status, me, "me")
-        # a Graph id is digits; anything else never reaches a path
-        business_id = str(me.get("client_business_id") or "")
-        business_id = business_id if business_id.isdigit() else ""
+        # a Graph id is digits; anything else never reaches a path. Without a portfolio id
+        # the system user's own id keys the connection (it is unique to its portfolio too)
+        business_id = _digits(me.get("client_business_id"))
         business_name = ""
         if business_id:
             status, biz = self._get(f"/{business_id}", {"fields": "name"}, token)
             if status == 200:
                 business_name = str(biz.get("name") or "")
+        else:
+            business_id = _digits(me.get("id"))
+        if not business_id:
+            raise MetaError(NO_BUSINESS, 502)
+        if wanted and wanted != business_id:
+            obs.event("meta_connected_other_business", logging.WARNING, wanted=wanted)
         self._save(
             {
                 "access_token": token,
                 "business_id": business_id,
                 "business_name": business_name or str(me.get("name") or ""),
-                "connected_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "connected_at": _stamp(),
                 "by": by,
+                "state": "ok",
+                "error": "",
             }
         )
-        self.error = ""
-        self._cache = self._failed = None
-        now = time.time()
         with self._lock:
+            self._cache = self._failed = None
+            now = time.time()
             self._done = {s: t for s, t in self._done.items() if t > now}
             self._done[state] = now + STATE_SECONDS
-        obs.event("meta_connected", account=by)
+        obs.event("meta_connected", account=by, business=business_id)
+        self._changed()
+        return self._connection(business_id, self._saved(business_id) or {})
 
-    def disconnect(self) -> None:
-        """Forget the token here. Revoking it in Meta is the portfolio owner's step."""
+    def disconnect(self, business_id: str | None = None) -> None:
+        """Forget one portfolio's token here (every one when `business_id` is None).
+        Revoking it in Meta is the portfolio owner's step."""
+        gone = [business_id] if business_id else list(self._files())
         with self._lock:
-            with contextlib.suppress(FileNotFoundError):
-                self.token_file.unlink()
+            for b in gone:
+                with contextlib.suppress(FileNotFoundError):
+                    self.token_file(b).unlink()
             self._cache = self._failed = None
-            self.error = ""
-        obs.event("meta_disconnected")
+        obs.event("meta_disconnected", business=business_id)
+        self._changed()
 
     def status(self) -> dict:
         """For the Equipe page and /metrics. Never the token."""
-        saved = self._saved() if self.enabled else None
+        conns = self.connections()
         return {
             "enabled": self.enabled,
-            "connected": saved is not None,
-            "business_name": (saved or {}).get("business_name", ""),
-            "connected_at": (saved or {}).get("connected_at", ""),
-            "error": self.error,
+            "connected": bool(conns),
+            "connections": conns,
+            "error": next((c["error"] for c in conns if c["error"]), ""),
         }
 
     # ---- reading -------------------------------------------------------------------------
 
     def accounts(self, refresh: bool = False) -> list[dict]:
-        """Every ad account the token reads, with this month's numbers and, when Meta lets
-        Pauta read it, the balance. Kept for 10 minutes unless `refresh`; a failed read is
+        """Every ad account every connection reads, each tagged with its `business_id` and
+        `business_name`, with this month's numbers and, when Meta lets Pauta read it, the
+        balance. Kept for 10 minutes unless `refresh`; a read that failed as a whole is
         raised again, without asking Meta, for a minute (`refresh` asks anyway). Readers
         arriving while one read is under way wait for it and get the same list."""
         fresh = self._fresh(refresh)
@@ -489,8 +658,28 @@ class Meta:
         return None
 
     def _read(self) -> list[dict]:
-        """The list from Meta: /me/adaccounts, then every account's insights and balance in
-        batch requests of up to 50 reads (two per account)."""
+        """The union over connections. One connection Meta refuses is left out (a revoked
+        one is marked so, by _fail; Meta not answering for it is passing trouble, no state
+        change); a throttle, or every connection failing, fails the list."""
+        conns = self._readable()
+        if not conns:
+            raise MetaError(NOT_CONNECTED, 409)
+        out: list[dict] = []
+        errors: list[MetaError] = []
+        for conn in conns:
+            try:
+                out.extend(self._read_one(conn["business_id"], conn["business_name"]))
+            except MetaError as e:
+                if e.status == 503:
+                    raise  # Meta asked the app to pause: no point trying the others
+                errors.append(e)
+        if len(errors) == len(conns):
+            raise errors[0]
+        return out
+
+    def _read_one(self, business_id: str, business_name: str) -> list[dict]:
+        """One connection's list from Meta: /me/adaccounts, then every account's insights
+        and balance in batch requests of up to 50 reads (two per account)."""
         doc = self._graph(
             "/me/adaccounts",
             {
@@ -500,12 +689,13 @@ class Meta:
                 "limit": "100",
             },
             "adaccounts",
+            business_id,
         )
         out = []
         for a in doc.get("data") or []:
             if not isinstance(a, dict):
                 continue
-            aid = "".join(c for c in str(a.get("account_id") or a.get("id") or "") if c.isdigit())
+            aid = _digits(a.get("account_id") or a.get("id"))
             status = _int(a.get("account_status"))
             out.append(
                 {
@@ -514,6 +704,8 @@ class Meta:
                     "currency": str(a.get("currency") or "BRL"),
                     "status": status,
                     "status_label": ACCOUNT_STATUS.get(status, ""),
+                    "business_id": business_id,
+                    "business_name": business_name,
                 }
             )
         reads = []
@@ -524,26 +716,25 @@ class Meta:
             reads.append(f"act_{acc['id']}?fields={BALANCE_FIELDS}")
         answers: list = []
         for i in range(0, len(reads), BATCH):
-            answers.extend(self._batch(reads[i : i + BATCH]))
+            answers.extend(self._batch(reads[i : i + BATCH], business_id))
         for acc, i in zip(out, range(0, len(answers), 2), strict=True):
-            acc.update(self._numbers(answers[i]))
-            acc["balance"] = self._balance(answers[i + 1])
+            acc.update(self._numbers(answers[i], business_id))
+            acc["balance"] = self._balance(answers[i + 1], business_id)
+        with self._lock:
+            for acc in out:
+                self.business_of[acc["id"]] = business_id
         return out
 
-    def _batch(self, reads: list[str]) -> list[tuple[int | None, dict]]:
-        """One Graph batch request: each read's (code, JSON), in order; (None, {}) for a read
-        Meta gave up on (a null entry)."""
-        saved = self._saved() if self.enabled else None
-        if not saved:
-            raise MetaError(NOT_CONNECTED, 409)
+    def _batch(self, reads: list[str], business_id: str) -> list[tuple[int | None, dict]]:
+        """One Graph batch request with one connection's token: each read's (code, JSON),
+        in order; (None, {}) for a read Meta gave up on (a null entry)."""
+        token = self._token(business_id)
         items = [{"method": "GET", "relative_url": r} for r in reads]
         status, doc = self._post(
-            "/",
-            {"batch": json.dumps(items), "include_headers": "false"},
-            saved["access_token"],
+            "/", {"batch": json.dumps(items), "include_headers": "false"}, token
         )
         if status != 200 or not isinstance(doc, list):
-            raise self._fail(status, doc if isinstance(doc, dict) else {}, "batch")
+            raise self._fail(status, doc if isinstance(doc, dict) else {}, "batch", business_id)
         out: list[tuple[int | None, dict]] = []
         for entry in list(doc)[: len(reads)] + [None] * (len(reads) - len(doc)):
             if not isinstance(entry, dict):
@@ -559,7 +750,7 @@ class Meta:
             )
         return out
 
-    def _numbers(self, answer: tuple[int | None, dict]) -> dict:
+    def _numbers(self, answer: tuple[int | None, dict], business_id: str = "") -> dict:
         """This month's numbers from an insights read. Meta not answering for this one
         account is not the list's problem: `numbers: false` and a reason (the UI shows
         dashes); a revoked token or a throttle is."""
@@ -567,7 +758,7 @@ class Meta:
         if status != 200:
             code = self._code(ins)
             if code == 190 or self._throttle(code):
-                raise self._fail(status or 0, ins, "insights")
+                raise self._fail(status or 0, ins, "insights", business_id)
             obs.event("meta_numbers_missing", logging.WARNING, status=status, code=code)
             return {
                 "numbers": False,
@@ -588,7 +779,7 @@ class Meta:
             "cpc_cents": cents(row.get("cost_per_inline_link_click")),
         }
 
-    def _balance(self, answer: tuple[int | None, dict]) -> dict:
+    def _balance(self, answer: tuple[int | None, dict], business_id: str = "") -> dict:
         """What is left on the account. Meta shows the funding details only to a token with
         more than ANALYZE on the account (decision 8, "Saldo"): a refusal is not an error."""
         status, doc = answer
@@ -598,7 +789,7 @@ class Meta:
         if status != 200:
             code = self._code(doc)
             if code == 190 or self._throttle(code) or status >= 500 or code is None:
-                raise self._fail(status, doc, "balance")
+                raise self._fail(status, doc, "balance", business_id)
             # 10, 100, 200-299: the token may not read these fields
             obs.event("meta_balance_refused", code=code)
             # refused: only a fresh connection carries a changed system-user task (the UI
@@ -620,12 +811,12 @@ class Meta:
 
     # ---- campaign tracking reads (sync.py) ---------------------------------------------------
 
-    def _pages(self, path: str, params: dict, step: str) -> list[dict]:
+    def _pages(self, path: str, params: dict, step: str, business_id: str) -> list[dict]:
         """Every `data` entry of a paged Graph list, following `paging.cursors.after`."""
         out: list[dict] = []
         query = dict(params)
         for _ in range(MAX_PAGES):
-            doc = self._graph(path, query, step)
+            doc = self._graph(path, query, step, business_id)
             out.extend(d for d in doc.get("data") or [] if isinstance(d, dict))
             paging = doc.get("paging") if isinstance(doc.get("paging"), dict) else {}
             after = (paging.get("cursors") or {}).get("after") if paging else None
@@ -634,17 +825,20 @@ class Meta:
             query["after"] = after
         return out
 
-    def campaigns(self, account_id: str) -> list[dict]:
+    def campaigns(self, account_id: str, business_id: str | None = None) -> list[dict]:
         """Every campaign of one ad account, as {id, name, objective, effective_status,
         status, started, stopped}: dates are `YYYY-MM-DD` (the start date, or the creation
-        date when Meta has no start)."""
-        aid = "".join(c for c in str(account_id) if c.isdigit())
+        date when Meta has no start). Read with the account's portfolio's token."""
+        aid = _digits(account_id)
         rows = self._pages(
-            f"/act_{aid}/campaigns", {"fields": CAMPAIGN_FIELDS, "limit": "100"}, "campaigns"
+            f"/act_{aid}/campaigns",
+            {"fields": CAMPAIGN_FIELDS, "limit": "100"},
+            "campaigns",
+            self._business_for(aid, business_id),
         )
         out = []
         for c in rows:
-            cid = "".join(ch for ch in str(c.get("id") or "") if ch.isdigit())
+            cid = _digits(c.get("id"))
             if not cid:
                 continue
             out.append(
@@ -667,11 +861,12 @@ class Meta:
         until: date,
         meta_ids: list[str] | None = None,
         today: date | None = None,
+        business_id: str | None = None,
     ) -> list[dict]:
         """One row per campaign per day in the range: {meta_id, day, spend_cents, impressions,
         reach, link_clicks, actions}. `since` is clamped to what Meta still keeps; an empty
         range asks nothing. `meta_ids` narrows the read to those campaigns."""
-        aid = "".join(c for c in str(account_id) if c.isdigit())
+        aid = _digits(account_id)
         since = clamp_since(since, today)
         if since > until:
             return []
@@ -685,8 +880,9 @@ class Meta:
         if meta_ids:
             params["filtering"] = _filter_ids(meta_ids)
         out = []
-        for r in self._pages(f"/act_{aid}/insights", params, "insights"):
-            mid = "".join(c for c in str(r.get("campaign_id") or "") if c.isdigit())
+        business = self._business_for(aid, business_id)
+        for r in self._pages(f"/act_{aid}/insights", params, "insights", business):
+            mid = _digits(r.get("campaign_id"))
             day = _day(r.get("date_start"))
             if not mid or not day:
                 continue
@@ -707,16 +903,15 @@ class Meta:
         self, pairs: list[tuple[str, str]], since: date, until: date, today: date | None = None
     ) -> dict[str, int]:
         """The period's reach per campaign ({meta_id: people}) for (account_id, meta_id)
-        pairs: one batched read per account, kept for an hour per (account, period). Reach
-        doesn't add over days, so this is the only honest period number. A campaign Meta
-        says nothing about is left out (the caller shows a dash)."""
+        pairs: one batched read per account, with its portfolio's token, kept for an hour per
+        (account, period). Reach doesn't add over days, so this is the only honest period
+        number. A campaign Meta says nothing about is left out (the caller shows a dash)."""
         since = clamp_since(since, today)
         if since > until or not pairs:
             return {}
         by_account: dict[str, list[str]] = {}
         for account_id, meta_id in pairs:
-            aid = "".join(c for c in str(account_id) if c.isdigit())
-            by_account.setdefault(aid, []).append(str(meta_id))
+            by_account.setdefault(_digits(account_id), []).append(str(meta_id))
         now = time.time()
         out: dict[str, int] = {}
         todo: list[str] = []
@@ -729,36 +924,42 @@ class Meta:
                     todo.append(aid)
         if not todo:
             return out
-        reads = [
-            f"act_{aid}/insights?"
-            + urllib.parse.urlencode(
-                {
-                    "level": "campaign",
-                    "time_range": _time_range(since, until),
-                    "fields": "campaign_id,reach",
-                    "filtering": _filter_ids(by_account[aid]),
-                    "limit": "500",
-                }
-            )
-            for aid in todo
-        ]
-        answers: list = []
-        for i in range(0, len(reads), BATCH):
-            answers.extend(self._batch(reads[i : i + BATCH]))
-        for aid, (status, doc) in zip(todo, answers, strict=True):
-            if status != 200:
-                code = self._code(doc)
-                if code == 190 or self._throttle(code):
-                    raise self._fail(status or 0, doc, "reach")
-                obs.event("meta_reach_missing", logging.WARNING, status=status, code=code)
-                continue
-            got: dict[str, int | None] = dict.fromkeys(by_account[aid], None)
-            for r in doc.get("data") or []:
-                mid = "".join(c for c in str(r.get("campaign_id") or "") if c.isdigit())
-                if mid in got:
-                    got[mid] = _int(r.get("reach"))
-            with self._lock:
-                self._reach = {k: v for k, v in self._reach.items() if now - v[0] < REACH_SECONDS}
-                self._reach[(aid, since, until)] = (now, got)
-            out.update({m: v for m, v in got.items() if v is not None})
+        by_business: dict[str, list[str]] = {}
+        for aid in todo:
+            by_business.setdefault(self._business_for(aid), []).append(aid)
+        for business_id, aids in by_business.items():
+            reads = [
+                f"act_{aid}/insights?"
+                + urllib.parse.urlencode(
+                    {
+                        "level": "campaign",
+                        "time_range": _time_range(since, until),
+                        "fields": "campaign_id,reach",
+                        "filtering": _filter_ids(by_account[aid]),
+                        "limit": "500",
+                    }
+                )
+                for aid in aids
+            ]
+            answers: list = []
+            for i in range(0, len(reads), BATCH):
+                answers.extend(self._batch(reads[i : i + BATCH], business_id))
+            for aid, (status, doc) in zip(aids, answers, strict=True):
+                if status != 200:
+                    code = self._code(doc)
+                    if code == 190 or self._throttle(code):
+                        raise self._fail(status or 0, doc, "reach", business_id)
+                    obs.event("meta_reach_missing", logging.WARNING, status=status, code=code)
+                    continue
+                got: dict[str, int | None] = dict.fromkeys(by_account[aid], None)
+                for r in doc.get("data") or []:
+                    mid = _digits(r.get("campaign_id"))
+                    if mid in got:
+                        got[mid] = _int(r.get("reach"))
+                with self._lock:
+                    self._reach = {
+                        k: v for k, v in self._reach.items() if now - v[0] < REACH_SECONDS
+                    }
+                    self._reach[(aid, since, until)] = (now, got)
+                out.update({m: v for m, v in got.items() if v is not None})
         return out

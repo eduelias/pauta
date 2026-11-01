@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS insight (
     actions TEXT NOT NULL DEFAULT '{}', fetched TEXT NOT NULL,
     PRIMARY KEY (meta_id, day)
 );
+CREATE TABLE IF NOT EXISTS meta_connection (
+    business_id TEXT PRIMARY KEY, business_name TEXT NOT NULL DEFAULT '',
+    connected_by INTEGER REFERENCES account(id), connected_at TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'ok', error TEXT NOT NULL DEFAULT '', last_sync TEXT,
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS meta_log (
+    id INTEGER PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')),
+    account INTEGER REFERENCES account(id), kind TEXT NOT NULL,
+    business_id TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '{}'
+);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -169,7 +180,7 @@ CAMPAIGN_URL_ID = (
     r"campaign_id=(\d+)",
     r"/campaigns/(\d+)",
 )
-EXPORT_TABLES = ("campaign", "review", "insight")
+EXPORT_TABLES = ("campaign", "review", "insight", "meta_connection", "meta_log")
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -537,6 +548,13 @@ class Store:
                 self._open_cycle(db, row[0], None)
             # v8: meta_account (decision 8, phase 2) is a new table: SCHEMA creates it
             # v9: campaign, review and insight (campaign tracking) are new tables too
+            # v10: one Meta connection per portfolio (meta_connection, meta_log are new
+            # tables); each ad account remembers which portfolio's token reads it
+            cols = {r[1] for r in db.execute("PRAGMA table_info(meta_account)")}
+            if "business_id" not in cols:
+                db.execute(
+                    "ALTER TABLE meta_account ADD COLUMN business_id TEXT NOT NULL DEFAULT ''"
+                )
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -712,13 +730,14 @@ class Store:
         with self.db() as db:
             rows = db.execute(
                 "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
-                "m.created, c.name AS client_name FROM meta_account m "
+                "m.created, m.business_id, c.name AS client_name FROM meta_account m "
                 "LEFT JOIN client c ON c.id=m.client ORDER BY m.name COLLATE NOCASE, m.account_id"
             ).fetchall()
         return [self._meta_row(r) for r in rows]
 
     def sync_meta_accounts(self, accounts: list[dict], now: str | None = None) -> None:
-        """What Meta listed just now: upsert name, currency, status and `seen`; rows for
+        """What Meta listed just now: upsert name, currency, status, `seen` and, when the
+        entry carries one, the `business_id` of the portfolio whose token read it; rows for
         accounts no longer listed stay. An account seen for the first time whose id is some
         client's `ad_account` is linked to that client (the field seeded the match, decision
         8). Only new rows: an admin's unlink stays unlinked on the next sync, even though
@@ -731,15 +750,18 @@ class Store:
                 if not aid:
                     continue
                 db.execute(
-                    "INSERT INTO meta_account(account_id, name, currency, status, seen) "
-                    "VALUES (?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET name=excluded.name, "
-                    "currency=excluded.currency, status=excluded.status, seen=excluded.seen",
+                    "INSERT INTO meta_account(account_id, name, currency, status, seen, "
+                    "business_id) VALUES (?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET "
+                    "name=excluded.name, currency=excluded.currency, status=excluded.status, "
+                    "seen=excluded.seen, business_id=CASE WHEN excluded.business_id<>'' "
+                    "THEN excluded.business_id ELSE meta_account.business_id END",
                     (
                         aid,
                         str(a.get("name") or ""),
                         str(a.get("currency") or "BRL"),
                         int(a.get("status") or 0),
                         now,
+                        digits(a.get("business_id")),
                     ),
                 )
             by_field: dict[str, int] = {}
@@ -774,7 +796,7 @@ class Store:
             db.execute("UPDATE meta_account SET client=? WHERE account_id=?", (cid, aid))
             row = db.execute(
                 "SELECT m.account_id AS id, m.name, m.currency, m.status, m.client, m.seen, "
-                "m.created, c.name AS client_name FROM meta_account m "
+                "m.created, m.business_id, c.name AS client_name FROM meta_account m "
                 "LEFT JOIN client c ON c.id=m.client WHERE m.account_id=?",
                 (aid,),
             ).fetchone()
@@ -788,6 +810,114 @@ class Store:
                 "SELECT id, name FROM client ORDER BY state='Encerrado', name COLLATE NOCASE"
             ).fetchall()
         return suggest(name, [(r["id"], r["name"]) for r in rows])
+
+    # ---- the connections (decision 8, "Connection ownership") -------------------------------
+    # One row per connected portfolio, mirroring the token files `meta.py` owns (it knows no
+    # SQLite): the server calls sync_connections with meta.connections() at startup and on
+    # every change. The row adds `last_sync`, written by the sync pass. `meta_log` is the
+    # short history Equipe shows: who connected, disconnected, linked or unlinked what.
+
+    LOG_KINDS = ("connected", "disconnected", "linked", "unlinked", "revoked")
+
+    def connections(self) -> list[dict]:
+        """Every connection row, oldest first, with the connecting person's name."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT m.business_id, m.business_name, m.connected_by, a.name AS by_name, "
+                "m.connected_at, m.state, m.error, m.last_sync FROM meta_connection m "
+                "LEFT JOIN account a ON a.id=m.connected_by "
+                "ORDER BY m.connected_at, m.business_id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def sync_connections(self, conns: list[dict]) -> None:
+        """Make the rows follow the files: upsert each connection (keeping `last_sync`),
+        drop rows whose file is gone, and log a connection that just became revoked."""
+        with self.db() as db:
+            before = {
+                r["business_id"]: r["state"]
+                for r in db.execute("SELECT business_id, state FROM meta_connection")
+            }
+            keep = set()
+            for c in conns:
+                bid = str(c.get("business_id") or "")
+                if not bid:
+                    continue
+                keep.add(bid)
+                by = c.get("by")
+                if (
+                    by is not None
+                    and not db.execute("SELECT 1 FROM account WHERE id=?", (by,)).fetchone()
+                ):
+                    by = None  # the person who connected is no longer an account
+                state = str(c.get("state") or "ok")
+                db.execute(
+                    "INSERT INTO meta_connection(business_id, business_name, connected_by, "
+                    "connected_at, state, error) VALUES (?,?,?,?,?,?) ON CONFLICT(business_id) "
+                    "DO UPDATE SET business_name=excluded.business_name, "
+                    "connected_by=excluded.connected_by, connected_at=excluded.connected_at, "
+                    "state=excluded.state, error=excluded.error",
+                    (
+                        bid,
+                        str(c.get("business_name") or ""),
+                        by,
+                        str(c.get("connected_at") or ""),
+                        state,
+                        str(c.get("error") or ""),
+                    ),
+                )
+                if state == "revoked" and before.get(bid) not in (None, "revoked"):
+                    self._log(db, "revoked", bid, None, {"business_name": c.get("business_name")})
+            gone = [b for b in before if b not in keep]
+            for bid in gone:
+                db.execute("DELETE FROM meta_connection WHERE business_id=?", (bid,))
+
+    def set_connection_sync(self, business_id: str, at: str, error: str = "") -> None:
+        """When one connection's part of a sync pass ended and how it went."""
+        with self.db() as db:
+            db.execute(
+                "UPDATE meta_connection SET last_sync=?, error=CASE WHEN state='ok' THEN ? "
+                "ELSE error END WHERE business_id=?",
+                (at, error or "", business_id),
+            )
+
+    @staticmethod
+    def _log(db, kind: str, business_id: str, by: int | None, detail: dict | None) -> None:
+        if kind not in Store.LOG_KINDS:
+            raise Invalid("tipo de evento desconhecido")
+        clean = {k: v for k, v in (detail or {}).items() if v not in (None, "")}
+        db.execute(
+            "INSERT INTO meta_log(account, kind, business_id, detail) VALUES (?,?,?,?)",
+            (by, kind, business_id or "", json.dumps(clean, ensure_ascii=False, sort_keys=True)),
+        )
+
+    def meta_log(self, kind: str, business_id: str, by: int | None, **detail) -> None:
+        """One line of the Meta history: connected, disconnected, linked, unlinked, revoked."""
+        with self.db() as db:
+            if (
+                by is not None
+                and not db.execute("SELECT 1 FROM account WHERE id=?", (by,)).fetchone()
+            ):
+                by = None
+            self._log(db, kind, business_id, by, detail)
+
+    def meta_log_rows(self, limit: int = 20) -> list[dict]:
+        """The latest `limit` history lines, newest first, with the actor's name."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT l.id, l.at, l.kind, l.business_id, l.detail, l.account, "
+                "a.name AS by_name FROM meta_log l LEFT JOIN account a ON a.id=l.account "
+                "ORDER BY l.id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            by = {"id": d.pop("account"), "name": d.pop("by_name")}
+            d["by"] = by if by["id"] is not None else None
+            d["detail"] = json.loads(d["detail"] or "{}")
+            out.append(d)
+        return out
 
     # ---- campaigns and their numbers (decision 8) -------------------------------------------
     # Tracked campaigns come from Meta: each sync lists an account's campaigns and a Pauta
@@ -1058,6 +1188,9 @@ class Store:
         if name == "insight":
             for r in out:
                 r["actions"] = json.loads(r["actions"])
+        if name == "meta_log":
+            for r in out:
+                r["detail"] = json.loads(r["detail"] or "{}")
         return out
 
     def sync_state(self) -> dict:

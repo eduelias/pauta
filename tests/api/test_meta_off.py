@@ -14,6 +14,8 @@ def test_off_by_default(team):
     assert call(f"{base}/metrics")[1]["meta"] == {
         "enabled": False,
         "connected": False,
+        "connections": 0,
+        "revoked": 0,
         "error": "",
         "last_sync": None,
         "sync_error": "",

@@ -169,17 +169,27 @@ def test_meta_sync_and_status(state, fake_meta, monkeypatch, capsys):
     monkeypatch.setattr(sync, "run", lambda s, m, *, days: real(s, m, days=days, today=TODAY))
     cli.main(["meta", "sync", "--days", "3"])
     out = capsys.readouterr().out
-    assert "1 account(s), 2 new campaign(s)" in out and "request(s) linked" in out
+    assert "1 portfolio(s), 1 account(s), 2 new campaign(s)" in out
+    assert "request(s) linked" in out
+    assert store.connections()[0]["last_sync"]  # the row followed the file, and the sync
     cli.main(["meta", "status"])
     out = capsys.readouterr().out
-    assert "connected to Agência Exemplo" in out and "2 ad account(s), 1 linked" in out
-    assert "last sync 20" in out
+    assert "portfolio Agência Exemplo (300000000000003): ok, connected 20" in out
+    assert "2 ad account(s), 1 linked" in out and "last sync 20" in out
     fake_meta.fail_campaigns.add("111")
     with pytest.raises(SystemExit) as e:
         cli.main(["meta", "sync"])
     assert e.value.code == 1 and "account 111:" in capsys.readouterr().err
     with pytest.raises(SystemExit, match="problem: a Meta não respondeu"):
         cli.main(["meta", "status"])
+    # a revoked portfolio is a problem of its own
+    fake_meta.fail_campaigns.clear()
+    fake_meta.token_invalid = True
+    with pytest.raises(SystemExit):
+        cli.main(["meta", "sync"])
+    with pytest.raises(SystemExit, match="problem: a conexão com a Meta foi revogada"):
+        cli.main(["meta", "status"])
+    assert "revoked, connected" in capsys.readouterr().out
 
 
 def test_serve_starts_the_sync_scheduler_when_meta_is_on(state, monkeypatch, capsys):

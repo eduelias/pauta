@@ -1,12 +1,13 @@
 """The Meta card on Equipe in a real browser: the full trip to Meta's login (the fake one in
-tests/fakemeta.py) and back without the session cookie, then the ad accounts table."""
+tests/fakemeta.py) and back without the session cookie, one block per connected portfolio,
+the ad accounts table labelled by portfolio, and the history."""
 
 import re
 
 import pytest
 from playwright.sync_api import expect
 
-from fakemeta import ACCOUNTS
+from fakemeta import ACCOUNTS, BUSINESS, OTHER_BUSINESS
 from pauta.meta import NO_NUMBERS, REVOKED
 from pauta.server import META_DOWN
 
@@ -36,7 +37,13 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     card.get_by_role("button", name="Conectar Meta").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
     expect(page).to_have_url(re.compile(r"#/equipe$"))
-    expect(card).to_contain_text("Conectado: Agência Exemplo desde")
+    block = card.locator(f"[data-conn='{BUSINESS}']")
+    expect(block).to_contain_text("Portfólio Agência Exemplo")
+    expect(block).to_contain_text(
+        re.compile(r"conectado à Pauta em \d\d/\d\d/\d{4} \(por Renato Lima\)")
+    )
+    expect(block).not_to_contain_text("conectado por")
+    expect(card.get_by_role("button", name="Conectar outro portfólio")).to_be_visible()
 
     # the accounts and whose they are; the numbers live in Campanhas (decision 8)
     table = page.locator("#metaaccounts")
@@ -56,8 +63,8 @@ def test_connect_read_and_disconnect(live, device, fake_meta):
     expect(clinic).to_contain_text("Clínica Bem Estar")
 
     page.once("dialog", lambda d: d.accept())
-    card.get_by_role("button", name="Desconectar").click()
-    expect(page.locator("#toast")).to_have_text("Meta desconectada")
+    block.get_by_role("button", name="Desconectar").click()
+    expect(page.locator("#toast")).to_have_text("Portfólio desconectado")
     expect(card.get_by_role("button", name="Conectar Meta")).to_be_visible()
 
     # cancelled in Meta's dialog: back to Equipe with an error, nothing connected
@@ -244,15 +251,100 @@ def test_member_sees_the_card_but_no_pointer(live, device, fake_meta):
     expect(page.locator("#cname")).to_contain_text("Padaria")
     expect(page.locator("#clientmeta")).to_be_empty()
 
-    # Meta revoked the token: the admin's refresh says so and offers to connect again; Ana's
-    # client card only says the numbers are unavailable, never "conecte de novo"
+    # Meta revoked the token: the admin's refresh says so on the portfolio's block, which
+    # still offers Adicionar contas (the way back in); Ana's client card only says the
+    # numbers are unavailable, never "conecte de novo"
     fake_meta.token_invalid = True
-    nato.expected.add((409, "/api/meta"))
     admin.locator("#meta").get_by_role("button", name="Atualizar").click()
     expect(admin.locator("#meta .warnbox")).to_have_text(REVOKED)
-    expect(admin.locator("#meta").get_by_role("button", name="Conectar de novo")).to_be_visible()
+    block = admin.locator(f"#meta [data-conn='{BUSINESS}']")
+    expect(block).to_contain_text("acesso revogado na Meta; reconecte em Adicionar contas")
+    expect(block.get_by_role("button", name="Adicionar contas")).to_be_visible()
+    expect(admin.locator("#metaaccounts tbody tr.stale")).to_have_count(2)  # kept, no numbers
     page.goto(f"{base}/#/cliente/{clinic['id']}")
     expect(page.locator("#clientmeta .warnbox")).to_have_text(META_DOWN)
     expect(page.locator("#clientmeta")).not_to_contain_text("Investido")
     admin.goto(f"{base}/#/cliente/{clinic['id']}")
     expect(admin.locator("#clientmeta .warnbox")).to_have_text(REVOKED)
+
+
+def test_two_portfolios_each_with_its_block(live, device, fake_meta):
+    """Piero connects the agency's portfolio, then the client's own one (in Meta he picks a
+    different business): one block per portfolio, the accounts labelled by theirs, the
+    balance's "reconecte" hint, disconnecting one, and the history naming who did what."""
+    base, auth, store = live
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    page.goto(f"{base}/#/entrar/{token}")
+    page.fill("#join input[name=name]", "Piero Sales")
+    page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(page.locator("#mechip")).to_contain_text("Piero")
+    page.goto(f"{base}/#/equipe")
+    card = page.locator("#meta")
+    card.get_by_role("button", name="Conectar Meta").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    expect(card.locator("[data-conn]")).to_have_count(1)
+
+    fake_meta.business = OTHER_BUSINESS  # in Meta's dialog he picks the client's portfolio
+    card.get_by_role("button", name="Conectar outro portfólio").click()
+    expect(page.locator("#toast")).to_have_text("Meta conectada")
+    blocks = card.locator("[data-conn]")
+    expect(blocks).to_have_count(2)
+    expect(blocks.nth(0)).to_contain_text("Portfólio Agência Exemplo")
+    expect(blocks.nth(1)).to_contain_text("Portfólio Delta Imóveis")
+    for i in range(2):
+        expect(blocks.nth(i)).to_contain_text(
+            re.compile(r"conectado à Pauta em \d\d/\d\d/\d{4} \(por Piero Sales\)")
+        )
+        expect(blocks.nth(i).get_by_role("button", name="Adicionar contas")).to_be_visible()
+        expect(blocks.nth(i).get_by_role("button", name="Desconectar")).to_be_visible()
+    rows = page.locator("#metaaccounts tbody tr")
+    expect(rows).to_have_count(3)
+    expect(rows.nth(0)).to_contain_text("Portfólio Agência Exemplo")
+    expect(rows.nth(2)).to_contain_text("Delta Imóveis")
+    expect(rows.nth(2)).to_contain_text("Portfólio Delta Imóveis")
+    expect(rows.nth(2)).to_contain_text("920,00")  # left before the client's limit
+
+    # Meta refuses the balance: the hint still points at Adicionar contas
+    fake_meta.refuse_balance = True
+    card.get_by_role("button", name="Atualizar").click()
+    expect(rows.nth(0)).to_contain_text("sem permissão · reconecte em Adicionar contas")
+    fake_meta.refuse_balance = False
+
+    # the client's account gets its client: the history will say so
+    delta = store.save_client({"name": "Delta Imóveis"})
+    page.reload()
+    page.locator("#metaaccounts select[data-link='444']").select_option(str(delta["id"]))
+    expect(page.locator("#toast")).to_have_text("Conta vinculada a Delta Imóveis")
+
+    # disconnect the client's portfolio: one block left, its account stays greyed
+    page.once("dialog", lambda d: d.accept())
+    card.locator(f"[data-conn='{OTHER_BUSINESS}']").get_by_role(
+        "button", name="Desconectar"
+    ).click()
+    expect(page.locator("#toast")).to_have_text("Portfólio desconectado")
+    expect(card.locator("[data-conn]")).to_have_count(1)
+    expect(card.locator("[data-conn]")).to_contain_text("Portfólio Agência Exemplo")
+    stale = page.locator("#metaaccounts tbody tr.stale")
+    expect(stale).to_have_count(1)
+    expect(stale).to_contain_text("Delta Imóveis")
+    expect(stale).to_contain_text("não aparece mais na Meta")
+
+    # the history, newest first, with the actor
+    hist = page.locator("#metalog")
+    hist.locator("summary").click()
+    lines = hist.locator("li")
+    expect(lines).to_have_count(4)
+    expect(lines.nth(0)).to_contain_text("Piero Sales desconectou o portfólio Delta Imóveis")
+    expect(lines.nth(1)).to_contain_text(
+        "Piero Sales vinculou a conta Delta Imóveis a Delta Imóveis"
+    )
+    expect(lines.nth(2)).to_contain_text("Piero Sales conectou o portfólio Delta Imóveis")
+    expect(lines.nth(3)).to_contain_text("Piero Sales conectou o portfólio Agência Exemplo")
+    expect(lines.nth(3)).to_contain_text(re.compile(r"· \d\d/\d\d \d\d:\d\d$"))
+    assert [e["kind"] for e in store.meta_log_rows()] == [
+        "disconnected",
+        "linked",
+        "connected",
+        "connected",
+    ]

@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 from test_meta_api import connected
 
-from fakemeta import expected
+from fakemeta import BUSINESS, expected
 from pauta import server as server_mod
 from pauta.meta import NOT_CONNECTED
 from softpasskey import call
@@ -239,7 +239,8 @@ def test_manual_sync_is_for_admins_once_in_15_minutes(team, fake_meta, monkeypat
     assert 0 < out["retry_in_s"] <= 900
     monkeypatch.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
     assert call(f"{base}/api/meta/sync", {}, nato)[0] == 200
-    call(f"{base}/api/meta", cookie=nato, method="DELETE")
+    status, out, _ = call(f"{base}/api/meta/connections/{BUSINESS}", cookie=nato, method="DELETE")
+    assert status == 200 and not out["connected"]
     status, out, _ = call(f"{base}/api/meta/sync", {}, nato)
     assert status == 409 and out["error"] == NOT_CONNECTED
 

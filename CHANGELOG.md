@@ -9,6 +9,22 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- **Equipe → Meta** passa a ter **uma conexão por portfólio empresarial** (o Login para
+  Empresas da Meta conecta um portfólio por vez, e o usuário do sistema da Pauta pode viver
+  no portfólio de um cliente): cada portfólio conectado aparece num bloco próprio,
+  "Portfólio *nome* conectado à Pauta em *data* (por *pessoa*)", com **Adicionar contas**
+  (entra de novo nesse portfólio) e **Desconectar** (só ele; o acesso do lado da Meta se
+  tira nas Configurações do negócio desse portfólio). Conectar um segundo portfólio não
+  derruba mais o primeiro: **Conectar outro portfólio** soma. As contas de anúncios de todos
+  os portfólios ficam na mesma tabela, cada uma dizendo de qual portfólio é; um acesso
+  revogado na Meta marca só aquele portfólio ("acesso revogado na Meta; reconecte em
+  Adicionar contas") e os outros seguem lendo e sincronizando. Um **Histórico** (quem
+  conectou, desconectou, vinculou ou desvinculou o quê, e quando) fecha o cartão e sai no
+  export. A conexão antiga é migrada sozinha na primeira subida (o arquivo do token ganha o
+  número do portfólio). API: `POST /api/meta/connect` aceita `{"business_id"}`, `DELETE
+  /api/meta/connections/{business_id}` substitui `DELETE /api/meta`, `GET /api/meta` traz
+  `connections`, novo `GET /api/meta/log`; `/metrics` ganha `meta.connections` e
+  `meta.revoked`; `pauta meta status` lista os portfólios. Esquema v10 (aditivo).
 - Aba **Campanhas** (quando a Meta está configurada; todo o time vê): um bloco por cliente
   com as campanhas acompanhadas e os números do período (investido, leads = cliques no link,
   custo por lead, alcance, impressões), mais o total do cliente. No topo, o **período** com

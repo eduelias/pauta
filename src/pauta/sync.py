@@ -1,13 +1,16 @@
 """The Meta sync (decision 8, phase 2): which campaigns are live, and their daily numbers.
 
-`run()` walks every ad account linked to a client: Meta's campaign list keeps the `campaign`
-rows (new ACTIVE ones appear, ones Meta stopped delivering end), then the last `days` days
-of per-campaign insights are written to `insight`; a campaign seen for the first time also
-gets its history back to its start (Meta keeps 37 months). Finally done "Criar/Reativar
-campanha" requests whose Ads Manager link names a campaign are tied to it.
+`run()` walks every connected portfolio and, under each, every ad account linked to a
+client: Meta's campaign list keeps the `campaign` rows (new ACTIVE ones appear, ones Meta
+stopped delivering end), then the last `days` days of per-campaign insights are written to
+`insight`; a campaign seen for the first time also gets its history back to its start (Meta
+keeps 37 months). Finally done "Criar/Reativar campanha" requests whose Ads Manager link
+names a campaign are tied to it.
 
-One account's trouble doesn't stop the others; a revoked token or a throttle does (nothing
-retries in a loop: the next scheduled pass tries again). `Scheduler` runs it in a daemon
+One account's trouble doesn't stop the others; a revoked token stops only its own
+connection's accounts (the other portfolios still sync); a throttle stops the pass (nothing
+retries in a loop: the next scheduled pass tries again). Each connection gets its
+`last_sync` and the first error met under it. `Scheduler` runs it in a daemon
 thread from `pauta serve`: a first pass a minute after start, then hourly over today and
 yesterday, and nightly after 03:10 over the last 28 days (conversions keep arriving for up
 to 28 days after a click). `pauta meta sync` runs one pass from the shell.
@@ -23,7 +26,7 @@ from datetime import time as dtime
 
 from . import obs
 from .db import Store
-from .meta import NOT_CONNECTED, Meta, MetaError
+from .meta import LEGACY, NOT_CONNECTED, Meta, MetaError
 
 HOURLY_DAYS = 2
 NIGHTLY_DAYS = 28
@@ -38,46 +41,50 @@ def _stamp() -> str:
 
 
 def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> dict:
-    """One pass over every linked ad account. Returns {accounts, campaigns_new,
-    insight_rows, errors}; per-account errors are collected, not raised, except that a
-    revoked token or a throttle ends the pass early. Raises MetaError when Meta is not
-    connected at all (nothing to sync)."""
-    if not meta.connected:
+    """One pass over every connection and, under each, every ad account linked to a client.
+    Returns {connections, accounts, campaigns_new, insight_rows, errors, linked}; per-account
+    errors are collected, not raised. A revoked token (409) ends that connection's part and
+    the next connection goes on; a throttle (503) ends the pass. Each connection's
+    `last_sync` is written; `meta.last_sync`/`sync_error` sum the pass up for /metrics.
+    Raises MetaError when nothing is connected at all (nothing to sync)."""
+    conns = [c for c in meta.connections() if c["business_id"] != LEGACY]
+    if not conns:
         raise MetaError(NOT_CONNECTED, 409)
     today = today or date.today()
     days = max(1, int(days))
     since = today - timedelta(days=days - 1)
-    out: dict = {"accounts": 0, "campaigns_new": 0, "insight_rows": 0, "errors": []}
+    out: dict = {
+        "connections": len(conns),
+        "accounts": 0,
+        "campaigns_new": 0,
+        "insight_rows": 0,
+        "errors": [],
+    }
     fetched = _stamp()
-    for account in store.meta_accounts():
-        if not account["client"]:
-            continue
-        aid = account["id"]
-        out["accounts"] += 1
-        try:
-            metas = meta.campaigns(aid)
-            res = store.sync_campaigns(aid, metas, today.isoformat())
-            rows = meta.daily_insights(aid, since, today, today=today)
-            out["insight_rows"] += store.store_insights(rows, fetched)
-            starts = {m["id"]: m.get("started") for m in metas}
-            for mid in res["new"]:
-                out["campaigns_new"] += 1
-                started = starts.get(mid)
-                if not started or date.fromisoformat(started) >= since:
-                    continue
-                history = meta.daily_insights(
-                    aid,
-                    date.fromisoformat(started),
-                    since - timedelta(days=1),
-                    meta_ids=[mid],
-                    today=today,
+    accounts = [a for a in store.meta_accounts() if a["client"]]
+    throttled = False
+    for conn in conns:
+        bid = conn["business_id"]
+        mine = [a for a in accounts if _business(a, meta, conns) == bid]
+        first_error = ""
+        for account in mine:
+            aid = account["id"]
+            out["accounts"] += 1
+            try:
+                _sync_account(store, meta, aid, bid, since, today, fetched, out)
+            except MetaError as e:
+                out["errors"].append(
+                    {"account": aid, "business_id": bid, "error": str(e), "status": e.status}
                 )
-                out["insight_rows"] += store.store_insights(history, fetched)
-        except MetaError as e:
-            out["errors"].append({"account": aid, "error": str(e), "status": e.status})
-            obs.event("meta_sync_account_failed", logging.WARNING, status=e.status)
-            if e.status in (409, 503):  # revoked, or Meta asked for a pause: stop here
-                break
+                first_error = first_error or str(e)
+                obs.event("meta_sync_account_failed", logging.WARNING, status=e.status)
+                if e.status == 503:  # Meta asked for a pause: stop the whole pass
+                    throttled = True
+                if e.status in (409, 503):  # revoked: the rest of this connection would too
+                    break
+        store.set_connection_sync(bid, fetched, first_error)
+        if throttled:
+            break
     out["linked"] = store.link_requests_to_campaigns()
     error = out["errors"][0]["error"] if out["errors"] else ""
     meta.last_sync, meta.sync_error = fetched, error
@@ -86,12 +93,45 @@ def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> di
         "meta_sync",
         logging.WARNING if error else logging.INFO,
         days=days,
+        connections=len(conns),
         accounts=out["accounts"],
         campaigns_new=out["campaigns_new"],
         insight_rows=out["insight_rows"],
         errors=len(out["errors"]),
     )
     return out
+
+
+def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
+    """Which connection reads an account: the one its row says, else the one the last Meta
+    read saw it under, else (rows from before v10, one connection) the only one."""
+    return (
+        account.get("business_id")
+        or meta.business_of.get(account["id"])
+        or (conns[0]["business_id"] if len(conns) == 1 else "")
+    )
+
+
+def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
+    metas = meta.campaigns(aid, business_id=bid)
+    res = store.sync_campaigns(aid, metas, today.isoformat())
+    rows = meta.daily_insights(aid, since, today, today=today, business_id=bid)
+    out["insight_rows"] += store.store_insights(rows, fetched)
+    starts = {m["id"]: m.get("started") for m in metas}
+    for mid in res["new"]:
+        out["campaigns_new"] += 1
+        started = starts.get(mid)
+        if not started or date.fromisoformat(started) >= since:
+            continue
+        history = meta.daily_insights(
+            aid,
+            date.fromisoformat(started),
+            since - timedelta(days=1),
+            meta_ids=[mid],
+            today=today,
+            business_id=bid,
+        )
+        out["insight_rows"] += store.store_insights(history, fetched)
 
 
 def due(now: datetime, last_hourly: datetime | None, last_nightly: datetime | None) -> set[str]:

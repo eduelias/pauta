@@ -75,8 +75,9 @@ MANUAL_SYNC_SECONDS = 15 * 60  # "Atualizar agora" (POST /api/meta/sync) at most
 SYNC_TOO_SOON = "a última atualização foi há menos de 15 minutos; espere um pouco"
 
 
-def _stale(row: dict) -> dict:
-    """A meta_account row as an account entry without numbers (not in Meta's latest list)."""
+def _stale(row: dict, names: dict[str, str] | None = None) -> dict:
+    """A meta_account row as an account entry without numbers (not in Meta's latest list),
+    labelled with its portfolio (`names`: business id -> name)."""
     return {
         "id": row["id"],
         "name": row["name"],
@@ -85,6 +86,8 @@ def _stale(row: dict) -> dict:
         "status_label": ACCOUNT_STATUS.get(row["status"], ""),
         "client": row["client"],
         "seen": row["seen"],
+        "business_id": row.get("business_id") or "",
+        "business_name": (names or {}).get(row.get("business_id") or "", ""),
     }
 
 
@@ -114,6 +117,11 @@ def make_handler(
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
     meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
+    meta.on_change = store.sync_connections  # the connection rows follow the token files...
+    store.sync_connections(meta.connections())  # ...from the start (a migrated file too)
+    for row in store.meta_accounts():  # which portfolio reads each account, before any read
+        if row["business_id"]:
+            meta.business_of.setdefault(row["id"], row["business_id"])
     state = store.sync_state()  # the last sync outlives a restart, for /metrics
     meta.last_sync, meta.sync_error = state["last_sync"], state["sync_error"]
     manual_sync = {"at": 0.0}  # when an admin last asked for a sync, with its lock
@@ -399,15 +407,24 @@ def make_handler(
                     "connected": drive.connected,
                     "error": drive.error,
                 },
-                "meta": {
-                    "enabled": meta.enabled,
-                    "connected": meta.connected,
-                    "error": meta.error,
-                    "last_sync": meta.last_sync,
-                    "sync_error": meta.sync_error,
-                },
+                "meta": self._meta_metrics(),
             }
             self._json(200, doc)
+
+        @staticmethod
+        def _meta_metrics() -> dict:
+            """`connected` is "at least one portfolio reads"; the counts say how many are
+            connected and how many Meta revoked (du7's watchdog alerts on those)."""
+            conns = meta.connections()
+            return {
+                "enabled": meta.enabled,
+                "connected": any(c["state"] == "ok" for c in conns),
+                "connections": len(conns),
+                "revoked": sum(1 for c in conns if c["state"] == "revoked"),
+                "error": next((c["error"] for c in conns if c["error"]), ""),
+                "last_sync": meta.last_sync,
+                "sync_error": meta.sync_error,
+            }
 
         def do_GET(self):  # noqa: N802
             self._observed("GET")
@@ -593,12 +610,13 @@ def make_handler(
                 return {"connected": True, "accounts": [], "error": error}
             linked = store.client(int(cid))["meta_accounts"]
             rows = {r["id"]: r for r in store.meta_accounts()}
+            names = {c["business_id"]: c["business_name"] for c in meta.connections()}
             return {
                 "connected": True,
                 "accounts": [
                     {**live[a["id"]], "stale": False}
                     if a["id"] in live
-                    else {**_stale(rows[a["id"]]), "stale": True}
+                    else {**_stale(rows[a["id"]], names), "stale": True}
                     for a in linked
                 ],
             }
@@ -841,10 +859,32 @@ def make_handler(
 
         @route("GET", "/api/meta", "admin")
         def meta_status(self, viewer, _body):
-            out = meta.status()
-            if out["connected"]:
+            """The connections (one per portfolio, with who connected it and its last sync)
+            and every account under them. Meta failing is reported in `error`, with the
+            accounts Pauta already knew (stale), never as a failed page: the admin still
+            sees each connection's state and can act on it."""
+            accounts, failed = None, ""
+            if meta.connected:
                 refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
-                out["accounts"] = self._with_clients(meta.accounts(refresh=refresh))
+                try:
+                    accounts = meta.accounts(refresh=refresh)
+                except MetaError as e:
+                    accounts, failed = [], str(e)
+            out = meta.status()  # after the read: a 190 just now shows on its connection
+            out["connections"] = self._connections()
+            out["error"] = failed or out["error"]
+            if accounts is not None:
+                out["accounts"] = self._with_clients(accounts)
+            return out
+
+        def _connections(self) -> list[dict]:
+            """meta.connections() (the files, the truth) with what the rows add: the
+            connecting person's name and each connection's last sync."""
+            rows = {r["business_id"]: r for r in store.connections()}
+            out = []
+            for c in meta.connections():
+                row = rows.get(c["business_id"]) or {}
+                out.append({**c, "by_name": row.get("by_name"), "last_sync": row.get("last_sync")})
             return out
 
         def _with_clients(self, accounts: list[dict]) -> list[dict]:
@@ -853,6 +893,7 @@ def make_handler(
             an earlier read but missing now come last, with `stale` and no numbers."""
             rows = {r["id"]: r for r in store.meta_accounts()}
             names = {c["id"]: c["name"] for c in store.clients()}
+            portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
             out = []
             for a in accounts:
                 row = rows.pop(a["id"], None)
@@ -861,23 +902,38 @@ def make_handler(
                 suggested = {"id": sid, "name": names[sid]} if sid in names else None
                 out.append({**a, "client": client, "suggested": suggested, "stale": False})
             for row in rows.values():
-                out.append({**_stale(row), "suggested": None, "stale": True})
+                out.append({**_stale(row, portfolios), "suggested": None, "stale": True})
             return out
 
         @route("PATCH", "/api/meta/accounts/([0-9]{3,20})", "admin")
         def meta_link(self, viewer, body, aid):
             if "client" not in body:
                 raise Invalid("informe o cliente (ou null para desvincular)")
-            return store.link_meta_account(aid, body["client"], viewer["account"])
+            row = store.link_meta_account(aid, body["client"], viewer["account"])
+            store.meta_log(
+                "linked" if row["client"] else "unlinked",
+                row["business_id"],
+                viewer["account"],
+                account_id=row["id"],
+                account_name=row["name"],
+                client_name=(row["client"] or {}).get("name"),
+            )
+            return row
 
         @route("POST", "/api/meta/connect", "admin")
-        def meta_connect(self, viewer, _body):
-            return {"url": meta.start_connect(viewer["account"])}
+        def meta_connect(self, viewer, body):
+            """The login URL. `business_id` set: "Adicionar contas" on that connection (a
+            re-login on the same portfolio); unset: "Conectar outro portfólio"."""
+            business = body.get("business_id") if isinstance(body, dict) else None
+            if business is not None and not (isinstance(business, str) and business.isdigit()):
+                raise Invalid("portfólio inválido")
+            return {"url": meta.start_connect(viewer["account"], business)}
 
         @route("GET", "/api/meta/callback", "open")
         def meta_callback(self, viewer, _body):
             """Meta's login sends the admin back here. The SameSite=Strict cookie doesn't come
-            along on that cross-site redirect, so the one-time state is the authorization."""
+            along on that cross-site redirect, so the one-time state is the authorization.
+            Whatever portfolio the login came back for is saved as its own connection."""
             q = parse_qs(urlparse(self.path).query)
             state, code = q.get("state", [""])[0], q.get("code", [""])[0]
             try:
@@ -886,17 +942,42 @@ def make_handler(
                         meta.take_state(state)
                     obs.event("meta_connect_cancelled", logging.WARNING)
                     raise MetaError("cancelado", 400, "cancelado")
-                meta.finish_connect(state, code)
+                conn = meta.finish_connect(state, code)
             except MetaError as e:
                 self._redirect(f"/#/equipe?meta=erro&motivo={e.reason}")
                 return SENT
+            if conn:  # not a repeated callback
+                store.meta_log(
+                    "connected",
+                    conn["business_id"],
+                    conn["by"],
+                    business_name=conn["business_name"],
+                )
             self._redirect("/#/equipe?meta=conectado")
             return SENT
 
-        @route("DELETE", "/api/meta", "admin")
-        def meta_disconnect(self, viewer, _body):
-            meta.disconnect()
-            return meta.status()
+        @route("DELETE", "/api/meta/connections/([0-9]{1,30}|legacy)", "admin")
+        def meta_disconnect(self, viewer, _body, business_id):
+            """Forget one portfolio's token. Its accounts stay as rows (stale) so the
+            client mapping survives a reconnect."""
+            conn = next((c for c in meta.connections() if c["business_id"] == business_id), None)
+            if not conn:
+                raise NotFound("conexão não encontrada")
+            meta.disconnect(business_id)
+            store.meta_log(
+                "disconnected",
+                business_id,
+                viewer["account"],
+                business_name=conn["business_name"],
+            )
+            out = meta.status()
+            out["connections"] = self._connections()
+            return out
+
+        @route("GET", "/api/meta/log", "admin")
+        def meta_log(self, viewer, _body):
+            """The latest 20 lines of the Meta history, newest first, with the actor."""
+            return store.meta_log_rows(20)
 
         @route("PUT", "/api/options/(kind|goal|segment)", "admin")
         def options(self, viewer, body, lst):

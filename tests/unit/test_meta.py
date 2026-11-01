@@ -12,16 +12,18 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from fakemeta import APP_ID, CONFIG_ID, SECRET, oauth_error, secret
+from fakemeta import APP_ID, BUSINESS, CONFIG_ID, SECRET, oauth_error, secret
 from pauta import meta as meta_mod
 from pauta.meta import (
     NO_BALANCE,
     NO_BALANCE_ANSWER,
+    NO_BUSINESS,
     NO_NUMBERS,
     NOT_CONNECTED,
     REVOKED,
     THROTTLED,
     UNAVAILABLE,
+    UNKNOWN_BUSINESS,
     Meta,
     MetaError,
     cents,
@@ -56,13 +58,8 @@ def test_off_without_app_config_or_secret(store):
     secret(store.path)
     assert m.enabled and not m.connected
     assert not Meta(store.path, app_id=APP_ID).enabled  # no config id
-    assert m.status() == {
-        "enabled": True,
-        "connected": False,
-        "business_name": "",
-        "connected_at": "",
-        "error": "",
-    }
+    assert m.status() == {"enabled": True, "connected": False, "connections": [], "error": ""}
+    assert m.connections() == [] and not m.error
     with pytest.raises(MetaError) as e:
         m.accounts()
     assert e.value.status == 409
@@ -106,24 +103,42 @@ def test_dialog_url(meta_on):
 
 def test_connect_saves_the_token_privately(meta_on, fake_meta):
     connect(meta_on, fake_meta, account=7)
-    saved = json.loads(meta_on.token_file.read_text())
+    token_file = meta_on.token_file(BUSINESS)
+    assert token_file.name == "pauta.db.meta-token.300000000000003"
+    saved = json.loads(token_file.read_text())
     assert saved["access_token"] == fake_meta.token
     assert saved["business_id"] == "300000000000003"
     assert saved["business_name"] == "Agência Exemplo" and saved["by"] == 7
     assert saved["connected_at"].endswith("Z")
-    assert stat.S_IMODE(os.stat(meta_on.token_file).st_mode) == 0o600
+    assert saved["state"] == "ok" and saved["error"] == ""
+    assert stat.S_IMODE(os.stat(token_file).st_mode) == 0o600
     st = meta_on.status()
-    assert st["connected"] and st["business_name"] == "Agência Exemplo"
+    assert st["connected"] and st["error"] == ""
+    assert st["connections"] == [
+        {
+            "business_id": BUSINESS,
+            "business_name": "Agência Exemplo",
+            "connected_at": saved["connected_at"],
+            "by": 7,
+            "state": "ok",
+            "error": "",
+        }
+    ]
     assert fake_meta.token not in json.dumps(st) and SECRET not in json.dumps(st)
-    meta_on.disconnect()
-    assert not meta_on.token_file.exists() and not meta_on.status()["connected"]
-    meta_on.disconnect()  # already gone is fine
+    meta_on.disconnect(BUSINESS)
+    assert not token_file.exists() and not meta_on.status()["connected"]
+    meta_on.disconnect(BUSINESS)  # already gone is fine
+    meta_on.disconnect()  # and so is "everything" with nothing there
 
 
-def test_without_a_business_id_the_system_user_names_it(meta_on, fake_meta):
+def test_without_a_business_id_the_system_user_names_and_keys_it(meta_on, fake_meta):
     fake_meta.business = None
     connect(meta_on, fake_meta)
-    assert meta_on.status()["business_name"] == "Pauta (usuário do sistema)"
+    (conn,) = meta_on.connections()
+    assert conn["business_name"] == "Pauta (usuário do sistema)"
+    assert conn["business_id"] == "500000000000005"  # the system user's own id
+    assert meta_on.token_file("500000000000005").exists()
+    assert [a["id"] for a in meta_on.accounts()] == ["111", "222"]
 
 
 def test_state_is_one_time_and_expires(meta_on, fake_meta, monkeypatch):
@@ -191,6 +206,8 @@ def test_accounts_this_month_in_cents(linked, fake_meta):
         "currency": "BRL",
         "status": 1,
         "status_label": "Ativa",
+        "business_id": BUSINESS,
+        "business_name": "Agência Exemplo",
         "numbers": True,
         "spend_cents": 123456,
         "impressions": 48210,
@@ -241,10 +258,18 @@ def test_revoked_token_says_connect_again(linked, fake_meta):
     with pytest.raises(MetaError) as e:
         linked.accounts()
     assert e.value.status == 409 and str(e.value) == REVOKED
-    assert linked.status()["error"] == REVOKED and linked.status()["connected"]
+    st = linked.status()
+    assert st["error"] == REVOKED and st["connected"]  # still there, to be reconnected
+    assert st["connections"][0]["state"] == "revoked" and linked.error == REVOKED
+    # the mark lives in the file: a restart still knows
+    assert (
+        Meta(linked.secret_file.with_suffix(""), APP_ID, CONFIG_ID).connections()[0]["state"]
+        == "revoked"
+    )
     fake_meta.token_invalid = False
     connect(linked, fake_meta)  # connecting again clears it
     assert linked.status()["error"] == "" and len(linked.accounts()) == 2
+    assert linked.connections()[0]["state"] == "ok"
 
 
 def test_revoked_while_reading_the_balance(linked, monkeypatch):
@@ -252,8 +277,8 @@ def test_revoked_while_reading_the_balance(linked, monkeypatch):
     whole list's problem, like a throttle in one item."""
     real = linked._batch
 
-    def revoke_in_balance(reads):
-        answers = real(reads)
+    def revoke_in_balance(reads, business_id):
+        answers = real(reads, business_id)
         answers[1] = (400, oauth_error(190))
         return answers
 
@@ -262,12 +287,13 @@ def test_revoked_while_reading_the_balance(linked, monkeypatch):
         linked.accounts()
     assert e.value.status == 409 and linked.error == REVOKED
 
-    def throttle_in_insights(reads):
-        answers = real(reads)
+    def throttle_in_insights(reads, business_id):
+        answers = real(reads, business_id)
         answers[0] = (400, oauth_error(4))
         return answers
 
-    linked.error = ""
+    linked._mark(BUSINESS, "ok", "")
+    assert not linked.error
     monkeypatch.setattr(linked, "_batch", throttle_in_insights)
     with pytest.raises(MetaError) as e:
         linked.accounts(refresh=True)
@@ -275,10 +301,13 @@ def test_revoked_while_reading_the_balance(linked, monkeypatch):
 
 
 def test_batch_without_a_token_file(linked):
-    linked.token_file.unlink()
+    with pytest.raises(MetaError) as e:  # a portfolio that isn't connected
+        linked._batch(["act_111?fields=spend_cap"], "999")
+    assert e.value.status == 409 and str(e.value) == UNKNOWN_BUSINESS
+    linked.token_file(BUSINESS).unlink()
     with pytest.raises(MetaError) as e:
-        linked._batch(["act_111?fields=spend_cap"])
-    assert e.value.status == 409
+        linked._batch(["act_111?fields=spend_cap"], BUSINESS)
+    assert e.value.status == 409 and str(e.value) == NOT_CONNECTED
 
 
 def test_one_accounts_missing_numbers_dont_fail_the_list(linked, fake_meta, caplog):
@@ -411,14 +440,29 @@ def test_a_short_or_malformed_answer_is_unavailable(linked, fake_meta, monkeypat
     assert e.value.status == 502 and str(e.value) == UNAVAILABLE
 
 
-def test_business_id_must_be_digits(meta_on, fake_meta):
-    """The business id goes into a Graph path: anything but digits is never asked for."""
+def test_business_id_must_be_digits(meta_on, fake_meta, monkeypatch):
+    """The business id goes into a Graph path and a file name: anything but digits is never
+    asked for, and the system user's id keys the connection instead."""
     fake_meta.business = "../me?fields=accounts"
     connect(meta_on, fake_meta)
-    saved = json.loads(meta_on.token_file.read_text())
-    assert saved["business_id"] == ""
-    assert saved["business_name"] == "Pauta (usuário do sistema)"
+    (conn,) = meta_on.connections()
+    assert conn["business_id"] == "500000000000005"
+    assert conn["business_name"] == "Pauta (usuário do sistema)"
     assert fake_meta.seen == ["/me"]
+    files = {f.name for f in meta_on.secret_file.parent.iterdir() if "token" in f.name}
+    assert files == {"pauta.db.meta-token.500000000000005"}
+    # neither id: nothing to key the connection by, so nothing is saved
+    real = meta_on._get
+
+    def no_ids(path, params, token=None):
+        status, doc = real(path, params, token)
+        return (status, {"name": "x"}) if path == "/me" else (status, doc)
+
+    monkeypatch.setattr(meta_on, "_get", no_ids)
+    back = fake_meta.approve(meta_on.start_connect(1))
+    with pytest.raises(MetaError) as e:
+        meta_on.finish_connect(back["state"], back["code"])
+    assert str(e.value) == NO_BUSINESS and len(meta_on.connections()) == 1
 
 
 def test_meta_down_or_unreachable(linked, fake_meta, store):
@@ -468,12 +512,12 @@ def test_odd_answers(linked, monkeypatch):
     # the batch answer itself is odd: not a list, too short, items without a JSON body
     monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, {"data": []}))
     with pytest.raises(MetaError) as e:
-        linked._batch(["act_111?fields=spend_cap"])
+        linked._batch(["act_111?fields=spend_cap"], BUSINESS)
     assert e.value.status == 502
     monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, [{"code": 200, "body": "{"}]))
-    assert linked._batch(["a", "b"]) == [(200, {}), (None, {})]
+    assert linked._batch(["a", "b"], BUSINESS) == [(200, {}), (None, {})]
     monkeypatch.setattr(linked, "_post", lambda *a, **k: (200, [{"code": "x", "body": "[]"}]))
-    assert linked._batch(["a"]) == [(None, {})]
+    assert linked._batch(["a"], BUSINESS) == [(None, {})]
 
 
 def test_logs_never_carry_the_token_code_or_secret(meta_on, fake_meta, caplog):

@@ -8,6 +8,13 @@ Insights are deterministic from the day of month (spend 10.00 + day cents, impre
 a test can predict any sum; a range without `time_increment` gives one row per campaign
 with reach 500 × days.
 
+A token belongs to the business `fake.business` named when it was minted (Facebook Login
+for Business connects one portfolio per login): `/me` reports that business, and the token
+reads `fake.accounts_by_business[business]` when the test set it, else `fake.accounts`.
+`BUSINESS` is "Agência Exemplo" with accounts 111 and 222; `OTHER_BUSINESS` ("Delta
+Imóveis") is ready with account 444: set `fake.business = OTHER_BUSINESS` before a login to
+connect it. `fake.revoke(business)` kills that business's tokens only (190).
+
 Tests never talk to the real Meta. Point a Meta at it with
 `Meta(path, app_id=APP_ID, config_id=CONFIG_ID, graph=fake.graph, dialog=fake.dialog)` and
 write SECRET to `<db>.meta-secret` (see `secret()`).
@@ -31,6 +38,8 @@ APP_ID = "1000000000000001"
 CONFIG_ID = "2000000000000002"
 SECRET = "fake-app-secret-0123456789abcdef"
 BUSINESS = "300000000000003"
+OTHER_BUSINESS = "400000000000004"  # a client's own portfolio (where Piero's system user lives)
+BUSINESSES = {BUSINESS: "Agência Exemplo", OTHER_BUSINESS: "Delta Imóveis"}
 
 ACCOUNTS = [
     {
@@ -48,7 +57,25 @@ ACCOUNTS = [
         "account_status": 2,
     },
 ]
+OTHER_ACCOUNTS = [
+    {
+        "id": "act_444",
+        "account_id": "444",
+        "name": "Delta Imóveis",
+        "currency": "BRL",
+        "account_status": 1,
+    },
+]
 INSIGHTS = {
+    "444": {
+        "spend": "80.00",
+        "impressions": "4000",
+        "reach": "3000",
+        "inline_link_clicks": "40",
+        "cost_per_inline_link_click": "2.00",
+        "date_start": "2026-10-01",
+        "date_stop": "2026-10-31",
+    },
     "111": {
         "spend": "1234.56",
         "impressions": "48210",
@@ -104,6 +131,17 @@ CAMPAIGNS = {
             "created_time": "2026-10-15T08:00:00-0300",
         },
     ],
+    "444": [
+        {
+            "id": "23850044",
+            "name": "Apartamentos Centro",
+            "objective": "OUTCOME_LEADS",
+            "effective_status": "ACTIVE",
+            "status": "ACTIVE",
+            "start_time": "2026-10-10T00:00:00-0300",
+            "created_time": "2026-10-09T10:00:00-0300",
+        },
+    ],
 }
 
 
@@ -145,6 +183,7 @@ BALANCE = {
         "amount_spent": "123456",
     },
     "222": {"is_prepay_account": False, "spend_cap": "0", "amount_spent": "0"},
+    "444": {"is_prepay_account": True, "spend_cap": "100000", "amount_spent": "8000"},
 }
 
 
@@ -182,10 +221,14 @@ class FakeMeta:
     def __init__(self):
         self.codes: dict[str, str] = {}  # code -> the redirect_uri it was issued for
         self.token_n = 0
-        self.token = ""
-        self.business: str | None = BUSINESS  # what /me says client_business_id is
-        self.accounts = list(ACCOUNTS)  # what the token reads: the accounts picked in Meta
+        self.token = ""  # the latest token minted
+        self.tokens: dict[str, str | None] = {}  # every token -> the business it was minted for
+        self.business: str | None = BUSINESS  # the portfolio the next login connects
+        self.accounts = list(ACCOUNTS)  # what a token reads: the accounts picked in Meta...
+        # ...unless its business has its own list here (two portfolios, two lists)
+        self.accounts_by_business: dict[str | None, list] = {OTHER_BUSINESS: list(OTHER_ACCOUNTS)}
         self.default_accounts = ACCOUNTS
+        self.invalid_tokens: set[str] = set()  # revoked one portfolio at a time (code 190)
         self.refuse_balance = False  # the token may not read funding details (code 200)
         self.fail_insights: set[str] = set()  # account ids whose insights answer 400 (#100)
         self.timeouts: set[str] = set()  # account ids whose batch items time out (null entries)
@@ -234,6 +277,13 @@ class FakeMeta:
         self.httpd.shutdown()
         self.httpd.server_close()
 
+    def revoke(self, business: str) -> None:
+        """The portfolio's owner removed Pauta in Business Settings: its tokens die."""
+        self.invalid_tokens |= {t for t, b in self.tokens.items() if b == business}
+
+    def tokens_of(self, business: str) -> list[str]:
+        return [t for t, b in self.tokens.items() if b == business]
+
     # ---- the login dialog ------------------------------------------------------------------
 
     def approve(self, url: str) -> dict:
@@ -276,17 +326,17 @@ class FakeMeta:
         # the token: a Bearer header on a GET, a form field on the batch POST
         auth = h.headers.get("Authorization") or ""
         token = form.get("access_token") or auth.removeprefix("Bearer ")
-        if not self.token or token != self.token or self.token_invalid:
+        if token not in self.tokens or token in self.invalid_tokens or self.token_invalid:
             return h._send(400, oauth_error(190, "Error validating access token"))
         proof = hmac.new(SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()
         if (form.get("appsecret_proof") or q.get("appsecret_proof")) != proof:
             return h._send(400, oauth_error(100, "Invalid appsecret_proof"))
         if method == "POST" and path == "/" and "batch" in form:
-            return h._send(200, self._batch(form))
+            return h._send(200, self._batch(form, token))
         self.seen.append(path)
-        return h._send(*self._graph(path, q))
+        return h._send(*self._graph(path, q, token))
 
-    def _batch(self, form: dict) -> list:
+    def _batch(self, form: dict, token: str) -> list:
         """The Graph batch API: each item GETs its relative_url; the answer is a list, in
         order, of {code, headers, body} (body is a JSON string), or null for one that timed
         out on Meta's side."""
@@ -303,7 +353,7 @@ class FakeMeta:
             if m and m.group(1) in self.timeouts:
                 out.append(None)
                 continue
-            status, doc = self._graph(rel.path, q)
+            status, doc = self._graph(rel.path, q, token)
             out.append({"code": status, "headers": [], "body": json.dumps(doc)})
         return out
 
@@ -317,23 +367,27 @@ class FakeMeta:
         self.exchanges += 1
         self.token_n += 1
         self.token = f"EAAfake{self.token_n}"
+        self.tokens[self.token] = self.business
         return h._send(200, {"access_token": self.token, "token_type": "bearer"})
 
-    def _graph(self, path, q) -> tuple[int, dict]:
+    def _graph(self, path, q, token: str = "") -> tuple[int, dict]:
         """One Graph read with a valid token: (status, JSON), the same for a plain GET and
-        for an item of a batch."""
+        for an item of a batch. The token says whose portfolio asks."""
+        business = self.tokens.get(token)
         if path == "/me":
             doc = {"id": "500000000000005", "name": "Pauta (usuário do sistema)"}
-            if self.business:
-                doc["client_business_id"] = self.business
+            if business:
+                doc["client_business_id"] = business
             return 200, doc
-        if path == f"/{BUSINESS}":
-            return 200, {"id": BUSINESS, "name": "Agência Exemplo"}
+        if path.strip("/") in BUSINESSES:
+            bid = path.strip("/")
+            return 200, {"id": bid, "name": BUSINESSES[bid]}
         if path == "/me/adaccounts":
             if "business" in q.get("fields", ""):  # what the real Meta says to ads_read
                 need = "Requires business_management permission to access the field."
                 return 400, oauth_error(100, need)
-            return 200, {"data": self.accounts, "paging": {"cursors": {}}}
+            accounts = self.accounts_by_business.get(business, self.accounts)
+            return 200, {"data": accounts, "paging": {"cursors": {}}}
         if self.throttle:
             return 400, oauth_error(4, "Application request limit reached")
         m = re.fullmatch(r"/act_(\d+)(/insights|/campaigns)?", path)

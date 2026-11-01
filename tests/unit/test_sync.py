@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 import pytest
 from test_meta import connect
 
-from fakemeta import TODAY, expected
+from fakemeta import BUSINESS, OTHER_BUSINESS, TODAY, expected
 from pauta import sync
 from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError
 
@@ -40,6 +40,7 @@ def test_run_syncs_linked_accounts_and_fetches_history(team, caplog):
     caplog.set_level(logging.INFO, logger="pauta")
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out == {
+        "connections": 1,
         "accounts": 2,
         "campaigns_new": 3,
         "insight_rows": out["insight_rows"],
@@ -100,7 +101,14 @@ def test_run_collects_one_accounts_error_and_goes_on(team):
     fake.fail_campaigns.add("111")
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["accounts"] == 2 and out["campaigns_new"] == 1
-    assert out["errors"] == [{"account": "111", "error": out["errors"][0]["error"], "status": 502}]
+    assert out["errors"] == [
+        {
+            "account": "111",
+            "business_id": BUSINESS,
+            "error": out["errors"][0]["error"],
+            "status": 502,
+        }
+    ]
     assert meta.sync_error == out["errors"][0]["error"]
     assert store.sync_state()["sync_error"] == meta.sync_error
     # the clinic's campaigns never arrived; the bakery's did
@@ -218,3 +226,66 @@ def test_scheduler_thread_starts_and_stops(team, monkeypatch):
     s.stop()
     s.thread.join(1)
     assert len(ticks) >= 2 and not s.thread.is_alive()
+
+
+def test_run_loops_every_connection_and_records_each_ones_sync(team, caplog):
+    """Two portfolios: the agency's accounts and the client's own one are both synced; each
+    connection gets its own last_sync; a revoked token on one stops only that one."""
+    store, meta, fake, clinic, _ = team
+    meta.on_change = store.sync_connections
+    store.sync_connections(meta.connections())
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake, account=1)
+    fake.business = BUSINESS
+    delta = store.save_client({"name": "Delta Imóveis"})
+    # a read tags every row with the portfolio whose token listed it (the fixture's rows,
+    # written without one, get theirs now)
+    store.sync_meta_accounts(meta.accounts())
+    store.link_meta_account("444", delta["id"])
+    rows = {a["id"]: a["business_id"] for a in store.meta_accounts()}
+    assert rows == {"111": BUSINESS, "222": BUSINESS, "333": "", "444": OTHER_BUSINESS}
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["connections"] == 2 and out["accounts"] == 3 and out["campaigns_new"] == 4
+    assert out["errors"] == []
+    conns = {c["business_id"]: c for c in store.connections()}
+    assert conns[BUSINESS]["last_sync"] == meta.last_sync
+    assert conns[OTHER_BUSINESS]["last_sync"] == meta.last_sync
+    assert [c["name"] for c in store.campaign_rows("2026-10-01", "2026-10-20")] == [
+        "Clínica Bem Estar",
+        "Delta Imóveis",
+        "Padaria Trigo de Ouro",
+    ]
+    # the client's portfolio revoked Pauta: its account fails, the agency's still sync
+    fake.revoke(OTHER_BUSINESS)
+    fake.calls.clear()
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 3 and len(out["errors"]) == 1
+    assert out["errors"][0] == {
+        "account": "444",
+        "business_id": OTHER_BUSINESS,
+        "error": REVOKED,
+        "status": 409,
+    }
+    assert sum("/act_111/" in c or "/act_222/" in c for c in fake.calls) >= 4
+    conns = {c["business_id"]: c for c in store.connections()}
+    assert conns[OTHER_BUSINESS]["state"] == "revoked" and conns[BUSINESS]["state"] == "ok"
+    assert conns[BUSINESS]["error"] == "" and conns[OTHER_BUSINESS]["error"] == REVOKED
+    assert meta.sync_error == REVOKED  # the pass as a whole had a problem, for /metrics
+    assert [e["kind"] for e in store.meta_log_rows()] == ["revoked"]
+
+
+def test_run_falls_back_to_the_only_connection_for_untagged_rows(team):
+    """Rows from before v10 carry no business_id: with one connection they are its."""
+    store, meta, fake, *_ = team
+    assert all(a["business_id"] == "" for a in store.meta_accounts())
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 2 and out["errors"] == []
+    # with two connections an untagged, unread row is nobody's until a read tags it
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake)
+    fake.business = BUSINESS
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 0
+    meta.accounts()  # the read fills meta.business_of (the server also seeds it from rows)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 2

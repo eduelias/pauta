@@ -50,8 +50,8 @@ def test_campaigns_with_paging(linked, fake_meta, monkeypatch):
     fake_meta.calls.clear()
     orig = linked._graph
 
-    def small_pages(path, params, step):
-        return orig(path, {**params, "limit": "1"}, step)
+    def small_pages(path, params, step, business_id):
+        return orig(path, {**params, "limit": "1"}, step, business_id)
 
     monkeypatch.setattr(linked, "_graph", small_pages)
     assert [c["id"] for c in linked.campaigns("111")] == ["23850001", "23850002", "23850003"]
@@ -65,10 +65,10 @@ def test_paging_never_loops_forever(linked, monkeypatch):
     monkeypatch.setattr(meta_mod, "MAX_PAGES", 3)
     doc = {"data": [{"id": "1"}], "paging": {"cursors": {"after": "x"}, "next": "u"}}
     monkeypatch.setattr(linked, "_graph", lambda *a: doc)
-    assert len(linked._pages("/p", {}, "s")) == 2  # the same cursor again: stop
+    assert len(linked._pages("/p", {}, "s", "1")) == 2  # the same cursor again: stop
     n = {"i": 0}
 
-    def fresh(path, params, step):
+    def fresh(path, params, step, business_id):
         n["i"] += 1
         return {
             "data": [{"id": str(n["i"])}],
@@ -76,7 +76,7 @@ def test_paging_never_loops_forever(linked, monkeypatch):
         }
 
     monkeypatch.setattr(linked, "_graph", fresh)
-    assert len(linked._pages("/p", {}, "s")) == 3
+    assert len(linked._pages("/p", {}, "s", "1")) == 3
 
 
 def test_daily_insights(linked, fake_meta):

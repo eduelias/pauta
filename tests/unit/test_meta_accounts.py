@@ -32,6 +32,7 @@ def test_sync_upserts_and_keeps_rows_no_longer_listed(store):
         "client": None,
         "seen": "2026-10-31 10:00:00",
         "created": rows[0]["created"],
+        "business_id": "",
     }
     # the clinic was renamed and the bakery unticked in Meta: the row stays, seen is old
     store.sync_meta_accounts(

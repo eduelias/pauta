@@ -299,39 +299,52 @@ def cmd_onedrive(args) -> None:
 
 
 def cmd_meta(args) -> None:
-    """sync: one pass of the campaign sync (the hourly one by default, --days for more);
-    status: the connection, the linked accounts and the last sync."""
+    """sync: one pass of the campaign sync over every connected portfolio (the hourly one by
+    default, --days for more); status: the connections, the linked accounts, the last sync."""
     store = Store(db_path())
     meta = Meta.from_env(store.path)
     if not meta.enabled:
         sys.exit("PAUTA_META_APP_ID/PAUTA_META_CONFIG_ID or the secret file are missing")
+    meta.on_change = store.sync_connections
+    store.sync_connections(meta.connections())
     if args.action == "sync":
         try:
             out = sync.run(store, meta, days=args.days)
         except MetaError as e:
             sys.exit(f"meta: {e}")
         print(
-            f"{out['accounts']} account(s), {out['campaigns_new']} new campaign(s), "
-            f"{out['insight_rows']} day row(s), {out['linked']} request(s) linked"
+            f"{out['connections']} portfolio(s), {out['accounts']} account(s), "
+            f"{out['campaigns_new']} new campaign(s), {out['insight_rows']} day row(s), "
+            f"{out['linked']} request(s) linked"
         )
         for err in out["errors"]:
             print(f"account {err['account']}: {err['error']}", file=sys.stderr)
         if out["errors"]:
             sys.exit(1)
         return
-    st = meta.status()
-    if not st["connected"]:
+    conns = store.connections()
+    if not conns:
         sys.exit("not connected (Equipe → Meta → Conectar Meta)")
     accounts = store.meta_accounts()
+    problems = []
+    for c in conns:
+        n = sum(1 for a in accounts if a["business_id"] == c["business_id"])
+        who = f" by {c['by_name']}" if c["by_name"] else ""
+        print(
+            f"portfolio {c['business_name'] or c['business_id']} ({c['business_id']}): "
+            f"{c['state']}, connected {c['connected_at']}{who}, {n} account(s), "
+            f"last sync {c['last_sync'] or 'never'}"
+        )
+        if c["error"]:
+            problems.append(c["error"])
     linked = sum(1 for a in accounts if a["client"])
-    print(f"connected to {st['business_name']} since {st['connected_at']}")
     print(f"{len(accounts)} ad account(s), {linked} linked to a client")
     last = store.sync_state()
     print(f"last sync {last['last_sync'] or 'never'}")
     if last["sync_error"]:
-        sys.exit(f"problem: {last['sync_error']}")
-    if st["error"]:
-        sys.exit(f"problem: {st['error']}")
+        problems.append(last["sync_error"])
+    if problems:
+        sys.exit(f"problem: {problems[0]}")
 
 
 def main(argv: list[str] | None = None) -> None:

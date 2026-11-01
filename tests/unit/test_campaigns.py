@@ -44,8 +44,8 @@ def test_schema_v8_gains_the_tracking_tables(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "9"
-        assert SCHEMA_VERSION == 9
+        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "10"
+        assert SCHEMA_VERSION == 10
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"campaign", "review", "insight"} <= tables
     assert store.campaign_rows("2026-01-01", "2026-12-31") == []
