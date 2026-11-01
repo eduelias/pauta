@@ -8,12 +8,12 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from test_meta import connect
 
-from fakemeta import BUSINESS, CONVERSATIONS, OTHER_BUSINESS, TODAY, TZ, expected
+from fakemeta import BUSINESS, CONVERSATIONS, EMPTY_ACCOUNT, OTHER_BUSINESS, TODAY, TZ, expected
 from pauta import meta as meta_mod
 from pauta import sync
 from pauta.db import cents_per
 from pauta.meta import NOT_CONNECTED, REVOKED, THROTTLED, MetaError, local_today
-from pauta.sync import BUSY, UNCLAIMED
+from pauta.sync import BUSY, ORPHAN, UNCLAIMED
 
 
 @pytest.fixture()
@@ -351,10 +351,15 @@ def test_run_reports_a_linked_account_no_connection_claims(team, caplog):
     assert all(a["business_id"] == "" for a in store.meta_accounts())
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["connections"] == 2 and out["accounts"] == 2
-    assert out["errors"] == [{"account": "333", "business_id": "", "error": UNCLAIMED, "status": 0}]
-    assert "Configurações → Meta" in UNCLAIMED
-    assert meta.sync_error == UNCLAIMED and store.sync_state()["sync_error"] == UNCLAIMED
+    msg = ORPHAN.format(id="333")
+    assert out["errors"] == [{"account": "333", "business_id": "", "error": msg, "status": 0}]
+    assert msg == (
+        "conta 333 sem portfólio: desvincule a conta em Configurações → Meta ou reconecte o "
+        "portfólio"
+    )
+    assert meta.sync_error == msg and store.sync_state()["sync_error"] == msg
     assert "GET /act_333/campaigns" not in fake.calls
+    assert fake.calls.count("GET /me/adaccounts") == 2  # one list per connection
     # the read placed the rows it could; each connection still got its last_sync
     rows = {a["id"]: a["business_id"] for a in store.meta_accounts()}
     assert rows == {"111": BUSINESS, "222": BUSINESS, "333": "", "444": OTHER_BUSINESS}
@@ -362,14 +367,82 @@ def test_run_reports_a_linked_account_no_connection_claims(team, caplog):
     events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
     assert len(events) == 1 and events[0].levelno == logging.WARNING
     assert '"account":"333"' in events[0].getMessage()
-    # Meta refusing the placing read is logged and the pass goes on to meet it itself
+    assert meta.orphans == {"333"}
+
+
+def test_a_permanent_orphan_is_read_once_and_reported_quietly_after(team, caplog):
+    """The placing read pages every account's insights and balance: with an account that
+    stays nobody's (gone from Meta, or its portfolio disconnected) it must not run on
+    every hourly pass, nor must Campanhas toast "Sincronização com problema" on every
+    Atualizar agora while the advice can't help. The read runs when the set of unplaced
+    accounts changes; a known orphan is in `errors` and the log at INFO, not in
+    `sync_error`."""
+    store, meta, fake, clinic, _ = team
+    caplog.set_level(logging.INFO, logger="pauta")
+    meta.on_read = store.sync_meta_accounts
+    store.link_meta_account("333", store.save_client({"name": "Órfã"})["id"])
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake)
+    fake.business = BUSINESS
+    msg = ORPHAN.format(id="333")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert [e["error"] for e in out["errors"]] == [msg] and meta.sync_error == msg
+    assert fake.calls.count("GET /me/adaccounts") == 2
+    # the same orphan again: no read, the same error in the summary at INFO, no sync_error
     fake.calls.clear()
+    caplog.clear()
+    meta._cache = None  # a cold cache would otherwise spare the call for ten minutes
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 2
+    assert out["errors"] == [{"account": "333", "business_id": "", "error": msg, "status": 0}]
+    assert "GET /me/adaccounts" not in fake.calls
+    assert meta.sync_error == "" and store.sync_state()["sync_error"] == ""
+    events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
+    assert len(events) == 1 and events[0].levelno == logging.INFO
+    assert '"repeat":true' in events[0].getMessage()
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)
+    # a real Meta error still sets sync_error; the orphan stays out of it
+    fake.fail_campaigns.add("111")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert [e["status"] for e in out["errors"]] == [502, 0]
+    assert meta.sync_error == out["errors"][0]["error"] != msg
+    fake.fail_campaigns.clear()
+    # a new untagged linked row: the set changed, the read runs again and places it; the
+    # old orphan is still a repeat
+    fake.accounts.append(EMPTY_ACCOUNT)
+    store.sync_meta_accounts([{"id": "555", "name": "Estúdio"}])
+    store.link_meta_account("555", store.save_client({"name": "Estúdio Pilates Leve"})["id"])
+    fake.calls.clear()
+    caplog.clear()
+    meta._cache = None
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert fake.calls.count("GET /me/adaccounts") == 2
+    assert out["accounts"] == 3 and [e["error"] for e in out["errors"]] == [msg]
+    assert meta.sync_error == "" and meta.orphans == {"333"}
+    assert {a["id"]: a["business_id"] for a in store.meta_accounts()}["555"] == BUSINESS
+    # unlinking the orphan empties the set; linking it again is a change: loud once more
+    store.link_meta_account("333", None)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["errors"] == [] and meta.orphans == frozenset()
+    store.link_meta_account("333", clinic["id"])
+    caplog.clear()
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert [e["error"] for e in out["errors"]] == [msg] and meta.sync_error == msg
+    events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
+    assert [e.levelno for e in events] == [logging.WARNING]
+    # Meta refusing the placing read decides nothing: a row the read never placed is
+    # reported the old way (open Configurações → Meta, which reads), the known orphan
+    # stays quiet, and the next pass reads again
+    store.sync_meta_accounts([{"id": "666", "name": "Nova"}])
+    store.link_meta_account("666", store.save_client({"name": "Nova"})["id"])
     fake.throttle = True
-    meta._cache = None  # the cached list would spare the call
+    meta._cache = None
+    caplog.clear()
     out = sync.run(store, meta, days=2, today=TODAY)
     assert any('"meta_sync_accounts_read_failed"' in r.getMessage() for r in caplog.records)
-    assert out["errors"][0]["status"] == 503
-    assert out["errors"][-1]["error"] == UNCLAIMED
+    assert out["errors"][0]["status"] == 503 and meta.sync_error == THROTTLED
+    assert {e["error"] for e in out["errors"][1:]} == {msg, UNCLAIMED}
+    assert meta.orphans == {"333"}
 
 
 def test_one_pass_at_a_time(team):

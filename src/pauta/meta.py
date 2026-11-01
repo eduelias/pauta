@@ -325,6 +325,10 @@ class Meta:
         self._reach: dict[tuple, tuple[float, dict[str, int]]] = {}
         # account id -> business id, from the last read; the server seeds it from the DB
         self.business_of: dict[str, str] = {}
+        # linked accounts the sync's last placing read could not put under a connection
+        # (gone from Meta, or their portfolio disconnected): the sync reads again only
+        # when this set changes, and reports these at INFO after the first time
+        self.orphans: frozenset[str] = frozenset()
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
         self.on_read: Callable[[list[dict]], None] | None = None
