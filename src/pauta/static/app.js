@@ -1304,18 +1304,22 @@ function bindPeriod(st, onChange) {
 }
 const syncLine = (last) => last ? `Dados da Meta de ${esc(ago(last))}` : "A Meta ainda não foi lida; os números chegam na primeira sincronização.";
 const SYNC_POLL_MS = 3000, SYNC_POLL_MAX = 40; // every 3 s for up to ~2 min
+const SYNC_LOST = "lost";  // nothing syncing and nothing new: the pass never ended
+const SYNC_UNFINISHED = "A sincronização não terminou; tente de novo";
 async function waitForSync(previous, since, until) {
-  // After Atualizar agora: GET /api/campaigns until the pass ends (`syncing` off, or a
-  // newer `last_sync`); the "Dados da Meta" line follows. null when it is still running
-  // after the last poll, or when the person has left the screen.
+  // After Atualizar agora: GET /api/campaigns until the pass ends (a newer `last_sync`);
+  // the "Dados da Meta" line follows. SYNC_LOST when nothing is syncing and `last_sync`
+  // is still the previous one with no error: the server restarted mid-pass (the lock is
+  // fresh, `last_sync` comes back from the database), so nothing was synced. null when
+  // it is still running after the last poll, or when the person has left the screen.
   for (let i = 0; i < SYNC_POLL_MAX; i++) {
     await new Promise((r) => setTimeout(r, i ? SYNC_POLL_MS : 1000));
     if (!document.contains($("#syncline"))) return null;
     const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}`);
-    if (!doc.syncing || doc.last_sync !== previous) {
-      $("#syncline").textContent = syncLine(doc.last_sync);
-      return doc;
-    }
+    if (doc.syncing && doc.last_sync === previous) continue;
+    $("#syncline").textContent = syncLine(doc.last_sync);
+    if (doc.last_sync === previous && !doc.sync_error) return SYNC_LOST;
+    return doc;
   }
   return null;
 }
@@ -1460,6 +1464,7 @@ async function viewCampaigns(query) {
       if (line) line.textContent = out.last_sync ? `Sincronizando com a Meta… (dados de ${ago(out.last_sync)})` : "Sincronizando com a Meta…";
       const done = await waitForSync(out.last_sync, since, until);
       if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
+      if (done === SYNC_LOST) { toast(SYNC_UNFINISHED, true); btn.disabled = false; return; }
       toast(done.sync_error ? `Sincronização com problema: ${done.sync_error}` : "Dados da Meta atualizados", Boolean(done.sync_error));
       redraw();
     } catch (err) { toast(err.message, true); btn.disabled = false; }

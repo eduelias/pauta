@@ -9,6 +9,7 @@ The browsers here live in São Paulo (`timezone_id`), like Piero's phone and the
 accounts, so the dates the picker computes agree with the day the sync wrote, whatever
 the hour the suite runs at on a CET machine."""
 
+import json
 import re
 from datetime import date, timedelta
 
@@ -244,6 +245,34 @@ def test_skip_follow_again_and_sync_now(synced):
     laptop.expected.add((429, "/api/meta/sync"))
     page.get_by_role("button", name="Atualizar agora").click()
     expect(page.locator("#toast")).to_contain_text("menos de 15 minutos")
+
+
+def test_sync_now_lost_to_a_restart_is_not_a_success(synced):
+    """The server restarting mid-pass: its lock is fresh, `last_sync` comes back from the
+    database (the previous one) and `sync_error` is "", so the first poll looks exactly
+    like a pass that ended. Here the POST starts nothing (the route answers 202 with the
+    previous `last_sync` and the server never hears of it), so every poll answers as a
+    server that restarted: the page must not toast "Dados da Meta atualizados" over
+    nothing, and the button comes back for another try."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    previous = store.sync_state()["last_sync"]
+    assert previous
+    body = json.dumps({"started": True, "last_sync": previous})
+    page.route(
+        "**/api/meta/sync",
+        lambda r: r.fulfill(status=202, content_type="application/json", body=body),
+    )
+    page.get_by_role("button", name="Atualizar agora").click()
+    expect(page.locator("#syncline")).to_contain_text("Sincronizando com a Meta")
+    toast = page.locator("#toast")
+    expect(toast).to_have_text("A sincronização não terminou; tente de novo", timeout=10_000)
+    expect(toast).to_have_class(re.compile(r"\berr\b"))
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")  # the line is back
+    expect(page.get_by_role("button", name="Atualizar agora")).to_be_enabled()
+    assert store.sync_state()["last_sync"] == previous  # nothing ran, nothing was claimed
 
 
 def test_visto_hoje(synced):
