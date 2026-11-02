@@ -146,6 +146,19 @@ from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`
 Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the
 runner's job guard, which a sudo rule for unreleased code must never be without.
 
+**Acceptance's Meta app** (since 2026-11-02): acceptance talks to its own Meta app, the test
+app **Pauta (acc)** (App ID `1438754228470933`, login configuration `1631138148751190`,
+callback `https://acc.pauta.cc/api/meta/callback`; decision 8, "Whose Meta app"), never to
+production's. The ids are the drop-in `/etc/systemd/system/pauta-acc.service.d/meta.conf`
+(`Environment=PAUTA_META_APP_ID=…` and `PAUTA_META_CONFIG_ID=…`); its App Secret is
+`/var/lib/pauta-acc/pauta.db.meta-secret` (owner `pauta-acc`, mode 600), rendered from the
+1Password item "pauta-acc meta app secret" (Du7 Tech) and pushed, never typed or committed.
+A portfolio connected there is a system user of the test app: the token files
+`/var/lib/pauta-acc/pauta.db.meta-token.<business_id>` and the `meta_connection` rows only
+mean something to that app, so switching apps means deleting them and connecting again.
+Check: `curl -s 127.0.0.1:8089/metrics` shows `"meta": {"enabled": true, …}` after
+`sudo systemctl restart pauta-acc`.
+
 **Another environment** (`dev`): a line in `env_config` in `pauta-deploy-branch` (its port),
 `deploy/pauta-dev.service`, a Caddy block, `dev` in the workflow's `environment` choices, then
 `sudo deploy/provision-branch-env.sh dev`.
@@ -288,6 +301,23 @@ name). Removing a file in Pauta sends it to OneDrive's recycle bin (30 days). De
 request or a client in Pauta leaves its files in OneDrive. "Link para o cliente" makes a
 view-only link to the request's folder that anyone with it can open; it lasts until it is
 removed in OneDrive (folder → Compartilhar → Gerenciar acesso).
+
+## Meta in production
+
+Campaign numbers come from Meta's Marketing API through Facebook Login for Business (decision
+8): each team connects its own business portfolio, Meta mints a system-user token for Pauta,
+and Pauta keeps it in a file next to the DB. Production has been switched on since
+2026-11-01, with Du7's Meta app **Pauta** (App ID `1767206382079558`).
+
+| Setting | Where | Notes |
+|---|---|---|
+| `PAUTA_META_APP_ID`, `PAUTA_META_CONFIG_ID` | the drop-in `/etc/systemd/system/pauta.service.d/meta.conf` (`[Service]` + two `Environment=` lines), not `pauta.service` itself | The app id and the Facebook Login for Business configuration id (`1649862390172470`, "Pauta - leitura de anuncios"). Both public. Unset: no Meta card on Configurações, no sync. `sudo systemctl daemon-reload && sudo systemctl restart pauta` after editing |
+| The App Secret | `~/.local/share/pauta/pauta.db.meta-secret` next to the DB, mode 600, one line | Rendered from the 1Password item "Pauta Meta app" (Du7 Tech) on the Mac and pushed; never in the repo, the unit, a chat or a log. Rotating it in the Meta dashboard means rewriting this file and restarting |
+| The tokens | `~/.local/share/pauta/pauta.db.meta-token.<business_id>`, mode 600, one per connected portfolio | Written by the app when an admin connects a portfolio. Never in the DB or its backups. A portfolio disconnected in the UI (Desconectar) or revoked in the team's Business Settings loses its file |
+| The callback | Meta dashboard → Pauta → Facebook Login for Business → Settings → Valid OAuth Redirect URIs | **`https://app.pauta.cc/api/meta/callback` only**, strict mode, HTTPS enforced. Acceptance uses its own app (see "Acceptance: trying a branch"), so its callback is not listed here |
+
+Check: `curl -s 127.0.0.1:8088/metrics` → `"meta": {"enabled": true, "connected": …}`.
+The Meta card on Configurações shows each connected portfolio and its token's state.
 
 ## Taking it offline
 
