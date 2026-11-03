@@ -104,7 +104,8 @@ DIALOG = f"https://www.facebook.com/{VERSION}/dialog/oauth"
 DEV_REDIRECT = "http://localhost:8088/api/meta/callback"
 TIMEOUT = 15
 STATE_SECONDS = 600
-CACHE_SECONDS = 600
+CACHE_SECONDS = 600  # the account list is answered from memory this long...
+STALE_SECONDS = 24 * 3600  # ...and, while Meta is read again behind it, up to this long
 FAIL_SECONDS = 60  # a failed read is not retried before this...
 THROTTLE_FAIL_SECONDS = 120  # ...or this, when Meta asked for a pause
 BATCH = 50  # the Graph batch API's maximum per request
@@ -699,49 +700,105 @@ class Meta:
             "connected": bool(conns),
             "connections": conns,
             "error": next((c["error"] for c in conns if c["error"]), ""),
+            # when the account list was last read from Meta (what the pages show may be
+            # that old while a new read runs behind it); None before the first read
+            "accounts_at": (
+                datetime.fromtimestamp(self._cache[0], UTC).isoformat(timespec="seconds")
+                if self._cache
+                else None
+            ),
         }
 
     # ---- reading -------------------------------------------------------------------------
 
-    def accounts(self, refresh: bool = False) -> list[dict]:
+    def accounts(self, refresh: bool = False, stale: bool = True) -> list[dict]:
         """Every ad account every connection reads, each tagged with its `business_id` and
         `business_name`, with this month's numbers and, when Meta lets Pauta read it, the
-        balance. Kept for 10 minutes unless `refresh`; a read that failed as a whole is
-        raised again, without asking Meta, for a minute (`refresh` asks anyway). Readers
-        arriving while one read is under way wait for it and get the same list."""
+        balance. Kept for 10 minutes; after that the last list is answered at once and
+        Meta is read again on a thread behind it (`stale=False` waits for the new list
+        instead, as the sync does; `refresh` asks Meta whatever the cache says). A read
+        that failed as a whole is raised again, without asking Meta, for a minute
+        (`refresh` asks anyway), unless there is a list to answer with. Readers arriving
+        while one read is under way wait for it and get the same list."""
         fresh = self._fresh(refresh)
         if fresh is not None:
             return fresh
+        if stale and not refresh:
+            kept = self._stale()
+            if kept is not None:
+                self._refresh_soon()
+                return kept
+        if not refresh:
+            self._raise_recent_failure()
         with self._reading:
             fresh = self._fresh(refresh)  # someone else may just have read it
             if fresh is not None:
                 return fresh
-            try:
-                out = self._read()
-            except MetaError as e:
-                self._failed = (time.time(), e)
-                raise
-            self._cache, self._failed = (time.time(), out), None
-        obs.event("meta_read", accounts=len(out))
-        if self.on_read:
-            self.on_read(out)
-        return out
+            if not refresh:
+                self._raise_recent_failure()
+            return self._read_into_cache()
 
     def _fresh(self, refresh: bool) -> list[dict] | None:
-        """The cached list when it may be used; raises the last failure while it is recent."""
+        """The cached list while it counts as fresh."""
         if refresh:
             return None
-        now = time.time()
         cached = self._cache
-        if cached and now - cached[0] < CACHE_SECONDS:
+        if cached and time.time() - cached[0] < CACHE_SECONDS:
             return cached[1]
+        return None
+
+    def _stale(self) -> list[dict] | None:
+        """The cached list past its ten minutes but still worth showing while Meta is read
+        again; None when there is none, or it is a day old (then the reader waits)."""
+        cached = self._cache
+        if cached and time.time() - cached[0] < STALE_SECONDS:
+            return cached[1]
+        return None
+
+    def _recent_failure(self) -> MetaError | None:
+        """The last read's failure while it is too recent to ask Meta again."""
         failed = self._failed
         if failed:
             at, err = failed
             keep = THROTTLE_FAIL_SECONDS if err.status == 503 else FAIL_SECONDS
-            if now - at < keep:
-                raise MetaError(str(err), err.status, err.reason)
+            if time.time() - at < keep:
+                return err
         return None
+
+    def _raise_recent_failure(self) -> None:
+        err = self._recent_failure()
+        if err:
+            raise MetaError(str(err), err.status, err.reason)
+
+    def _refresh_soon(self) -> None:
+        """Read Meta again on a thread of its own, unless a read is already under way or
+        the last one failed a moment ago (the stale list stands until the minute is up)."""
+        if self._recent_failure() or not self._reading.acquire(blocking=False):
+            return
+
+        def work():
+            try:
+                self._read_into_cache()
+            except MetaError:
+                pass  # in `_failed`; the next reader after a minute tries again
+            finally:
+                self._reading.release()
+
+        threading.Thread(target=work, name="meta-accounts", daemon=True).start()
+
+    def _read_into_cache(self) -> list[dict]:
+        """Meta, now, with `_reading` held: the list into the cache (and to `on_read`), or
+        the failure into `_failed` and raised."""
+        try:
+            out = self._read()
+        except MetaError as e:
+            self._failed = (time.time(), e)
+            raise
+        self._cache, self._failed = (time.time(), out), None
+        obs.event("meta_read", accounts=len(out))
+        if self.on_read:
+            self.on_read(out)
+        return out
 
     def _read(self) -> list[dict]:
         """The union over connections. One connection Meta refuses is left out (a revoked

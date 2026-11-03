@@ -127,6 +127,12 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         "errors": [],
     }
     fetched = _stamp()
+    try:
+        # the hour's account list (this month's numbers, balances), read here so a visit
+        # to Campanhas or a client's page never waits for it: it answers from memory
+        meta.accounts(stale=False)
+    except MetaError as e:
+        obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
     known = meta.orphans  # unplaced after the last placing read: reported before
     accounts, placed = _linked(store, meta, conns)
     first_error = ""  # what `sync_error` says: Meta's errors, and an orphan the first time
@@ -192,16 +198,17 @@ def _linked(store: Store, meta: Meta, conns: list[dict]) -> tuple[list[dict], bo
     connections, a linked row that no read has placed under a portfolio yet (written
     before v10, or linked before any read) would be nobody's: one account list per
     connection (cached ten minutes) tags what it can first, through `meta.business_of`
-    and, on the server, the rows (`on_read`). That read pages every account's insights
-    and balance, so it runs only when the unplaced set differs from the one the last read
-    left behind (`meta.orphans`): a permanent orphan doesn't cost every hourly pass a
-    read. Meta refusing the read is the pass's business, not this step's."""
+    and, on the server, the rows (`on_read`). The pass has just read the list to keep it
+    warm, so this is a cache hit; it still runs only when the unplaced set differs from
+    the one the last read left behind (`meta.orphans`), so a permanent orphan is reported
+    once per change, not placed again and again. Meta refusing the read is the pass's
+    business, not this step's."""
     accounts = [a for a in store.meta_accounts() if a["client"]]
     unplaced = frozenset(a["id"] for a in accounts if not _business(a, meta, conns))
     if len(conns) < 2 or not unplaced or unplaced == meta.orphans:
         return accounts, False
     try:
-        meta.accounts()
+        meta.accounts(stale=False)  # placing needs the new list, not the kept one
     except MetaError as e:
         obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
         return accounts, False
