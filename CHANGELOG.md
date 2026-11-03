@@ -7,6 +7,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **O Pauta agora registra quais telas e ações cada conta usa, para melhorar o app.** Ficam
+  no banco do próprio time o número da conta (não o nome), a tela, a ação, o tipo de
+  aparelho (celular ou computador, app instalado ou navegador, tamanho da tela), os erros
+  que apareceram e quanto tempo cada chamada levou; nunca o conteúdo de pedidos ou clientes.
+  Os registros são apagados após 90 dias, e um time pode pedir para desligar
+  (`pauta usage --disable`). O responsável lê o resumo com `pauta usage` (decisão 11); veja a
+  política de privacidade.
+
 ## [1.7.1] - 2026-11-03
 
 ### Changed

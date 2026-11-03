@@ -52,7 +52,7 @@ async function viewSettings(query) {
   }
   $$("[data-m]").forEach((b) => b.addEventListener("click", async () => {
     const body = b.dataset.admin !== undefined ? { is_admin: b.dataset.admin === "1" } : { disabled: b.dataset.dis === "1" };
-    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); viewSettings(); } catch (e) { toast(e.message, true); }
+    try { await api("PATCH", `/api/members/${b.dataset.m}`, body); track("settings_changed", { section: "equipe" }); viewSettings(); } catch (e) { toast(e.message, true); }
   }));
   $("#invite")?.addEventListener("click", makeInvite);
   $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
@@ -61,6 +61,7 @@ async function viewSettings(query) {
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;
     try {
       await api("PATCH", "/api/finance/settings", body);
+      track("settings_changed", { section: "financeiro" });
       BOOT = await api("GET", "/api/boot");
       renderShell();
       toast("Financeiro salvo");
@@ -71,6 +72,7 @@ async function viewSettings(query) {
       for (const t of $$("[data-list]")) {
         BOOT.options = await api("PUT", `/api/options/${t.dataset.list}`, { values: t.value.split("\n") });
       }
+      track("settings_changed", { section: "listas" });
       toast("Listas salvas");
     } catch (e) { toast(e.message, true); }
   });
@@ -153,10 +155,12 @@ async function showMove(token) {
     btn.disabled = true;
     try {
       ME = await passkeyRegister({ move: token });
+      track("login", { ok: true, method: "link" });
       toast(`Pronto, ${firstName(ME.name)}! Você está em ${info.to}.`);
       location.hash = "#/";
       await enter();
     } catch (err) {
+      track("login", { ok: false, method: "link" });
       if (err.name !== "NotAllowedError") toast(err.message, true);
     } finally { btn.disabled = false; }
   });
@@ -197,8 +201,10 @@ async function passkeyLogin(btn) {
     const { flow, options } = await api("POST", "/api/passkey/login/options", {});
     const cred = await navigator.credentials.get({ publicKey: requestOptions(options) });
     ME = await api("POST", "/api/passkey/login/verify", { flow, credential: credentialJSON(cred) });
+    track("login", { ok: true, method: "passkey" });
     await enter();
   } catch (e) {
+    track("login", { ok: false, method: "passkey" });
     if (e.name !== "NotAllowedError") toast(`Não deu para entrar: ${e.message}`, true);
   } finally { btn.disabled = false; }
 }
@@ -269,10 +275,12 @@ async function showJoin(token) {
     btn.disabled = true;
     try {
       ME = await passkeyRegister({ invite: token, name: e.target.name.value });
+      track("login", { ok: true, method: "link" });
       toast(`Bem-vindo, ${firstName(ME.name)}!`);
       location.hash = "#/";
       await enter();
     } catch (err) {
+      track("login", { ok: false, method: "link" });
       if (err.name !== "NotAllowedError") toast(err.message, true);
     } finally { btn.disabled = false; }
   });

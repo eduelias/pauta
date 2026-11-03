@@ -268,8 +268,12 @@ async function viewCampaigns(query) {
       if (note === null) return;
     }
     b.disabled = true;
-    try { await api("POST", `/api/clients/${b.dataset.seen}/reviews`, { note }); toast(`${b.dataset.name}: visto hoje`); redraw(); }
-    catch (err) { toast(err.message, true); b.disabled = false; }
+    try {
+      await api("POST", `/api/clients/${b.dataset.seen}/reviews`, { note });
+      track("seen_today", { n: (doc.clients || []).find((c) => String(c.id) === b.dataset.seen)?.campaigns?.length || 0 });
+      toast(`${b.dataset.name}: visto hoje`);
+      redraw();
+    } catch (err) { toast(err.message, true); b.disabled = false; }
   }));
   $$("[data-skip]").forEach((b) => b.addEventListener("click", async () => {
     if (!confirm(`Não acompanhar "${b.dataset.name}"? Ela sai desta lista (a Meta não muda). Dá para voltar em "ver ignoradas".`)) return;

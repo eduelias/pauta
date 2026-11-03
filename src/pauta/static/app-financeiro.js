@@ -116,6 +116,7 @@ function payModal(c, amount, cur, done) {
     go.disabled = true;
     try {
       const fresh = await api("POST", `/api/clients/${c.id}/payments`, Object.fromEntries(new FormData(f)));
+      track("finance_entry", { kind: "payment" });
       close();
       toast("Pagamento registrado");
       done(fresh);
@@ -159,16 +160,16 @@ function bindPayBox(c, done) {
   const cur = c.billing?.currency || BOOT.finance.currency;
   $("#paynew", box)?.addEventListener("click", () => payModal(c, c.billing?.amount, cur, done));
   $("#payfee", box)?.addEventListener("change", async (e) => {
-    try { done(await api("PATCH", `/api/clients/${c.id}/billing`, { amount: e.target.value })); toast("Salvo"); }
+    try { done(await api("PATCH", `/api/clients/${c.id}/billing`, { amount: e.target.value })); track("finance_entry", { kind: "cycle" }); toast("Salvo"); }
     catch (err) { toast(err.message, true); }
   });
   $("#paybilled", box)?.addEventListener("change", async (e) => {
-    try { done(await api("PATCH", `/api/clients/${c.id}/billing`, { billed: e.target.checked })); toast("Salvo"); }
+    try { done(await api("PATCH", `/api/clients/${c.id}/billing`, { billed: e.target.checked })); track("finance_entry", { kind: "cycle" }); toast("Salvo"); }
     catch (err) { toast(err.message, true); }
   });
   $$("[data-void]", box).forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Anular este pagamento? Ele continua na lista, riscado.")) return;
-    try { done(await api("DELETE", `/api/payments/${b.dataset.void}`)); toast("Pagamento anulado"); }
+    try { done(await api("DELETE", `/api/payments/${b.dataset.void}`)); track("finance_entry", { kind: "void" }); toast("Pagamento anulado"); }
     catch (err) { toast(err.message, true); }
   }));
 }

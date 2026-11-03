@@ -25,7 +25,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -157,6 +157,12 @@ CREATE TABLE IF NOT EXISTS meta_log (
     account INTEGER REFERENCES account(id), kind TEXT NOT NULL,
     business_id TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS usage (
+    id INTEGER PRIMARY KEY, at TEXT NOT NULL, account INTEGER,
+    event TEXT NOT NULL, screen TEXT NOT NULL DEFAULT '',
+    props TEXT NOT NULL DEFAULT '{}', dev TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS usage_at ON usage(at);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -614,6 +620,7 @@ class Store:
                 db.execute(
                     "ALTER TABLE insight ADD COLUMN result_indicator TEXT NOT NULL DEFAULT ''"
                 )
+            # v13: usage (decision 11) is a new table: SCHEMA creates it
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -1733,6 +1740,38 @@ class Store:
         with self.db() as db:
             if not db.execute("DELETE FROM request WHERE id=?", (rid,)).rowcount:
                 raise NotFound("pedido não encontrado")
+
+    # ---- usage log (decision 11) -------------------------------------------------------------
+
+    def usage_enabled(self) -> bool:
+        """A team may ask for its usage log to be switched off: setting usage.enabled=false."""
+        with self.db() as db:
+            row = db.execute("SELECT value FROM setting WHERE key='usage.enabled'").fetchone()
+        return row is None or row[0] != "false"
+
+    def set_usage_enabled(self, enabled: bool) -> None:
+        with self.db() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO setting(key, value) VALUES ('usage.enabled', ?)",
+                ("true" if enabled else "false",),
+            )
+
+    def add_usage(self, account: int | None, rows: list[tuple], dev: str = "") -> None:
+        """`rows` are (at, event, screen, props_json), already cleaned by usage.clean_event."""
+        if not rows:
+            return
+        with self.db() as db:
+            db.executemany(
+                "INSERT INTO usage(at, account, event, screen, props, dev) VALUES (?,?,?,?,?,?)",
+                [(at, account, event, screen, props, dev) for at, event, screen, props in rows],
+            )
+
+    def prune_usage(self, days: int) -> int:
+        """Drop usage rows older than `days`; returns how many went."""
+        with self.db() as db:
+            return db.execute(
+                "DELETE FROM usage WHERE at < datetime('now', ?)", (f"-{int(days)} days",)
+            ).rowcount
 
     # ---- backups ----------------------------------------------------------------------------
 

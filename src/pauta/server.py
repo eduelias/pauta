@@ -43,6 +43,7 @@ from .routes import (
     finance,
     requests,
     team,
+    usage,
 )
 
 STATIC = Path(__file__).parent / "static"
@@ -75,7 +76,8 @@ RATE_BUCKETS = {
 
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
 AUTH_ROUTES = ("/api/passkey/register/verify", "/api/passkey/login/verify")
-QUIET = ("/healthz", "/metrics")  # probes every few minutes: not logged or counted when ok
+# probes every few minutes, and the usage log's own batches: not logged or counted when ok
+QUIET = ("/healthz", "/metrics", "/api/usage")
 
 
 MANUAL_SYNC_SECONDS = 15 * 60  # "Atualizar agora" (POST /api/meta/sync) at most this often
@@ -442,6 +444,6 @@ def make_handler(
             return self._me(auth.viewer(self.headers.get("Cookie")))
 
     # the rest of /api, by area; same table, same order as before the split
-    for area in (requests, clients, campaigns, finance, team, account):
+    for area in (requests, clients, campaigns, finance, team, account, usage):
         area.install(route, store, auth, drive, meta)
     return Handler
