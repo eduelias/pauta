@@ -269,7 +269,9 @@ def install(route, store, auth, drive, meta):
                 accounts = meta.accounts(refresh=refresh)
             except MetaError as e:
                 accounts, failed = [], str(e)
-        out = meta.status()  # after the read: a 190 just now shows on its connection
+        # after the read: a 190 just now shows on its connection (a kept list answers
+        # before the read behind it: a revocation then shows on the next load)
+        out = meta.status()
         out["connections"] = _connections(self)
         out["error"] = failed or out["error"]
         if accounts is not None:

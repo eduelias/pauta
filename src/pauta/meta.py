@@ -319,6 +319,9 @@ class Meta:
         # browser retrying) says "conectado" again instead of "expirou"
         self._done: dict[str, float] = {}  # state -> expiry
         self._cache: tuple[float, list[dict]] | None = None
+        # bumped by a connect, a disconnect or a revocation: a read that started before
+        # one of those is of the connections before it and is not kept
+        self._gen = 0
         self._failed: tuple[float, MetaError] | None = None  # the last read that failed whole
         self._reading = threading.Lock()  # one Meta read at a time (accounts())
         self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
@@ -543,6 +546,7 @@ class Meta:
         obs.event("meta_error", logging.WARNING, status=status, code=code, step=step)
         if code == 190:
             self._cache = None
+            self._gen += 1
             obs.event("meta_revoked", logging.ERROR, business=business_id or None)
             if business_id:
                 self._mark(business_id, "revoked", REVOKED)
@@ -673,6 +677,7 @@ class Meta:
         )
         with self._lock:
             self._cache = self._failed = None
+            self._gen += 1
             now = time.time()
             self._done = {s: t for s, t in self._done.items() if t > now}
             self._done[state] = now + STATE_SECONDS
@@ -689,6 +694,7 @@ class Meta:
                 with contextlib.suppress(FileNotFoundError):
                     self.token_file(b).unlink()
             self._cache = self._failed = None
+            self._gen += 1
         obs.event("meta_disconnected", business=business_id)
         self._changed()
 
@@ -703,8 +709,8 @@ class Meta:
             # when the account list was last read from Meta (what the pages show may be
             # that old while a new read runs behind it); None before the first read
             "accounts_at": (
-                datetime.fromtimestamp(self._cache[0], UTC).isoformat(timespec="seconds")
-                if self._cache
+                datetime.fromtimestamp(cached[0], UTC).isoformat(timespec="seconds")
+                if (cached := self._cache)
                 else None
             ),
         }
@@ -778,22 +784,38 @@ class Meta:
 
         def work():
             try:
-                self._read_into_cache()
+                if self._fresh(False) is None:  # unless a reader just did it
+                    self._read_into_cache()
             except MetaError:
                 pass  # in `_failed`; the next reader after a minute tries again
+            except Exception:
+                obs.event("meta_read_failed", logging.ERROR)
+                logging.getLogger("pauta").exception("account list read failed behind a page")
             finally:
                 self._reading.release()
 
-        threading.Thread(target=work, name="meta-accounts", daemon=True).start()
+        try:
+            threading.Thread(target=work, name="meta-accounts", daemon=True).start()
+        except RuntimeError:  # no thread to be had: the kept list stands, nothing waits
+            self._reading.release()
+            obs.event("meta_read_thread_failed", logging.ERROR)
 
     def _read_into_cache(self) -> list[dict]:
         """Meta, now, with `_reading` held: the list into the cache (and to `on_read`), or
-        the failure into `_failed` and raised."""
-        try:
-            out = self._read()
-        except MetaError as e:
-            self._failed = (time.time(), e)
-            raise
+        the failure into `_failed` and raised. A connect, disconnect or revocation while
+        Meta answered makes the list one of the connections before it: read once more,
+        and if it happens again answer with it but keep nothing."""
+        for _ in range(2):
+            gen = self._gen
+            try:
+                out = self._read()
+            except MetaError as e:
+                self._failed = (time.time(), e)
+                raise
+            if gen == self._gen:
+                break
+        else:
+            return out
         self._cache, self._failed = (time.time(), out), None
         obs.event("meta_read", accounts=len(out))
         if self.on_read:

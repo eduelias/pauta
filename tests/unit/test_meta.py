@@ -9,6 +9,7 @@ import os
 import stat
 import threading
 import time
+import types
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -256,7 +257,8 @@ def _settles(meta, after: float, seconds: float = 3.0) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         cached, failed = meta._cache, meta._failed
-        if (cached and cached[0] > after) or (failed and failed[0] > after):
+        landed = (cached and cached[0] > after) or (failed and failed[0] > after)
+        if landed and not meta._reading.locked():  # and the thread has let go
             return
         time.sleep(0.01)
     raise AssertionError("the read behind the stale list never finished")
@@ -309,6 +311,51 @@ def test_a_read_failing_behind_the_list_keeps_it(linked, fake_meta, monkeypatch)
     fake_meta.down = True
     with pytest.raises(MetaError):
         linked.accounts()
+
+
+def test_a_list_read_across_a_connect_or_disconnect_is_not_kept(linked, monkeypatch):
+    """The read started with the connections before the change: once more, then give up
+    keeping it (the next reader reads again)."""
+    reads = []
+
+    def read_bumping(times):
+        def _read():
+            reads.append(1)
+            if len(reads) <= times:
+                linked._gen += 1  # a disconnect while Meta answered
+            return [{"id": "111"}]
+
+        return _read
+
+    monkeypatch.setattr(linked, "_read", read_bumping(1))
+    assert linked.accounts(stale=False) == [{"id": "111"}]
+    assert len(reads) == 2 and linked._cache is not None  # the second read was clean
+    linked._cache = None
+    reads.clear()
+    monkeypatch.setattr(linked, "_read", read_bumping(9))
+    assert linked.accounts(stale=False) == [{"id": "111"}]
+    assert len(reads) == 2 and linked._cache is None  # answered, not kept
+    assert not linked._reading.locked()
+
+
+def test_no_thread_to_read_behind_the_list_keeps_the_list_and_the_lock_free(linked, monkeypatch):
+    first = linked.accounts()
+    now = meta_mod.time.time()
+    monkeypatch.setattr(meta_mod.time, "time", lambda: now + 601)
+
+    class NoThread:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't start new thread")
+
+    # only the module's view of threading: the fake Graph server keeps its own threads
+    monkeypatch.setattr(meta_mod, "threading", types.SimpleNamespace(Thread=NoThread))
+    assert linked.accounts() == first
+    assert not linked._reading.locked()
+    monkeypatch.setattr(meta_mod, "threading", threading)
+    assert linked.accounts(stale=False) == first  # a waiting reader isn't stuck behind it
 
 
 def test_status_says_when_the_list_was_read(linked):

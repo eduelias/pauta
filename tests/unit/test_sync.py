@@ -403,11 +403,11 @@ def test_a_permanent_orphan_is_read_once_and_reported_quietly_after(team, caplog
     # the same orphan again: no read, the same error in the summary at INFO, no sync_error
     fake.calls.clear()
     caplog.clear()
-    meta._cache = None  # ten minutes passed: the pass reads the list once to keep it warm
+    meta._cache = None  # ten minutes passed: the pass reads the list again, once
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["accounts"] == 2
     assert out["errors"] == [{"account": "333", "business_id": "", "error": msg, "status": 0}]
-    assert fake.calls.count("GET /me/adaccounts") == 2  # the warm-up, no placing read on top
+    assert fake.calls.count("GET /me/adaccounts") == 2  # one per connection
     assert meta.sync_error == "" and store.sync_state()["sync_error"] == ""
     events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
     assert len(events) == 1 and events[0].levelno == logging.INFO
