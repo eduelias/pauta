@@ -40,6 +40,7 @@ DRIVE_SCOPES = "offline_access User.Read Files.ReadWrite"
 # upload chunks must be multiples of 320 KiB; 5 MiB keeps memory low on the Pi
 CHUNK = 16 * 320 * 1024
 TIMEOUT = 30
+QUOTA_SECONDS = 5 * 60  # how long a quota read serves the Configurações page
 DEFAULT_MAX_MB = 200
 # what OneDrive refuses in a file or folder name
 BAD_NAME = re.compile(r'["*:<>?/\\|\x00-\x1f\x7f]')
@@ -94,6 +95,7 @@ class OneDrive:
         self._lock = threading.Lock()
         self._access: tuple[str, float] | None = None  # token, expiry
         self._pending: dict | None = None  # the device code flow in progress
+        self._quota: tuple[float, dict] | None = None  # the last quota read, and when
         self.error = ""  # why the connection stopped working, until reconnected
 
     @classmethod
@@ -309,11 +311,14 @@ class OneDrive:
                 self.token_file.unlink()
             self._access = None
             self._pending = None
+            self._quota = None
             self.error = ""
         obs.event("onedrive_disconnected")
 
     def status(self, quota: bool = False) -> dict:
-        """For the Configurações page, /metrics and the CLI. Only `quota` calls Graph."""
+        """For the Configurações page, /metrics and the CLI. Only `quota` calls Graph, and
+        at most once every QUOTA_SECONDS: the page opens on every visit, the numbers move
+        only when a file goes up or away (which drop the cached read)."""
         saved = self._saved() if self.enabled else None
         out = {
             "enabled": self.enabled,
@@ -328,16 +333,26 @@ class OneDrive:
         }
         if quota and saved:
             try:
-                if self.root:
-                    drive, _ = self._graph("GET", "/me/drive?$select=quota")
-                    q = drive.get("quota") or {}
-                    out["quota"] = {"used": q.get("used"), "total": q.get("total")}
-                else:  # the app folder permission can't read the drive's quota (Graph: 403)
-                    folder, _ = self._graph("GET", "/me/drive/special/approot?$select=size")
-                    out["used"] = int(folder.get("size") or 0)
+                out.update(self._quota_read())
             except DriveError as e:
                 out["error"] = out["error"] or str(e)
         return out
+
+    def _quota_read(self) -> dict:
+        """{quota: {used, total}} with a custom root, {used} with the app folder (that
+        permission can't read the drive's quota: Graph 403). Cached; a failure is not."""
+        cached = self._quota
+        if cached and time.time() - cached[0] < QUOTA_SECONDS:
+            return cached[1]
+        if self.root:
+            drive, _ = self._graph("GET", "/me/drive?$select=quota")
+            q = drive.get("quota") or {}
+            fresh = {"quota": {"used": q.get("used"), "total": q.get("total")}}
+        else:
+            folder, _ = self._graph("GET", "/me/drive/special/approot?$select=size")
+            fresh = {"used": int(folder.get("size") or 0)}
+        self._quota = (time.time(), fresh)
+        return fresh
 
     # ---- files --------------------------------------------------------------------------------
 
@@ -393,6 +408,7 @@ class OneDrive:
             raise
         if not isinstance(item, dict) or not item.get("id"):
             raise DriveError(UNAVAILABLE)
+        self._quota = None  # the folder grew
         return {
             "id": item["id"],
             "name": item.get("name") or name,
@@ -443,3 +459,4 @@ class OneDrive:
         except DriveError as e:
             if e.status != 404:
                 raise
+        self._quota = None  # the folder shrank

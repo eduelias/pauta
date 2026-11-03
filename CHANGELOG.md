@@ -7,6 +7,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Configurações abre na hora.** O cartão do OneDrive perguntava à Microsoft quanto espaço
+  a pasta usa a cada visita à página (um a dois segundos de espera, oito vezes só no
+  domingo). Agora a resposta vale por cinco minutos; um arquivo que sobe ou sai, ou uma
+  desconexão, pede de novo.
+
 ## [1.7.0] - 2026-11-01
 
 ### Added
