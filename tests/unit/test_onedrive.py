@@ -8,6 +8,7 @@ import stat
 import pytest
 
 from fakegraph import CLIENT
+from pauta import onedrive
 from pauta.onedrive import APP_SCOPES, DRIVE_SCOPES, DriveError, OneDrive, safe_name
 
 
@@ -204,3 +205,27 @@ def test_graph_down_or_unreachable(drive, fake, store):
     with pytest.raises(DriveError) as e:
         gone.download_url("x")
     assert e.value.status == 502
+
+
+def test_quota_is_read_once_per_visit_window(drive, fake, monkeypatch):
+    """The Configurações page asks for the quota on every visit; Graph answers in a second
+    or two, so one read serves the window. A file going up or away, or a disconnect, drops
+    it; a read that failed is asked again, never kept."""
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 1
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 1
+    item = put(drive, b"abcd")
+    assert drive.status(quota=True)["used"] == 4 and fake.quota_reads == 2
+    drive.delete(item["id"])
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 3
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 3
+    monkeypatch.setattr(onedrive, "QUOTA_SECONDS", 0)
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 4
+    monkeypatch.setattr(onedrive, "QUOTA_SECONDS", 300)
+    fake.down = True
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 4  # still cached
+    drive._quota = None
+    assert drive.status(quota=True)["error"] and "used" not in drive.status()
+    fake.down = False
+    assert drive.status(quota=True)["used"] == 0 and fake.quota_reads == 5  # not kept
+    drive.disconnect()
+    assert drive._quota is None

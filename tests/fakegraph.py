@@ -35,6 +35,7 @@ class FakeGraph:
         self.fail_upload = False
         self.down = False  # Graph answers 503
         self.quota_full = False
+        self.quota_reads = 0  # GET /me/drive or the app folder's size
         self._n = 0
         self._lock = threading.Lock()
         fake = self
@@ -153,10 +154,12 @@ class FakeGraph:
         if path == "/me":
             return h._send(200, {"displayName": "Piero", "userPrincipalName": "piero@example.com"})
         if path == "/me/drive":
+            self.quota_reads += 1
             if "AppFolder" in (self.scopes or [""])[-1]:  # as the real one answers
                 return h._send(403, {"error": {"code": "accessDenied"}})
             return h._send(200, {"quota": {"used": 5 * 2**30, "total": 1024 * 2**30}})
         if path == "/me/drive/special/approot" and method == "GET":
+            self.quota_reads += 1
             return h._send(200, {"size": sum(len(i["data"]) for i in self.items.values())})
         m = re.fullmatch(r"/me/drive/(special/approot|root):/(.+):/createUploadSession", path)
         if m and method == "POST":
