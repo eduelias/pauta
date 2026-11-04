@@ -98,6 +98,7 @@ async function viewBoard() {
       }
       try {
         await api("PATCH", `/api/requests/${id}`, patch);
+        track("request_status", { from: r.status, to: status, via: "board" });
         toast(`#${id} → ${STATUS()[status]}`);
         viewBoard();
       } catch (err) { toast(err.message, true); }
@@ -161,12 +162,19 @@ async function viewList(query) {
     $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", () => { location.hash = `#/pedido/${tr.dataset.id}`; }));
     history.replaceState(null, "", `#/pedidos?f=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${client ? `&c=${client}` : ""}`);
   };
-  $("#q").addEventListener("input", (e) => { q = e.target.value; draw(); });
-  $("#cl").addEventListener("change", (e) => { client = e.target.value; draw(); });
+  let typing;
+  $("#q").addEventListener("input", (e) => {
+    q = e.target.value;
+    draw();
+    clearTimeout(typing);  // one `search` per pause in typing, not one per key
+    if (q.trim()) typing = setTimeout(() => track("search", { what: "text" }), 800);
+  });
+  $("#cl").addEventListener("change", (e) => { client = e.target.value; if (client) track("filter", { what: "client" }); draw(); });
   $("#filters").addEventListener("click", (e) => {
     const b = e.target.closest("[data-f]");
     if (!b) return;
     f = b.dataset.f;
+    track("filter", { what: "status" });
     $$("#filters button").forEach((x) => x.classList.toggle("on", x === b));
     draw();
   });
@@ -261,10 +269,18 @@ function sendFile(rid, file, onProgress) {
       let doc = {};
       try { doc = JSON.parse(x.responseText); } catch { /* not JSON: use the status */ }
       if (x.status === 401 && ME?.auth) { ME.logged_in = false; showGate(); }
-      if (x.status >= 200 && x.status < 300) resolve(doc);
-      else reject(new Error(doc.error || `erro ${x.status}`));
+      if (x.status >= 200 && x.status < 300) { resolve(doc); return; }
+      trackApi("POST", `/api/requests/${rid}/files`, x.status, 0);
+      const err = new Error(doc.error || `erro ${x.status}`);
+      err.status = x.status;
+      reject(err);
     });
-    x.addEventListener("error", () => reject(new Error("a conexão caiu; tente de novo")));
+    x.addEventListener("error", () => {
+      trackApi("POST", `/api/requests/${rid}/files`, 0, 0);
+      const err = new Error("a conexão caiu; tente de novo");
+      err.status = 0;
+      reject(err);
+    });
     x.send(file);
   });
 }
@@ -290,17 +306,21 @@ function bindFiles(get, set) {
   const upload = async (files) => {
     const max = (BOOT.files.max_mb || 200) * 1048576;
     for (const file of files) {
-      if (!file.size) { toast(`${file.name} está vazio`, true); continue; }
-      if (file.size > max) { toast(`${file.name} passa de ${BOOT.files.max_mb} MB`, true); continue; }
+      if (!file.size) { track("file_failed", { reason: "empty" }); toast(`${file.name} está vazio`, true); continue; }
+      if (file.size > max) { track("file_failed", { reason: "size" }); toast(`${file.name} passa de ${BOOT.files.max_mb} MB`, true); continue; }
       const row = document.createElement("div");
       row.className = "upl";
       row.innerHTML = `<span>${esc(file.name)}</span><progress max="1" value="0"></progress>`;
       $("#uploads").append(row);
       try {
         set(await sendFile(get().id, file, (f) => { $("progress", row).value = f; }));
+        track("file_added");
         redraw();
         toast(`${file.name} enviado`);
-      } catch (e) { toast(`${file.name}: ${e.message}`, true); }
+      } catch (e) {
+        track("file_failed", { reason: e.status === 0 ? "network" : "drive" });
+        toast(`${file.name}: ${e.message}`, true);
+      }
       row.remove();
     }
   };
@@ -311,6 +331,7 @@ function bindFiles(get, set) {
   $("#share").addEventListener("click", async () => {
     try {
       const { url } = await api("POST", `/api/requests/${get().id}/share`);
+      track("request_sent");
       const msg = `Os arquivos do seu pedido estão aqui: ${url}`;
       $("#sharebox").innerHTML = `<div class="sharebox"><code class="invlink">${esc(url)}</code>
         <div class="row-gap"><button class="btn small" data-copy="${esc(url)}">${icon("link")}Copiar link</button>
@@ -395,7 +416,8 @@ async function viewRequest(_q, id) {
       const done = $('[data-f="done_on"]');
       if (done && document.activeElement !== done) done.value = r.done_on || "";
       if (el) { el.classList.remove("saved-flash"); void el.offsetWidth; el.classList.add("saved-flash"); }
-    } catch (e) { toast(e.message, true); }
+      return true;
+    } catch (e) { toast(e.message, true); return false; }
   };
   $$("[data-f]").forEach((el) => el.addEventListener("change", () => {
     const f = el.dataset.f;
@@ -413,7 +435,8 @@ async function viewRequest(_q, id) {
       if (b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
       toast(`Status: ${STATUS()[b.dataset.v]}`);
     }
-    save({ [f]: b.dataset.v });
+    const from = r.status;
+    save({ [f]: b.dataset.v }).then((ok) => { if (ok && f === "status") track("request_status", { from, to: b.dataset.v, via: "page" }); });
   }));
   const autosize = (t) => { t.style.height = "auto"; t.style.height = t.scrollHeight + 2 + "px"; };
   $$("textarea.input").forEach((t) => { autosize(t); t.addEventListener("input", () => autosize(t)); });
@@ -422,6 +445,7 @@ async function viewRequest(_q, id) {
     if (!t.value.trim()) return;
     try {
       r = await api("POST", `/api/requests/${r.id}/comments`, { text: t.value });
+      track("comment_added");
       t.value = "";
       autosize(t);
       $("#tl").innerHTML = timeline(r);
@@ -526,6 +550,7 @@ async function viewNew(_q, clientId) {
     const data = Object.fromEntries(new FormData(f));
     try {
       const r = await api("POST", "/api/requests", { ...data, ...segs });
+      track("request_created", { kind: data.kind || "", has_deadline: Boolean(data.due) });
       toast(`Pedido #${r.id} enviado`);
       location.hash = `#/pedido/${r.id}`;
     } catch (err) { toast(err.message, true); btn.disabled = false; }
@@ -546,7 +571,7 @@ function quickClient() {
     m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") done(null); };
     $("#qc").addEventListener("submit", async (e) => {
       e.preventDefault();
-      try { done(await api("POST", "/api/clients", Object.fromEntries(new FormData(e.target)))); }
+      try { done(await api("POST", "/api/clients", Object.fromEntries(new FormData(e.target)))); track("client_saved", { new: true }); }
       catch (err) { toast(err.message, true); }
     });
   });

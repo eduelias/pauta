@@ -53,6 +53,7 @@ async function viewProfile() {
     try {
       const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value };
       ME = { ...ME, ...(await api("PATCH", "/api/me", body)) };
+      track("settings_changed", { section: "perfil" });
       BOOT = await api("GET", "/api/boot");
       renderShell();
       toast("Salvo");
@@ -88,7 +89,7 @@ async function loadDrive(doc) {
   bindCopy(box);
   const refreshBoot = async () => { BOOT = await api("GET", "/api/boot"); };
   $("#driveconnect")?.addEventListener("click", async () => {
-    try { loadDrive(await api("POST", "/api/onedrive/connect")); } catch (e) { toast(e.message, true); }
+    try { loadDrive(await api("POST", "/api/onedrive/connect")); track("settings_changed", { section: "arquivos" }); } catch (e) { toast(e.message, true); }
   });
   $("#drivecancel")?.addEventListener("click", async () => {
     loadDrive(await api("DELETE", "/api/onedrive"));
@@ -97,6 +98,7 @@ async function loadDrive(doc) {
   $("#driveoff")?.addEventListener("click", async () => {
     if (!confirm("Desconectar o OneDrive? Os arquivos continuam lá, mas a Pauta deixa de enviar e abrir arquivos até alguém reconectar.")) return;
     loadDrive(await api("DELETE", "/api/onedrive"));
+    track("settings_changed", { section: "arquivos" });
     await refreshBoot();
     toast("OneDrive desconectado");
   });
@@ -168,6 +170,7 @@ async function loadMeta(refresh = false) {
     el.disabled = true;
     try {
       const row = await api("PATCH", `/api/meta/accounts/${el.dataset.link}`, { client: value ? Number(value) : null });
+      track("settings_changed", { section: "meta" });
       toast(row.client ? `Conta vinculada a ${row.client.name}` : "Conta desvinculada");
       loadMeta();
     } catch (err) { toast(err.message, true); el.disabled = false; }
@@ -185,7 +188,7 @@ async function loadMeta(refresh = false) {
   $$("[data-metaoff]").forEach((b) => b.addEventListener("click", async (e) => {
     const btn = e.currentTarget, name = btn.dataset.name || "este portfólio";
     if (!confirm(`Desconectar o portfólio ${name}? A Pauta esquece o acesso e para de ler as contas dele; as contas continuam na lista, sem números, até alguém reconectar. Para tirar o acesso também do lado da Meta, remova o app Pauta nas Configurações do negócio desse portfólio (Integrações → Apps conectados).`)) return;
-    try { await api("DELETE", `/api/meta/connections/${btn.dataset.metaoff}`); toast("Portfólio desconectado"); loadMeta(); }
+    try { await api("DELETE", `/api/meta/connections/${btn.dataset.metaoff}`); track("settings_changed", { section: "meta" }); toast("Portfólio desconectado"); loadMeta(); }
     catch (err) { toast(err.message, true); }
   }));
 }

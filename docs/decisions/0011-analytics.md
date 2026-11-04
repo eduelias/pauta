@@ -1,7 +1,12 @@
 # 11. Analytics: a usage log inside the app, Plausible on the public site
 
-- **Status:** proposed (2026-11-01). Research only: nothing is installed, no account exists,
-  no tracking code is in any branch. The owner decides the open questions at the end first.
+- **Status:** accepted for the app part (2026-11-03): the `usage` table, `POST /api/usage`,
+  `track()` with the events below and `pauta usage` are in the app (retention 90 days, pruned
+  by the nightly `pauta backup`; `pauta usage --disable` switches a team's log off). The owner
+  confirmed the signals from the production journal and the `event` table by hand: screens
+  and actions per person, where errors appear, how long the phone waits, and the same step
+  repeated on several requests of one client (the report's "Repeated steps" line). The site
+  part (Plausible) is still proposed: nothing is installed, no account exists.
 - **Depends on:** nothing for the app part. The site part needs decision 4's site (live) and,
   for the checkout goal, decision 6's `/assinar` page.
 - **Fits:** decision 5 (one database per team, Du7 as *operador*; the usage rows live in the

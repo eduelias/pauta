@@ -73,6 +73,7 @@ async function viewNewClient() {
     e.preventDefault();
     try {
       const c = await api("POST", "/api/clients", { ...Object.fromEntries(new FormData(f)), ...segs });
+      track("client_saved", { new: true });
       toast("Cliente salvo");
       location.hash = `#/cliente/${c.id}`;
     } catch (err) { toast(err.message, true); }
@@ -107,6 +108,7 @@ async function viewClient(_q, id) {
   const save = async (patch, el) => {
     try {
       c = { ...c, ...(await api("PATCH", `/api/clients/${c.id}`, patch)) };
+      track("client_saved", { new: false });
       $("#cname").innerHTML = `${esc(c.name)} <span class="state ${esc(c.state)}">${esc(c.state)}</span>`;
       $(".clientbox").innerHTML = `<div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}`;
       bindCopy($(".clientbox"));
