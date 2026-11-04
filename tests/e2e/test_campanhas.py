@@ -648,11 +648,28 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     href = share.get_attribute("href")
     assert href.startswith("https://wa.me/5511988887777?text=Ol%C3%A1%2C%20Carla!"), href
     assert "Limpeza%20de%20pele%20novembro" in href and "relat%C3%B3rio" in href, href
-    expect(page.locator("#sharehint")).to_contain_text("Abrir conversa")
-    # the card as an image: a computer (no share sheet) downloads a PNG of the card at 3x
-    expect(page.locator("#shareimg")).to_have_text("Baixar imagem")
+    expect(page.locator("#sharehint")).to_have_count(0)  # no explanation under the buttons
+    # Copiar imagem: one PNG on the clipboard, pasted in the conversation (the phone's share
+    # sheet was dropped: its own Copiar pasted two photos)
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {"
+        " write: async (items) => { window.copied = items.map((i) => i.types); } } });"
+    )
+    page.reload()
+    expect(page.locator("#rep h1")).to_have_text("Limpeza de pele novembro")
+    expect(page.locator(".report-tools .btn")).to_have_text(
+        ["Voltar à campanha", "Copiar imagem", "Copiar link", "Abrir conversa"]
+    )
+    page.locator("#copyimg").click()
+    expect(page.locator("#toast")).to_have_text("Imagem copiada: cole na conversa do WhatsApp")
+    assert page.evaluate("window.copied") == [["image/png"]]
+    # a browser whose clipboard takes no image downloads the PNG: the card at 3x, named
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {} });"
+    )
+    page.reload()
     with page.expect_download() as dl:
-        page.locator("#shareimg").click()
+        page.locator("#copyimg").click()
     path = dl.value.path()
     assert dl.value.suggested_filename == (
         f"relatorio-clinica-bem-estar-limpeza-de-pele-novembro-{t.replace(day=1)}-{t}.png"
@@ -667,21 +684,6 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
         box,
     )
     expect(page.locator("#toast")).to_have_text("Imagem baixada: anexe na conversa")
-    # a phone (a share sheet that takes files) sends the PNG and the message to it
-    page.add_init_script(
-        "navigator.canShare = () => true;"
-        "navigator.share = async (d) => { window.shared = "
-        "{ names: d.files.map((f) => f.name), types: d.files.map((f) => f.type), "
-        "sizes: d.files.map((f) => f.size), text: d.text }; };"
-    )
-    page.reload()
-    expect(page.locator("#shareimg")).to_have_text("Enviar imagem")
-    expect(page.locator("#sharehint")).to_contain_text("lista de apps")
-    page.locator("#shareimg").click()
-    expect(page.locator("#shareimg")).to_be_enabled()
-    shared = page.evaluate("window.shared")
-    assert shared["names"] == [dl.value.suggested_filename] and shared["types"] == ["image/png"]
-    assert shared["sizes"][0] > 10_000 and shared["text"].startswith("Olá, Carla!"), shared
     # the card fits a phone (the print goes to WhatsApp)
     page.set_viewport_size({"width": 390, "height": 844})
     box = rep.bounding_box()
@@ -701,7 +703,10 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     expect(page.locator("#rep h1")).to_have_text("Panetone")
     expect(page.locator("#share")).to_be_disabled()
     hint = page.locator("#sharehint")
-    expect(hint).to_contain_text("Padaria Trigo de Ouro não tem WhatsApp cadastrado")
+    expect(hint).to_have_text(
+        "Padaria Trigo de Ouro não tem WhatsApp cadastrado: cadastre o número para abrir a "
+        "conversa daqui."
+    )
     expect(hint.locator("a")).to_have_attribute("href", f"#/cliente/{bakery['id']}")
     # without `m` in the address the report takes the metrics marked on the campaign page;
     # a one-day period reads once; a wrong campaign is an error screen with its navigation

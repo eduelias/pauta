@@ -12,8 +12,8 @@
 
 PR 35 gave the campaign page a report for the client: a card with the campaign, the client,
 the period and the metrics marked on the page, each with one plain line and a bar per day,
-to send on WhatsApp. It can go as a PNG through the phone's share sheet, and "Abrir conversa"
-opens WhatsApp with the message ready. Piero then asked for "um link pro cliente acessar".
+to send on WhatsApp. It can go as a PNG on the clipboard ("Copiar imagem"), and "Abrir
+conversa" opens WhatsApp with the message ready. Piero then asked for "um link pro cliente acessar".
 A `wa.me` link carries text only, and `#/relatorio/...` needs a passkey: the client has no
 account and never will (decision 2: the team's data is private, the app is invite-only).
 A PDF would have the same problem, since any file or page for the client needs an address
@@ -40,7 +40,7 @@ only what the card shows.
 | Not available | Unknown, expired and revoked tokens get a 404 with a plain page, "Este relatório não está mais disponível", not the app shell and not a JSON error |
 | Making a link | `POST /api/campaigns/{id}/links` with `{since, until, metrics}` needs a session (any member, as the report does), validates the period like `GET /api/campaigns/{id}` and the metrics against the card's keys (the ten fixed ones and `act:<type>`, 12 at most), and answers `{url, expires}` with the rest of the row. The address is the one the app is open on (`Origin`, else `Host`), so acceptance makes `acc.pauta.cc` links and production `app.pauta.cc` ones |
 | Abuse limits | Making a link counts in the existing `invite` bucket (30 an hour per address); opening `/r/...` or `/api/r/...` counts in the `login` bucket (120 a quarter hour per address), as the Meta callback does: a guess is a login attempt. Both are matched by pattern in `server.py` (`RATE_PATTERNS`), so `ratelimit.py` is untouched. A bucket of its own for the public page would be cleaner; that is the owner's file |
-| On the report screen | **Copiar link** makes the link on the first tap (and reuses it after) and copies it, with "válido até <date>" shown under the buttons. **Abrir conversa** sends "Veja o relatório aqui: <url>" at the end of the WhatsApp message: when the link already exists the button is a plain link, when it does not the tap makes it first and opens WhatsApp in a new tab (on an iPhone that first time may land on wa.me's page with its own "Continuar" button, since a navigation from script is not a tap) |
+| On the report screen | **Copiar link** makes the link on the first tap (and reuses it after) and copies it; "Link do relatório válido até <date>: <url>" is the one line under the buttons once a link exists (PR 35 removed the explanations there, at Piero's ask). **Abrir conversa** sends "Veja o relatório aqui: <url>" at the end of the WhatsApp message: when the link already exists the button is a plain link, when it does not the tap makes it first and opens WhatsApp in a new tab (on an iPhone that first time may land on wa.me's page with its own "Continuar" button, since a navigation from script is not a tap) |
 | Not exported | `report_link` is not in `/api/export`: the tokens are live addresses, and the export is a copy of the team's data, not of its credentials |
 
 ## What a link exposes, and for how long
@@ -69,8 +69,8 @@ token or the address.
 
 ## Alternatives considered
 
-- **A PDF or image in the WhatsApp message.** `wa.me` carries text only; a file goes
-  through the share sheet (PR 35's "Enviar imagem"), which is one more step and gives the
+- **A PDF or image in the WhatsApp message.** `wa.me` carries text only; a picture goes
+  through the clipboard (PR 35's "Copiar imagem"), which is one more step and gives the
   client a picture, not a page. Piero asked for a link.
 - **An account for the client.** Decision 2's model is one team per database; a client
   account would need a role that sees one card and nothing else, invites, passkeys on the
