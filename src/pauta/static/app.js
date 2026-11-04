@@ -204,6 +204,13 @@ function ago(s) {
   if (d < 7) return d === 1 ? "ontem" : `há ${d} dias`;
   return stamp(s).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", "");
 }
+// a currency code Intl doesn't know (Meta's data, not ours) must not break the card
+const centsMoney = (c, cur) => {
+  if (c == null) return "—";
+  try { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100); }
+  catch (e) { return `${cur || "BRL"} ${(c / 100).toFixed(2)}`; }
+};
+const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
 const money = (n, cur) => n == null || n === "" ? "" : Number(n).toLocaleString("pt-BR", { style: "currency", currency: cur || BOOT?.finance?.currency || "BRL", maximumFractionDigits: Number(n) % 1 ? 2 : 0 });
 
 const isOpen = (r) => ["todo", "doing", "waiting"].includes(r.status);

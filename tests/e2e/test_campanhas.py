@@ -658,7 +658,7 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     page.reload()
     expect(page.locator("#rep h1")).to_have_text("Limpeza de pele novembro")
     expect(page.locator(".report-tools .btn")).to_have_text(
-        ["Voltar à campanha", "Copiar imagem", "Abrir conversa"]
+        ["Voltar à campanha", "Copiar imagem", "Copiar link", "Abrir conversa"]
     )
     page.locator("#copyimg").click()
     expect(page.locator("#toast")).to_have_text("Imagem copiada: cole na conversa do WhatsApp")

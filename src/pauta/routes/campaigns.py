@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
 import threading
 import time
@@ -24,7 +25,8 @@ from ..db import (
     valid_date,
 )
 from ..meta import NOT_CONNECTED, MetaError, local_today
-from . import DEFAULT_PERIOD_DAYS, ID, MAX_PERIOD_DAYS, SENT, Reply, _stale
+from ..report import LINK_DAYS, period_label, public_report, valid_metrics
+from . import DEFAULT_PERIOD_DAYS, ID, MAX_PERIOD_DAYS, SENT, TOKEN, Reply, _stale
 
 
 def install(route, store, auth, drive, meta):
@@ -51,11 +53,14 @@ def install(route, store, auth, drive, meta):
             or (yesterday - timedelta(days=DEFAULT_PERIOD_DAYS - 1)).isoformat()
         )
         until = valid_date(q.get("until", [""])[0]) or yesterday.isoformat()
+        _check_period(since, until)
+        return since, until, today.isoformat()
+
+    def _check_period(since: str, until: str) -> None:
         if since > until:
             raise Invalid("o início do período vem depois do fim")
         if (date.fromisoformat(until) - date.fromisoformat(since)).days >= MAX_PERIOD_DAYS:
             raise Invalid(f"período grande demais (máximo {MAX_PERIOD_DAYS} dias)")
-        return since, until, today.isoformat()
 
     def _reach(self, pairs: list[tuple[str, str]], since: str, until: str) -> dict:
         """The period's reach per campaign from Meta; {} when Meta won't say (reach is
@@ -204,7 +209,20 @@ def install(route, store, auth, drive, meta):
         a count; the latest indicator), and the period's reach from Meta (null when it
         won't say)."""
         since, until, today = _period(self)
-        k = store.campaign(int(cid), since, until)
+        k = _summed(store.campaign(int(cid), since, until))
+        k["reach"] = _campaign_reach(self, k, since, until)
+        return {
+            "since": since,
+            "until": until,
+            "today_included": until >= today,
+            "last_sync": meta.last_sync,
+            "campaign": k,
+            "links": [_with_url(self, link) for link in store.report_links(int(cid))],
+        }
+
+    def _summed(k: dict) -> dict:
+        """The campaign row with the period's sums over its `days`: spend, impressions, link
+        clicks, actions by type, Resultados (and the latest indicator) and cost per lead."""
         days = k["days"]
         k["spend_cents"] = sum(d["spend_cents"] for d in days)
         k["impressions"] = sum(d["impressions"] for d in days)
@@ -220,15 +238,101 @@ def install(route, store, auth, drive, meta):
             (d["result_indicator"] for d in reversed(days) if d["result_indicator"]), ""
         )
         k["cpl_cents"] = cents_per(k["spend_cents"], k["link_clicks"])
+        return k
+
+    def _campaign_reach(self, k: dict, since: str, until: str) -> int | None:
         pairs = [(k["account_id"], k["meta_id"])] if k["meta_id"] and k["account_id"] else []
-        k["reach"] = _reach(self, pairs, since, until).get(k["meta_id"])
+        return _reach(self, pairs, since, until).get(k["meta_id"])
+
+    # ---- the client's link to the report (decision 12) ---------------------------------
+
+    def _with_url(self, link: dict) -> dict:
+        """The link row as the app shows it: its address on the origin the app is open on,
+        the token kept (it is the address, and what DELETE takes)."""
+        return {**link, "url": f"{self._page_origin()}/r/{link['token']}"}
+
+    @route("POST", f"/api/campaigns/{ID}/links")
+    def make_report_link(self, viewer, body, cid):
+        """A public address for the report card as it is on screen: `since`, `until` and
+        the `metrics` shown, fixed. Opens for 30 days without an account, then 404; a live
+        link for the same card is returned again instead of a second one. The period's
+        reach is read from Meta now and kept with the link (the public page never asks
+        Meta). Answers the row with `url` and `expires`."""
+        cid = int(cid)
+        since, until = (
+            valid_date(str(body.get("since") or "")),
+            valid_date(str(body.get("until") or "")),
+        )
+        if not since or not until:
+            raise Invalid("informe o período do relatório (since e until)")
+        _check_period(since, until)
+        metrics = valid_metrics(body.get("metrics"))
+        k = store.campaign(cid, since, until)
+        reach = _campaign_reach(self, k, since, until) if {"reach", "freq"} & set(metrics) else None
+        link = store.create_report_link(
+            cid, since, until, metrics, viewer["account"], reach=reach, days=LINK_DAYS
+        )
+        return _with_url(self, link)
+
+    @route("DELETE", f"/api/campaigns/{ID}/links/{TOKEN}")
+    def revoke_report_link(self, viewer, _body, cid, token):
+        """Revogar: the address is a 404 from now on; the row stays in the campaign's list."""
+        return _with_url(self, store.revoke_report_link(int(cid), token, viewer["account"]))
+
+    def _public(self, token: str) -> tuple[dict, dict]:
+        """The live link for `token` and its campaign with the period's sums, or NotFound
+        (unknown, expired and revoked tokens all read the same from outside)."""
+        link = store.report_link(token)
+        if not link or not link["live"]:
+            raise NotFound("relatório não encontrado")
+        k = _summed(store.campaign(link["campaign"], link["since"], link["until"]))
+        k["reach"] = link["reach"]
+        return link, k
+
+    @route("GET", f"/api/r/{TOKEN}", "open")
+    def public_report_data(self, viewer, _body, token):
+        """What the public page draws, and nothing more: the card's fields, the period
+        sums and daily rows cut down to the metrics the link was made with, the metrics,
+        the date of Meta's numbers, the preparer's first name and when the link ends."""
+        link, k = _public(self, token)
         return {
-            "since": since,
-            "until": until,
-            "today_included": until >= today,
+            "since": link["since"],
+            "until": link["until"],
+            "metrics": link["metrics"],
             "last_sync": meta.last_sync,
-            "campaign": k,
+            "prepared_by": (link["by_name"] or "").split(" ")[0],
+            "expires": link["expires"],
+            "campaign": public_report(k, link["metrics"]),
         }
+
+    @route("GET", f"/r/{TOKEN}", "open")
+    def public_report_page(self, viewer, _body, token):
+        """The page the client opens: `static/report.html` with the title and the `og:`
+        tags filled in (WhatsApp's preview runs no JS), drawing the card from
+        `GET /api/r/<token>`. A token that is unknown, expired or revoked gets the plain
+        "não está mais disponível" page, 404."""
+        try:
+            link, k = _public(self, token)
+        except NotFound:
+            return self._page(404, server.STATIC / "report-gone.html")
+        origin = self._page_origin()
+        when = period_label(link["since"], link["until"])
+        title = f"Relatório da campanha {k['name']} · {k['client_name'] or 'cliente'} · {when}"
+        n = len(link["metrics"])
+        description = (
+            f"{n} {'métrica' if n == 1 else 'métricas'} da campanha, com os dados da Meta, "
+            "preparado na Pauta. O link vale por 30 dias."
+        )
+        fill = {
+            "{{title}}": title,
+            "{{description}}": description,
+            "{{url}}": f"{origin}/r/{token}",
+            "{{origin}}": origin,
+        }
+        page = (server.STATIC / "report.html").read_text(encoding="utf-8")
+        for mark, value in fill.items():
+            page = page.replace(mark, html.escape(value, quote=True))
+        return self._page(200, page.encode())
 
     @route("PATCH", f"/api/campaigns/{ID}")
     def campaign_state(self, viewer, body, cid):

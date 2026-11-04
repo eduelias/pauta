@@ -16,16 +16,17 @@ import contextlib
 import hashlib
 import json
 import re
+import secrets
 import sqlite3
 import time
 import unicodedata
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -163,6 +164,14 @@ CREATE TABLE IF NOT EXISTS usage (
     props TEXT NOT NULL DEFAULT '{}', dev TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS usage_at ON usage(at);
+CREATE TABLE IF NOT EXISTS report_link (
+    token TEXT PRIMARY KEY,
+    campaign INTEGER NOT NULL REFERENCES campaign(id) ON DELETE CASCADE,
+    since TEXT NOT NULL, until TEXT NOT NULL, metrics TEXT NOT NULL DEFAULT '[]',
+    reach INTEGER, created TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by INTEGER REFERENCES account(id), expires TEXT NOT NULL, revoked TEXT
+);
+CREATE INDEX IF NOT EXISTS report_link_campaign ON report_link(campaign);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -548,6 +557,11 @@ def period_results(results, spend_cents: int) -> dict:
     }
 
 
+def _utcnow() -> str:
+    """Now as SQLite's datetime('now') writes it (UTC, to the second)."""
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def gravatar(email: str | None) -> str:
     """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
     email = (email or "").strip().lower()
@@ -621,6 +635,7 @@ class Store:
                     "ALTER TABLE insight ADD COLUMN result_indicator TEXT NOT NULL DEFAULT ''"
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
+            # v14: report_link (decision 12, the client's public link) is a new table too
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
@@ -1275,6 +1290,88 @@ class Store:
                 (on,),
             ).fetchall()
         return {r["client"]: {"by": r["by"], "at": r["at"]} for r in rows}
+
+    # ---- the client's link to a report (decision 12) ------------------------------------
+
+    @staticmethod
+    def _link_row(r) -> dict:
+        d = dict(r)
+        d["metrics"] = json.loads(d["metrics"] or "[]")
+        d["live"] = not d["revoked"] and d["expires"] > _utcnow()
+        return d
+
+    def create_report_link(
+        self,
+        cid: int,
+        since: str,
+        until: str,
+        metrics: list[str],
+        by: int | None,
+        reach: int | None = None,
+        days: int = 30,
+    ) -> dict:
+        """A public address for one campaign's report card: the period and the metrics
+        fixed, open for `days` days, with the period's reach (from Meta, read now: the
+        public page never asks Meta) kept on the row. A live link for the same campaign,
+        period and metrics is returned instead of a second one."""
+        keys = json.dumps(metrics)
+        with self.db() as db:
+            if not db.execute("SELECT 1 FROM campaign WHERE id=?", (cid,)).fetchone():
+                raise NotFound("campanha não encontrada")
+            row = db.execute(
+                "SELECT token FROM report_link WHERE campaign=? AND since=? AND until=? "
+                "AND metrics=? AND revoked IS NULL AND expires > ? ORDER BY created DESC LIMIT 1",
+                (cid, since, until, keys, _utcnow()),
+            ).fetchone()
+            if row:
+                return self.report_link(row["token"])
+            token = secrets.token_urlsafe(32)
+            expires = (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                "INSERT INTO report_link(token, campaign, since, until, metrics, reach, "
+                "created_by, expires) VALUES (?,?,?,?,?,?,?,?)",
+                (token, cid, since, until, keys, reach, by, expires),
+            )
+        obs.event("report_link_created", account=by, campaign=cid)
+        return self.report_link(token)
+
+    def report_link(self, token: str) -> dict | None:
+        """The link's row (metrics as a list, `by_name`, `live`), or None for a token nobody
+        made. The public page wants `live` ones only; a revoked or expired one is still
+        here for the campaign page's list."""
+        with self.db() as db:
+            row = db.execute(
+                "SELECT l.*, a.name AS by_name FROM report_link l "
+                "LEFT JOIN account a ON a.id=l.created_by WHERE l.token=?",
+                (token,),
+            ).fetchone()
+        return self._link_row(row) if row else None
+
+    def report_links(self, cid: int) -> list[dict]:
+        """A campaign's links, newest first, live or not."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT l.*, a.name AS by_name FROM report_link l "
+                "LEFT JOIN account a ON a.id=l.created_by WHERE l.campaign=? "
+                "ORDER BY l.created DESC, l.rowid DESC",
+                (cid,),
+            ).fetchall()
+        return [self._link_row(r) for r in rows]
+
+    def revoke_report_link(self, cid: int, token: str, by: int | None = None) -> dict:
+        """From now on the address is a 404; the row stays as history. Revoking twice is
+        fine (the second time changes nothing)."""
+        with self.db() as db:
+            row = db.execute(
+                "SELECT revoked FROM report_link WHERE token=? AND campaign=?", (token, cid)
+            ).fetchone()
+            if not row:
+                raise NotFound("link não encontrado")
+            if not row["revoked"]:
+                db.execute("UPDATE report_link SET revoked=datetime('now') WHERE token=?", (token,))
+        if not row["revoked"]:
+            obs.event("report_link_revoked", account=by, campaign=cid)
+        return self.report_link(token)
 
     def table(self, name: str) -> list[dict]:
         """Every row of one of the tracking tables, for the export."""

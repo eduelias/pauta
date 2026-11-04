@@ -7,6 +7,24 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Link do relatório para o cliente.** Na tela do relatório, **Copiar link** cria um
+  endereço (`/r/<código>`) que abre o mesmo cartão em qualquer navegador, sem conta na Pauta,
+  e copia. O link vale por 30 dias e mostra só o que está no cartão: o nome da campanha, o
+  cliente, o período, as métricas escolhidas naquele momento (com as barras por dia) e a data
+  dos dados da Meta; nada de telefone, contato, contas de anúncio, orçamento ou outras
+  campanhas. **Abrir conversa** passa a mandar o link no fim da mensagem do WhatsApp ("Veja o
+  relatório aqui: ..."), e o WhatsApp mostra uma prévia com o nome da campanha, do cliente e
+  o período. A tela diz até quando o link vale. Na página da campanha, **Links do relatório**
+  lista os links criados (período, quantas métricas, quem criou, até quando) com **Revogar**:
+  a partir daí o endereço mostra só "Este relatório não está mais disponível", assim como um
+  link vencido. Pedir o link do mesmo cartão de novo (mesmo período, mesmas métricas) devolve
+  o mesmo endereço. API: `POST /api/campaigns/{id}/links` (`{since, until, metrics}` →
+  `{url, expires, ...}`), `DELETE /api/campaigns/{id}/links/{token}`, `links` em
+  `GET /api/campaigns/{id}`; `GET /api/r/{token}` e `GET /r/{token}` abrem sem sessão.
+  Esquema v14 (só acrescenta a tabela `report_link`). Decisão 12.
+
 ## [1.8.1] - 2026-11-04
 
 ### Added
@@ -18,7 +36,6 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   Os registros são apagados após 90 dias, e um time pode pedir para desligar
   (`pauta usage --disable`). O responsável lê o resumo com `pauta usage` (decisão 11); veja a
   política de privacidade.
-
 ### Changed
 
 - **Campanhas e a página do cliente abrem na hora.** A lista de contas da Meta (números do
@@ -43,7 +60,6 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   ela é baixada). O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
   então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
   `client_contact` e `client_whatsapp`.
-
 ### Fixed
 
 - **Link do WhatsApp com número digitado com o zero.** Um WhatsApp cadastrado como se disca

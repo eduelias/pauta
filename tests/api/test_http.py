@@ -48,7 +48,7 @@ def test_health_reports_a_broken_database(site, monkeypatch):
 
 def test_security_headers_everywhere(site):
     base, _, _ = site
-    for path in ("/", "/app.js", "/api/me", "/healthz"):
+    for path in ("/", "/app.js", "/api/me", "/healthz", "/r/nobody", "/api/r/nobody"):
         _, headers, _ = raw(base, "GET", path)
         assert headers["X-Content-Type-Options"] == "nosniff"
         assert headers["Referrer-Policy"] == "same-origin"
