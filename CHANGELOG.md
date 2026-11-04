@@ -14,14 +14,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   cliente, o período e as métricas marcadas na página da campanha viram cartões, cada um com
   o número, o que ele conta (nos Resultados) e uma frase curta dizendo o que está sendo
   medido, mais as barras por dia onde há dados. As cores são fixas (não seguem o tema do
-  celular), para todo cliente receber o mesmo cartão. **Compartilhar com o cliente** abre o
-  WhatsApp na conversa com o número cadastrado no cliente, com a mensagem pronta (o botão
-  chama-se **Abrir conversa**); sem número cadastrado o botão fica desligado e a tela diz onde
-  cadastrar. **Enviar imagem** gera a imagem do cartão no próprio celular e abre a lista de
-  apps (escolha o WhatsApp e a conversa): o link do WhatsApp só leva texto, a imagem vai por
-  aí; no computador o botão vira **Baixar imagem**. **Copiar imagem** põe uma imagem só na área
-  de transferência, para colar na conversa (o Copiar da própria lista de apps do iPhone cola
-  a foto duas vezes). O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
+  celular), para todo cliente receber o mesmo cartão. **Abrir conversa** abre o WhatsApp na
+  conversa com o número cadastrado no cliente, com a mensagem pronta; sem número cadastrado
+  o botão fica desligado e a tela diz onde cadastrar. **Copiar imagem** gera a imagem do cartão no próprio celular e a copia, para
+  colar na conversa (o link do WhatsApp só leva texto; num navegador que não copia imagem,
+  ela é baixada). O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
   então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
   `client_contact` e `client_whatsapp`.
 

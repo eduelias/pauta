@@ -582,10 +582,10 @@ async function cardImage(node, scale = 3) {
   return new Promise((ok, no) => canvas.toBlob((b) => b ? ok(b) : no(new Error("não deu para gerar a imagem")), "image/png"));
 }
 const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 40) || "campanha";
-// the phone's share sheet takes a file (WhatsApp shows a PNG as a photo); a computer gets it as a download
-const canShareFiles = () => typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] });
-// the clipboard takes one PNG (iOS's "Copiar" on the share sheet puts the file there as two
-// items, and WhatsApp pastes two photos: Piero's first try)
+// the clipboard takes one PNG, to paste in the conversation (the phone's share sheet was
+// tried first: its own "Copiar" put the file there as two items and WhatsApp pasted two
+// photos, so Piero asked for this one button); a browser whose clipboard takes no image
+// gets the PNG as a download instead
 const canCopyImage = () => Boolean(navigator.clipboard?.write && window.ClipboardItem);
 
 async function viewReport(query, id) {
@@ -616,23 +616,18 @@ async function viewReport(query, id) {
   };
   const wa = waUrl(k.client_whatsapp);
   const text = shareText(k, since, until);
-  const sheet = canShareFiles();
-  const image = `<button class="btn primary" id="shareimg">${icon("image")}${sheet ? "Enviar imagem" : "Baixar imagem"}</button>${canCopyImage() ? `<button class="btn" id="copyimg">${icon("image")}Copiar imagem</button>` : ""}`;
+  const image = `<button class="btn primary" id="copyimg">${icon("image")}Copiar imagem</button>`;
   const share = wa
     ? `<a class="btn" id="share" href="${esc(`${wa}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
     : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
-  const who = `<b>${esc(k.client_name || "o cliente")}</b>`;
-  const hint = (sheet
-    ? `<b>Enviar imagem</b> gera a imagem do cartão e abre a lista de apps do celular: escolha o WhatsApp e a conversa com ${who} (não use o Copiar dessa lista: ele cola duas vezes). <b>Copiar imagem</b> copia uma imagem só, para colar na conversa.`
-    : `<b>Baixar imagem</b> salva o cartão como imagem (no celular, o botão vira Enviar imagem e abre direto a lista de apps).`)
-    + (wa ? ` <b>Abrir conversa</b> abre o WhatsApp na conversa com ${who} só com a mensagem, para mandar a imagem por lá.`
-      : ` ${who} não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`);
+  // no explanation under the buttons (Piero's ask); only the missing number is worth a line
+  const hint = wa ? "" : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`;
   const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "";
   const today = todayISO();
   app.innerHTML = `<div class="report">
     <div class="report-tools">
       <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${image}${share}</div>
-      <p class="muted small" id="sharehint">${hint}</p>
+      ${hint ? `<p class="muted small" id="sharehint">${hint}</p>` : ""}
     </div>
     <article class="rep" id="rep">
       <header class="rep-hero">
@@ -648,21 +643,22 @@ async function viewReport(query, id) {
       </footer>
     </article>
   </div>`;
-  // the image is drawn as soon as the card is on screen, so the tap on Enviar imagem reaches
-  // the share sheet at once (Safari only opens it right after a tap)
+  // the image is drawn as soon as the card is on screen, so the tap on Copiar imagem has it
+  // ready (Safari takes a clipboard write only right after a tap)
   const name = `relatorio-${slug(k.client_name)}-${slug(k.name)}-${since}-${until}.png`;
   let shot = cardImage($("#rep")).catch((e) => e);
-  $("#shareimg").addEventListener("click", async (e) => {
+  $("#copyimg").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
-      let blob = await shot;
-      if (blob instanceof Error) { shot = cardImage($("#rep")); blob = await shot; }  // once more, on the tap
-      const file = new File([blob], name, { type: "image/png" });
-      if (sheet) {
-        try { await navigator.share({ files: [file], text }); }
-        catch (err) { if (err.name !== "AbortError") throw err; }  // closed the sheet: nothing to say
+      // the ClipboardItem takes the promise: Safari wants the write inside the tap itself
+      const png = shot.then((b) => { if (b instanceof Error) throw b; return b; });
+      if (canCopyImage()) {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        toast("Imagem copiada: cole na conversa do WhatsApp");
       } else {
+        let blob = await shot;
+        if (blob instanceof Error) { shot = cardImage($("#rep")); blob = await shot; }  // once more, on the tap
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = name;
@@ -670,17 +666,6 @@ async function viewReport(query, id) {
         setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
         toast("Imagem baixada: anexe na conversa");
       }
-    } catch (err) { toast(err.message, true); }
-    btn.disabled = false;
-  });
-  $("#copyimg")?.addEventListener("click", async (e) => {
-    // the ClipboardItem takes the promise: Safari wants the write inside the tap itself
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    try {
-      const png = shot.then((b) => { if (b instanceof Error) throw b; return b; });
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
-      toast("Imagem copiada: cole na conversa do WhatsApp");
     } catch (err) { toast(`Não deu para copiar: ${err.message}`, true); }
     btn.disabled = false;
   });
