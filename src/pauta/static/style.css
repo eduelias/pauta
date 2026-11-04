@@ -726,10 +726,17 @@ body.report .main { padding: 16px 12px 40px; max-width: none; }
 .rep-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px; }
 .rep-tile { background: #f6f5fc; border-radius: 16px; padding: 14px 14px 12px; display: flex; flex-direction: column; min-width: 0; }
 .rep-tile.hero { grid-column: 1 / -1; background: #f1efff; }
+.rep-tile.wide { grid-column: 1 / -1; }
 .rep-label { font-size: 12px; font-weight: 700; color: #5b45ff; letter-spacing: .02em; }
-/* a value never breaks mid-number: it shrinks with the phone instead */
-.rep-val { font-size: clamp(20px, 6.5vw, 28px); font-weight: 800; letter-spacing: -.04em; line-height: 1.1; margin: 6px 0 2px; color: #17161c; white-space: nowrap; }
-.rep-tile.hero .rep-val { font-size: clamp(32px, 11vw, 44px); }
+/* a value never breaks mid-number: it shrinks with its tile instead (container units; the
+   viewport ones are the fallback for an older browser) */
+.rep-tile { container-type: inline-size; }
+.rep-val { font-size: clamp(16px, 5.4vw, 28px); font-weight: 800; letter-spacing: -.04em; line-height: 1.1; margin: 6px 0 2px; color: #17161c; white-space: nowrap; }
+.rep-tile.hero .rep-val { font-size: clamp(28px, 11vw, 44px); }
+@supports (font-size: 1cqw) {
+  .rep-val { font-size: clamp(14px, 14cqw, 28px); }
+  .rep-tile.hero .rep-val { font-size: clamp(28px, 13cqw, 44px); }
+}
 .rep-sub { font-size: 12px; font-weight: 600; color: #3a3843; }
 .rep-why { margin: 6px 0 0; font-size: 12px; line-height: 1.35; color: #6e6b78; }
 .rep-spark { display: block; width: 100%; height: 40px; margin-top: 10px; }

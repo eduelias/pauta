@@ -127,31 +127,50 @@ const RESULT_LABELS = {
   video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
   "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
 };
-// a type neither list knows reads word by word in Portuguese (approximate, but never a raw
-// key like "offsite_search_add_meta_leads" on the screen), Meta's prefixes dropped
+// a type neither list knows reads in Portuguese (approximate, but never a raw key like
+// "offsite_search_add_meta_leads" on the screen): known phrases first, then word by word,
+// the place ("no site", "no app") last. The chip's tooltip keeps Meta's own name.
+const TYPE_PHRASES = Object.entries({
+  add_to_cart: "adições ao carrinho", add_to_wishlist: "adições à lista de desejos", add_payment_info: "informações de pagamento",
+  initiate_checkout: "finalizações de compra iniciadas", initiated_checkout: "finalizações de compra iniciadas",
+  view_content: "visualizações de conteúdo", content_view: "visualizações de conteúdo", landing_page_view: "visualizações da página de destino",
+  complete_registration: "cadastros concluídos", video_view: "reproduções de vídeo", video_play: "reproduções de vídeo",
+  post_engagement: "engajamentos com a publicação", page_engagement: "engajamentos com a Página", post_interaction: "interações com a publicação",
+  post_net_like: "curtidas líquidas na publicação", post_unlike: "descurtidas na publicação", post_save: "salvamentos",
+  post_reaction: "reações", link_click: "cliques no link", click_to_call: "ligações", call_placed: "ligações feitas", call_connect: "ligações atendidas",
+  message_send: "mensagens enviadas", messaging_conversation_started: "conversas iniciadas", messaging_first_reply: "primeiras respostas",
+  total_messaging_connection: "conexões por mensagem", welcome_message_view: "mensagens de boas-vindas vistas", messaging_block: "bloqueios de mensagens",
+  app_install: "instalações do app", mobile_app_install: "instalações do app", activate_app: "aberturas do app", app_use: "usos do app",
+  start_trial: "avaliações iniciadas", submit_application: "inscrições enviadas", find_location: "buscas por localização",
+  customize_product: "produtos personalizados", photo_view: "visualizações de foto", profile_visit: "visitas ao perfil", ig_profile_visit: "visitas ao perfil",
+  store_visit: "visitas à loja", lead_grouped: "cadastros", flow_complete: "fluxos concluídos", order_created: "pedidos criados",
+}).sort((a, b) => b[0].length - a[0].length);
 const TYPE_WORDS = {
-  meta: "Meta", pixel: "", fb: "", conversion: "", conversions: "conversões", custom: "personalizadas", offline: "offline", omni: "todas",
-  purchase: "compras", purchases: "compras", lead: "cadastros", leads: "cadastros", registration: "cadastros", complete: "concluídos",
-  view: "visualizações", views: "visualizações", content: "de conteúdo", search: "pesquisas", add: "+", cart: "carrinho", wishlist: "lista de desejos",
-  checkout: "finalizações de compra", initiate: "iniciadas", initiated: "iniciadas", payment: "pagamento", info: "informações",
-  subscribe: "assinaturas", trial: "testes", start: "iniciados", schedule: "agendamentos", contact: "contatos", donate: "doações",
-  post: "publicação", like: "curtidas", likes: "curtidas", unlike: "descurtidas", net: "líquidas", gross: "brutas",
-  interaction: "interações", interactions: "interações", reaction: "reações", comment: "comentários", share: "compartilhamentos",
-  save: "salvamentos", engagement: "engajamentos", page: "Página", photo: "foto", video: "vídeo", play: "reproduções", plays: "reproduções",
-  message: "mensagem", messaging: "mensagens", conversation: "conversas", started: "iniciadas", connection: "conexões", total: "total",
-  user: "", depth: "com", send: "enviadas", first: "primeira", reply: "resposta", welcome: "boas-vindas", block: "bloqueios",
-  order: "pedidos", created: "criados", flow: "fluxos", form: "formulário", grouped: "", landing: "página de destino",
-  click: "cliques", clicks: "cliques", link: "no link", call: "ligações", confirm: "confirmadas", placed: "feitas", native: "",
-  install: "instalações", installs: "instalações", use: "usos", event: "eventos", response: "respostas", rsvp: "respostas a eventos",
-  checkin: "check-ins", visit: "visitas", profile: "ao perfil", follow: "seguidores", ig: "Instagram", d2: "", d7: "", "7d": "", "28d": "",
+  lead: "cadastros", leads: "cadastros", purchase: "compras", purchases: "compras", search: "pesquisas", view: "visualizações", views: "visualizações",
+  like: "curtidas", likes: "curtidas", comment: "comentários", share: "compartilhamentos", save: "salvamentos", reaction: "reações",
+  engagement: "engajamentos", interaction: "interações", click: "cliques", clicks: "cliques", call: "ligações", visit: "visitas",
+  subscribe: "assinaturas", schedule: "agendamentos", contact: "contatos", donate: "doações", rsvp: "respostas a eventos", checkin: "check-ins",
+  follow: "seguidores", install: "instalações", use: "usos", play: "reproduções", conversion: "", conversions: "conversões", custom: "personalizadas",
+  offline: "offline", net: "líquidas", gross: "brutas", total: "total", grouped: "", meta: "Meta", omni: "", fb: "", pixel: "", to: "", in: "", the: "",
+  mobile: "", native: "", user: "", event: "eventos", response: "respostas", message: "mensagem", messaging: "mensagens", conversation: "conversas",
+  started: "iniciadas", replied: "respondidas", block: "bloqueios", order: "pedidos", created: "criados", flow: "fluxos", form: "formulário",
+  complete: "concluídos", post: "publicação", page: "Página", video: "vídeo", photo: "foto", profile: "perfil", store: "loja", link: "no link",
+  cart: "carrinho", checkout: "finalizações de compra", payment: "pagamento", info: "informações", registration: "cadastros", content: "conteúdo",
 };
 const TYPE_PLACES = { offsite: "no site", onsite: "na Meta", web: "no site", app: "no app" };
 function cleanType(type) {
-  const words = String(type || "").split(/[._]+/).filter(Boolean);
+  let t = String(type || "").toLowerCase().replace(/\./g, "_");
+  let tail = "";
+  if (/_add_meta_leads$/.test(t)) { t = t.replace(/_add_meta_leads$/, ""); tail = " (site + Meta)"; }
+  t = t.replace(/messaging_user_depth_(\d+)_message_send/, "conversas com $1 mensagens");
+  for (const [k, v] of TYPE_PHRASES) t = t.replace(new RegExp(`(^|_)${k}(?=_|$)`, "g"), `$1${v}`);  // a phrase has spaces, no "_": it survives the split
+  const words = t.split("_").filter(Boolean);
   const places = [...new Set(words.filter((w) => TYPE_PLACES[w]).map((w) => TYPE_PLACES[w]))];
   const rest = words.filter((w) => !TYPE_PLACES[w]).map((w) => w in TYPE_WORDS ? TYPE_WORDS[w] : /^\d/.test(w) ? "" : w).filter(Boolean);
-  const where = places.filter((x) => x !== "na Meta" || places.length === 1).join(" e ");  // "no site e no app"
-  return [...rest, where].filter(Boolean).join(" ").replace(/^./, (c) => c.toUpperCase());
+  const where = tail ? "" : places.filter((x) => x !== "na Meta" || places.length === 1).join(" e ");  // "no site e no app"
+  const out = ([...rest, where].filter(Boolean).join(" ").replace(/\b(\S+) \1\b/g, "$1") + tail).trim()
+    || String(type || "").replace(/[._]+/g, " ");
+  return out.replace(/^./, (c) => c.toUpperCase());
 }
 const resultLabel = (type) => RESULT_LABELS[type] || ACTION_LABELS[type] || cleanType(type);
 // the campaign's objective, as Ads Manager names it in Portuguese
@@ -337,8 +356,8 @@ const METRICS = {
 };
 // the action chips: Ads Manager's words, told apart where two types would read the same
 const ACTION_LABELS = {
-  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
-  "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
+  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta, agrupados)", omni_purchase: "Compras (todas)",
+  "onsite_conversion.purchase": "Compras (loja da Meta)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
   initiate_checkout: "Finalizações de compra iniciadas",
   // the ones on Piero's campaigns (2026-11-04)
@@ -388,7 +407,7 @@ function metricDefs(k) {
   const defs = { ...METRICS };
   for (const type of Object.keys(k.actions || {}).sort()) {
     if (type === "link_click") continue;  // Cliques no link is already a metric above
-    defs[`act:${type}`] = { label: ACTION_LABELS[type] || type, fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0 };
+    defs[`act:${type}`] = { label: ACTION_LABELS[type] || cleanType(type), fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0, note: `o que a Meta chama de ${type}` };
   }
   return defs;
 }
@@ -507,6 +526,7 @@ async function viewCampaign(query, id) {
     if (!b) return;
     const key = b.dataset.metric;
     picked = picked.includes(key) ? picked.filter((x) => x !== key) : [...picked, key];
+    if (key.startsWith("act:") && !picked.includes(key)) more = true;  // the chip just unmarked stays in view
     try { localStorage.setItem("pauta.metrics", JSON.stringify(picked)); } catch { /* not remembered */ }
     $("#metrics").innerHTML = chips();
     $("#cards").innerHTML = cards();
@@ -556,9 +576,11 @@ async function viewReport(query, id) {
     const v = m.period(k), sub = m.sub ? m.sub(k) : "";
     const explain = m.explain || ACTION_EXPLAIN;
     const points = m.day ? dayPoints(k, since, until, m) : [];
-    return `<section class="rep-tile ${i === 0 ? "hero" : ""}" data-tile="${esc(key)}">
+    const text = fmtMetric(v, m.fmt, k.currency);
+    // a long value ("R$ 123.456,78") takes the whole row rather than shrinking to nothing
+    return `<section class="rep-tile ${i === 0 ? "hero" : text.length > 10 ? "wide" : ""}" data-tile="${esc(key)}">
       <span class="rep-label">${esc(m.label)}</span>
-      <b class="rep-val">${esc(fmtMetric(v, m.fmt, k.currency))}</b>
+      <b class="rep-val">${esc(text)}</b>
       ${sub ? `<span class="rep-sub">${esc(sub)}</span>` : ""}
       <p class="rep-why">${esc(explain)}</p>
       ${points.length > 1 && points.some((p) => p.v) ? spark(points) : ""}
