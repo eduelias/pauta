@@ -234,6 +234,25 @@ def test_one_campaign_with_its_days(team, fake_meta):
     assert status == 200 and doc["campaign"]["reach"] is None
 
 
+def test_one_campaign_carries_the_clients_contact_for_the_report(team, fake_meta):
+    """The report's Compartilhar com o cliente needs the client's WhatsApp and contact
+    name: they come with the campaign (empty strings when not registered)."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
+    cid, clinic = k["23850001"]["id"], k["23850001"]["client"]
+    c = call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]["campaign"]
+    assert c["client"] == clinic and c["client_whatsapp"] == "" and c["client_contact"] == ""
+    call(
+        f"{base}/api/clients/{clinic}",
+        {"whatsapp": "(11) 98888-7777", "contact": "Carla Mendes"},
+        nato,
+        "PATCH",
+    )
+    c = call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]["campaign"]
+    assert c["client_whatsapp"] == "(11) 98888-7777" and c["client_contact"] == "Carla Mendes"
+
+
 def test_skipped_ones_on_request_and_one_clients_campaigns(team, fake_meta):
     base, nato, piero, _ = synced(team, fake_meta)
     doc = call(f"{base}/api/campaigns", cookie=piero)[1]
