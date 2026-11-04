@@ -58,6 +58,7 @@ async function route() {
         addMoveBar();
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
+        document.body.classList.remove("report");  // an error screen keeps its navigation
         app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
       } finally { LOADING--; }
       if (seq === NAV_SEQ) window.scrollTo(0, 0);

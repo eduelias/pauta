@@ -29,8 +29,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   impressões (CPM)**; o objetivo da campanha aparece em português ("objetivo: Engajamento",
   antes "engagement"); as ações da Meta que viram chips, e os Resultados, ganham nome em
   português para muito mais tipos (conversas, cadastros no site, compras, carrinho,
-  ligações, instalações do app...), e um tipo desconhecido perde os prefixos técnicos da
-  Meta. O chip "Cliques no link" da ação some: é a mesma métrica.
+  ligações, instalações do app...), inclusive os que apareciam como chave técnica nas
+  campanhas da equipe (`onsite_web_lead` → "Cadastros no site", `post_interaction_net` →
+  "Interações com a publicação (líquidas)", `offsite_search_add_meta_leads` → "Pesquisas
+  (site + Meta)"...); um tipo que a Pauta ainda não conhece é traduzido palavra por palavra,
+  nunca mais aparece como chave. As ações ficam atrás de **Mais métricas (N)** até uma ser
+  marcada, para a fileira de chips não tomar meia tela. O chip "Cliques no link" da ação
+  some: é a mesma métrica. Os cartões seguem um padrão só: título, número, o que ele conta
+  (nos Resultados) e uma frase curta dizendo o que está sendo medido (a mesma que vai no
+  relatório), em vez de uma nota ao lado do título em alguns e nada em outros; o número
+  pequeno acima do gráfico ganha o nome que faltava ("máx. por dia").
 
 ## [1.7.1] - 2026-11-03
 

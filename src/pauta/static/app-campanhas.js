@@ -127,8 +127,32 @@ const RESULT_LABELS = {
   video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
   "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
 };
-// a type neither list knows reads without Meta's prefixes ("onsite_conversion.", "fb_pixel_")
-const cleanType = (type) => String(type || "").replace(/^(onsite_conversion|offsite_conversion|omni)[._]/, "").replace(/^fb_pixel_/, "").replace(/[._]+/g, " ");
+// a type neither list knows reads word by word in Portuguese (approximate, but never a raw
+// key like "offsite_search_add_meta_leads" on the screen), Meta's prefixes dropped
+const TYPE_WORDS = {
+  meta: "Meta", pixel: "", fb: "", conversion: "", conversions: "conversões", custom: "personalizadas", offline: "offline", omni: "todas",
+  purchase: "compras", purchases: "compras", lead: "cadastros", leads: "cadastros", registration: "cadastros", complete: "concluídos",
+  view: "visualizações", views: "visualizações", content: "de conteúdo", search: "pesquisas", add: "+", cart: "carrinho", wishlist: "lista de desejos",
+  checkout: "finalizações de compra", initiate: "iniciadas", initiated: "iniciadas", payment: "pagamento", info: "informações",
+  subscribe: "assinaturas", trial: "testes", start: "iniciados", schedule: "agendamentos", contact: "contatos", donate: "doações",
+  post: "publicação", like: "curtidas", likes: "curtidas", unlike: "descurtidas", net: "líquidas", gross: "brutas",
+  interaction: "interações", interactions: "interações", reaction: "reações", comment: "comentários", share: "compartilhamentos",
+  save: "salvamentos", engagement: "engajamentos", page: "Página", photo: "foto", video: "vídeo", play: "reproduções", plays: "reproduções",
+  message: "mensagem", messaging: "mensagens", conversation: "conversas", started: "iniciadas", connection: "conexões", total: "total",
+  user: "", depth: "com", send: "enviadas", first: "primeira", reply: "resposta", welcome: "boas-vindas", block: "bloqueios",
+  order: "pedidos", created: "criados", flow: "fluxos", form: "formulário", grouped: "", landing: "página de destino",
+  click: "cliques", clicks: "cliques", link: "no link", call: "ligações", confirm: "confirmadas", placed: "feitas", native: "",
+  install: "instalações", installs: "instalações", use: "usos", event: "eventos", response: "respostas", rsvp: "respostas a eventos",
+  checkin: "check-ins", visit: "visitas", profile: "ao perfil", follow: "seguidores", ig: "Instagram", d2: "", d7: "", "7d": "", "28d": "",
+};
+const TYPE_PLACES = { offsite: "no site", onsite: "na Meta", web: "no site", app: "no app" };
+function cleanType(type) {
+  const words = String(type || "").split(/[._]+/).filter(Boolean);
+  const places = [...new Set(words.filter((w) => TYPE_PLACES[w]).map((w) => TYPE_PLACES[w]))];
+  const rest = words.filter((w) => !TYPE_PLACES[w]).map((w) => w in TYPE_WORDS ? TYPE_WORDS[w] : /^\d/.test(w) ? "" : w).filter(Boolean);
+  const where = places.filter((x) => x !== "na Meta" || places.length === 1).join(" e ");  // "no site e no app"
+  return [...rest, where].filter(Boolean).join(" ").replace(/^./, (c) => c.toUpperCase());
+}
 const resultLabel = (type) => RESULT_LABELS[type] || ACTION_LABELS[type] || cleanType(type);
 // the campaign's objective, as Ads Manager names it in Portuguese
 const OBJECTIVES = {
@@ -317,6 +341,15 @@ const ACTION_LABELS = {
   "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
   initiate_checkout: "Finalizações de compra iniciadas",
+  // the ones on Piero's campaigns (2026-11-04)
+  "onsite_conversion.lead": "Cadastros na Meta", onsite_web_lead: "Cadastros no site",
+  offsite_complete_registration_add_meta_leads: "Cadastros concluídos (site + Meta)",
+  offsite_content_view_add_meta_leads: "Visualizações de conteúdo (site + Meta)",
+  offsite_search_add_meta_leads: "Pesquisas (site + Meta)",
+  onsite_app_purchase: "Compras no app", onsite_web_purchase: "Compras no site (dados da Meta)",
+  onsite_web_app_purchase: "Compras no site e no app",
+  "onsite_conversion.post_net_like": "Curtidas na publicação (líquidas)", "onsite_conversion.post_unlike": "Descurtidas na publicação",
+  post_interaction_gross: "Interações com a publicação (brutas)", post_interaction_net: "Interações com a publicação (líquidas)",
   // messaging
   "onsite_conversion.total_messaging_connection": "Conexões por mensagem",
   "onsite_conversion.messaging_user_depth_2_message_send": "Conversas com 2 mensagens",
@@ -325,7 +358,7 @@ const ACTION_LABELS = {
   "onsite_conversion.messaging_welcome_message_view": "Mensagens de boas-vindas vistas",
   "onsite_conversion.messaging_order_created": "Pedidos criados por mensagem",
   // leads and forms
-  "offsite_conversion.fb_pixel_lead": "Cadastros no site", onsite_web_lead: "Cadastros no site (formulário)",
+  "offsite_conversion.fb_pixel_lead": "Cadastros no site (pixel)",
   leadgen_grouped: "Cadastros (formulários)", "onsite_conversion.flow_complete": "Fluxos concluídos",
   "onsite_conversion.lead_form_grouped": "Cadastros (formulário instantâneo)",
   // site events (pixel)
@@ -337,8 +370,8 @@ const ACTION_LABELS = {
   search: "Pesquisas", "offsite_conversion.fb_pixel_search": "Pesquisas (no site)", omni_search: "Pesquisas (todas)",
   add_payment_info: "Informações de pagamento adicionadas", "offsite_conversion.fb_pixel_add_payment_info": "Informações de pagamento adicionadas (no site)",
   add_to_wishlist: "Adições à lista de desejos", "offsite_conversion.fb_pixel_add_to_wishlist": "Adições à lista de desejos (no site)",
-  contact: "Contatos", schedule: "Agendamentos", submit_application: "Candidaturas enviadas", subscribe: "Assinaturas",
-  start_trial: "Testes iniciados", donate: "Doações", find_location: "Buscas por localização", customize_product: "Produtos personalizados",
+  contact: "Contatos", schedule: "Agendamentos", submit_application: "Inscrições enviadas", subscribe: "Assinaturas",
+  start_trial: "Avaliações iniciadas", donate: "Doações", find_location: "Buscas por localização", customize_product: "Produtos personalizados",
   "offsite_conversion.fb_pixel_custom": "Conversões personalizadas", "offsite_conversion.custom": "Conversões personalizadas",
   offsite_conversion: "Conversões no site", offline_conversion: "Conversões offline",
   // page, post and video
@@ -350,6 +383,7 @@ const ACTION_LABELS = {
   app_use: "Usos do app", app_custom_event: "Eventos no app", omni_activate_app: "Aberturas do app",
 };
 const DEFAULT_METRICS = ["results", "cpr", "spend"];
+const ACTION_EXPLAIN = "Quantas vezes essa ação aconteceu por causa do anúncio.";
 function metricDefs(k) {
   const defs = { ...METRICS };
   for (const type of Object.keys(k.actions || {}).sort()) {
@@ -368,7 +402,11 @@ function fmtMetric(v, fmt, cur) {
 function readMetrics() {
   try {
     const got = JSON.parse(localStorage.getItem("pauta.metrics") || "null");
-    if (Array.isArray(got) && got.every((x) => typeof x === "string")) return got;
+    if (Array.isArray(got) && got.every((x) => typeof x === "string")) {
+      // the link_click action chip is gone (it is Cliques no link): a choice from before keeps the card
+      const keys = got.map((x) => x === "act:link_click" ? "leads" : x);
+      return keys.filter((x, i) => keys.indexOf(x) === i);
+    }
   } catch { /* fall through */ }
   return [...DEFAULT_METRICS];
 }
@@ -386,7 +424,7 @@ function chart(points, fmt, cur) {
     return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(fmtDate(p.day))}: ${esc(fmtMetric(p.v, fmt, cur))}</title></rect>`;
   }).join("");
   return `<div class="chartbox">
-    <div class="chart-y">${esc(fmtMetric(max, fmt, cur))}</div>
+    <div class="chart-y"><span>máx. por dia</span> ${esc(fmtMetric(max, fmt, cur))}</div>
     <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Por dia, de ${esc(fmtDate(points[0].day))} a ${esc(fmtDate(points[n - 1].day))}">${bars}<line class="axis" x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}"/></svg>
     <div class="chart-x"><span>${esc(fmtDate(points[0].day))}</span><span>${esc(fmtDate(points[n - 1].day))}</span></div>
   </div>`;
@@ -411,7 +449,19 @@ async function viewCampaign(query, id) {
   history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();
-  const chips = () => Object.entries(defs).map(([key, m]) => `<button type="button" class="chip ${picked.includes(key) ? "on" : ""}" data-metric="${esc(key)}" aria-pressed="${picked.includes(key)}" ${m.note ? `title="${esc(m.note)}"` : ""}>${esc(m.label)}</button>`).join("");
+  // the metrics are always chips; the actions Meta reports (there can be twenty) sit behind
+  // "Mais métricas" unless one is marked, so the row stays short
+  let more = false;
+  const chips = () => {
+    const chip = ([key, m]) => `<button type="button" class="chip ${picked.includes(key) ? "on" : ""}" data-metric="${esc(key)}" aria-pressed="${picked.includes(key)}" ${m.note ? `title="${esc(m.note)}"` : ""}>${esc(m.label)}</button>`;
+    const all = Object.entries(defs);
+    const actions = all.filter(([key]) => key.startsWith("act:"));
+    const hidden = more ? [] : actions.filter(([key]) => !picked.includes(key));
+    const toggle = actions.length && !more && hidden.length
+      ? `<button type="button" class="chip more" id="morechips" title="As ações que a Meta registra nesta campanha">Mais métricas (${hidden.length})</button>`
+      : actions.length && more ? `<button type="button" class="chip more" id="morechips">Menos métricas</button>` : "";
+    return all.filter((e) => !hidden.includes(e)).map(chip).join("") + toggle;
+  };
   const cards = () => {
     const shown = picked.filter((key) => defs[key]);
     if (!shown.length) return `<div class="panel empty">Escolha uma métrica acima.</div>`;
@@ -419,9 +469,10 @@ async function viewCampaign(query, id) {
       const m = defs[key];
       const v = m.period(k), sub = m.sub ? m.sub(k) : "";
       return `<section class="panel mcard" data-card="${esc(key)}">
-        <div class="panel-head"><h3>${esc(m.label)}</h3>${m.note ? `<span class="muted small">${esc(m.note)}</span>` : ""}</div>
+        <div class="panel-head"><h3>${esc(m.label)}</h3></div>
         <div class="mval" ${m.sub && v == null ? `title="${NO_RESULTS}"` : ""}>${esc(fmtMetric(v, m.fmt, k.currency))}</div>
-        ${sub ? `<div class="msub muted small">${esc(sub)}</div>` : ""}
+        ${sub ? `<div class="msub">${esc(sub)}</div>` : ""}
+        <p class="mwhy muted small">${esc(m.explain || ACTION_EXPLAIN)}</p>
         ${m.day ? chart(dayPoints(k, since, until, m), m.fmt, k.currency) : `<p class="muted small">Só no período: não há valor por dia.</p>`}
       </section>`;
     }).join("");
@@ -447,9 +498,11 @@ async function viewCampaign(query, id) {
   $("#mkreport").addEventListener("click", () => {
     const shown = picked.filter((key) => defs[key]);
     if (!shown.length) { toast("Marque ao menos uma métrica para o relatório", true); return; }
+    if (shown.length > REPORT_TILE_MAX) { toast(`O relatório cabe ${REPORT_TILE_MAX} métricas; desmarque ${shown.length - REPORT_TILE_MAX}`, true); return; }
     location.hash = reportHash(id, st, shown);
   });
   $("#metrics").addEventListener("click", (e) => {
+    if (e.target.closest("#morechips")) { more = !more; $("#metrics").innerHTML = chips(); return; }
     const b = e.target.closest("[data-metric]");
     if (!b) return;
     const key = b.dataset.metric;
@@ -501,7 +554,7 @@ async function viewReport(query, id) {
   const tile = (key, i) => {
     const m = defs[key];
     const v = m.period(k), sub = m.sub ? m.sub(k) : "";
-    const explain = m.explain || `Quantas vezes essa ação aconteceu por causa do anúncio.`;
+    const explain = m.explain || ACTION_EXPLAIN;
     const points = m.day ? dayPoints(k, since, until, m) : [];
     return `<section class="rep-tile ${i === 0 ? "hero" : ""}" data-tile="${esc(key)}">
       <span class="rep-label">${esc(m.label)}</span>
@@ -517,8 +570,8 @@ async function viewReport(query, id) {
     : `<button class="btn primary" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Compartilhar com o cliente</button>`;
   const hint = wa
     ? `Tire um print do cartão abaixo e toque em <b>Compartilhar com o cliente</b>: o WhatsApp abre na conversa com <b>${esc(k.client_name || "o cliente")}</b> com a mensagem pronta; é só anexar o print.`
-    : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado. <a href="#/cliente/${k.client}">Cadastre o número do cliente</a> para compartilhar daqui; até lá, tire o print e envie à mão.`;
-  const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit" }))}` : "";
+    : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado. ${k.client ? `<a href="#/cliente/${k.client}">Cadastre o número do cliente</a>` : "Cadastre o número do cliente"} para compartilhar daqui; até lá, tire o print e envie à mão.`;
+  const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "";
   const today = todayISO();
   app.innerHTML = `<div class="report">
     <div class="report-tools">
@@ -530,11 +583,11 @@ async function viewReport(query, id) {
         <span class="rep-kicker">Relatório de campanha</span>
         <h1>${esc(k.name)}</h1>
         <div class="rep-client">${avatar(k.client_name || "?", "md")}<span>${esc(k.client_name || "—")}</span></div>
-        <p class="rep-period">${esc(periodLabel(since, until))}${until >= today ? " · até hoje" : ""}${k.state === "active" ? " · campanha ativa" : k.state === "paused" ? " · campanha pausada" : ended}</p>
+        <p class="rep-period">${esc(since === until ? shortDay(since) : periodLabel(since, until))}${until >= today ? (since === until ? " · hoje" : " · até hoje") : ""}${k.state === "active" ? " · campanha ativa" : k.state === "paused" ? " · campanha pausada" : ended}</p>
       </header>
       <div class="rep-tiles">${shown.map(tile).join("")}</div>
       <footer class="rep-foot">
-        <span>${doc.last_sync ? `Dados da Meta de ${esc(fmtDate(String(doc.last_sync).slice(0, 10)))}` : "Dados da Meta"} · preparado por ${esc(firstName(ME.name))}</span>
+        <span>${doc.last_sync ? `Dados da Meta de ${esc(stamp(doc.last_sync).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", ""))}` : "Dados da Meta"} · preparado por ${esc(firstName(ME.name))}</span>
         <span class="rep-brand"><span class="logo" aria-hidden="true"></span>pauta</span>
       </footer>
     </article>

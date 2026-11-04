@@ -451,7 +451,18 @@ def test_campaign_page_cards_charts_and_remembered_chips(synced):
         "aria-pressed", "false"
     )
     expect(page.locator("#metrics .chip", has_text="Custo por clique no link")).to_have_count(1)
-    # the actions in the data are chips too, with Ads Manager's name when known
+    # every card follows one pattern: title, value, what it counts, one explaining line, and
+    # the chart with its per-day maximum named
+    expect(page.locator(".mcard .mwhy")).to_have_count(3)
+    expect(page.locator(".mcard[data-card='spend'] .mwhy")).to_have_text(
+        "Quanto foi investido em anúncios no período."
+    )
+    expect(page.locator(".mcard[data-card='spend'] .chart-y")).to_contain_text("máx. por dia")
+    # the actions in the data are chips too, with Ads Manager's name when known, behind
+    # "Mais métricas" until one is marked
+    expect(page.locator("#metrics .chip", has_text=CONVERSATIONS)).to_have_count(0)
+    page.locator("#morechips").click()
+    expect(page.locator("#morechips")).to_have_text("Menos métricas")
     extra = page.locator("#metrics .chip", has_text=CONVERSATIONS)
     expect(extra).to_have_count(1)
     extra.click()
@@ -472,6 +483,7 @@ def test_campaign_page_cards_charts_and_remembered_chips(synced):
     expect(page.locator("#metrics .chip.on")).to_have_text(
         ["Resultados", "Custo por resultado", "Cliques no link", "Frequência", CONVERSATIONS]
     )
+    expect(page.locator("#morechips")).to_have_count(0)  # the one action is marked: nothing hidden
     expect(page.locator(".mcard")).to_have_count(5)
     # the period picker works here too: Ontem is one bar
     page.get_by_role("button", name="Ontem").click()
@@ -648,7 +660,17 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     hint = page.locator("#sharehint")
     expect(hint).to_contain_text("Padaria Trigo de Ouro não tem WhatsApp cadastrado")
     expect(hint.locator("a")).to_have_attribute("href", f"#/cliente/{bakery['id']}")
-    # without `m` in the address the report takes the metrics marked on the campaign page
+    # without `m` in the address the report takes the metrics marked on the campaign page;
+    # a one-day period reads once; a wrong campaign is an error screen with its navigation
     panetone = page.url.split("/relatorio/")[1].split("?")[0]
     page.goto(f"{base}/#/relatorio/{panetone}?p=this_month")
     expect(page.locator("#rep .rep-tile")).to_have_count(4)
+    page.goto(f"{base}/#/relatorio/{panetone}?p=today")
+    expect(page.locator("#rep .rep-period")).to_have_text(
+        f"{label(t, t).split(' – ')[0]} · hoje · campanha ativa"
+    )
+    laptop.expected.add((404, "/api/campaigns/999"))
+    page.goto(f"{base}/#/relatorio/999?p=today")
+    expect(page.locator("#app .empty")).to_contain_text("campanha não encontrada")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\breport\b"))
+    expect(page.locator(".side")).to_be_visible()
