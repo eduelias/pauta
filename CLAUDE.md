@@ -27,6 +27,10 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   `tests/fakegraph.py`; never call the real one.
 - `src/pauta/obs.py`: JSON request logs (route patterns, never raw paths, bodies or personal
   data) and the numbers behind `GET /metrics` (loopback only, for du7's watchdog).
+- `src/pauta/usage.py`: the usage log (decision 11): the fixed table of events and prop keys,
+  the cleaning `POST /api/usage` (`routes/usage.py`, a quiet route) applies to the client's
+  batches, and the `pauta usage` report. Rows hold the account id, never a name, nothing
+  from the team's data; `pauta backup` prunes them after 90 days.
 - `src/pauta/server.py`: the HTTP plumbing (dispatch, headers, static files, health, metrics)
   and `/api/me`, `/api/boot`, `/api/export`. The rest of `/api/...` is in `src/pauta/routes/`,
   one module per area (`requests`, `clients`, `campaigns`, `finance`, `team`, `account`), each

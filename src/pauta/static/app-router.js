@@ -27,6 +27,19 @@ function hashParts() {
   return { path: path || "/", query: new URLSearchParams(query || "") };
 }
 
+// the screen's name for the usage log (decision 11): the first segment, never an id
+function screenName(path) {
+  if (path === "/") return "painel";
+  const [, a, b] = path.split("/");
+  return a === "cliente" && b === "novo" ? "cliente_novo" : a;
+}
+
+function enterScreen(name) {
+  const from = USAGE.screen;
+  USAGE.screen = name;
+  if (name !== from) track("screen", { from });
+}
+
 async function route() {
   const { path, query } = hashParts();
   if (path === "/equipe" || path.startsWith("/equipe/")) {
@@ -35,9 +48,9 @@ async function route() {
     history.replaceState(null, "", `#/configuracoes${path.slice(7)}${q ? "?" + q : ""}`);
     return route();
   }
-  if (path.startsWith("/entrar/")) return showJoin(path.slice(8));
-  if (path.startsWith("/mudar/")) return showMove(path.slice(7));
-  if (ME.auth && !ME.logged_in) return showGate();
+  if (path.startsWith("/entrar/")) { enterScreen("entrar"); return showJoin(path.slice(8)); }
+  if (path.startsWith("/mudar/")) { enterScreen("mudar"); return showMove(path.slice(7)); }
+  if (ME.auth && !ME.logged_in) { enterScreen("entrar"); return showGate(); }
   // signed in without the boot data, e.g. the page was opened on an invite link: load it first
   if (!BOOT) return enter();
   $("#gate").hidden = true;
@@ -50,6 +63,7 @@ async function route() {
     const m = path.match(re);
     if (m) {
       const seq = ++NAV_SEQ;
+      enterScreen(screenName(path));
       app.innerHTML = spinner();
       LOADING++;
       try {
@@ -79,16 +93,22 @@ async function loadReqs() {
 async function enter() {
   BOOT = await api("GET", "/api/boot");
   ME = BOOT.me;
+  if (!USAGE.opened) {  // once per page load, when the version is known
+    USAGE.opened = true;
+    const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    track("app_open", { version: BOOT.version || "", theme });
+  }
   renderShell();
   await route();
 }
 
 async function start() {
   ME = await api("GET", "/api/me");
+  USAGE.dev = deviceClass();
   const open = () => /^\/(entrar|mudar)\//.test(hashParts().path);
   window.addEventListener("hashchange", () => (ME.logged_in || open()) ? route() : showGate());
   if (open()) return route();
-  if (!ME.logged_in) return showGate();
+  if (!ME.logged_in) { enterScreen("entrar"); return showGate(); }
   await enter();
 }
 

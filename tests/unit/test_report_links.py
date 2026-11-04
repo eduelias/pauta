@@ -1,4 +1,4 @@
-"""The client's link to a report (decision 12), no HTTP: the v13 table, tokens that are
+"""The client's link to a report (decision 12), no HTTP: the v14 table, tokens that are
 long and random, one live link per card, expiry, revoking, and `report.public_report`
 keeping only what the chosen metrics draw."""
 
@@ -50,11 +50,11 @@ def campaign(store):
         return db.execute("SELECT id FROM campaign").fetchone()[0]
 
 
-def test_schema_v13_gains_the_report_link_table(tmp_path):
-    """A v12 database (the previous release) gets the table on open, nothing else changes."""
+def test_schema_v14_gains_the_report_link_table(tmp_path):
+    """A v13 database (the previous release) gets the table on open, nothing else changes."""
     Store(tmp_path / "old.db")
     conn = sqlite3.connect(tmp_path / "old.db")
-    conn.executescript("DROP TABLE report_link; UPDATE meta SET value='12' WHERE key='schema';")
+    conn.executescript("DROP TABLE report_link; UPDATE meta SET value='13' WHERE key='schema';")
     conn.commit()
     conn.close()
     store = Store(tmp_path / "old.db")

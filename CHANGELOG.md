@@ -9,6 +9,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Added
 
+- **O Pauta agora registra quais telas e ações cada conta usa, para melhorar o app.** Ficam
+  no banco do próprio time o número da conta (não o nome), a tela, a ação, o tipo de
+  aparelho (celular ou computador, app instalado ou navegador, tamanho da tela), os erros
+  que apareceram e quanto tempo cada chamada levou; nunca o conteúdo de pedidos ou clientes.
+  Os registros são apagados após 90 dias, e um time pode pedir para desligar
+  (`pauta usage --disable`). O responsável lê o resumo com `pauta usage` (decisão 11); veja a
+  política de privacidade.
 - **Link do relatório para o cliente.** Na tela do relatório, **Copiar link** cria um
   endereço (`/r/<código>`) que abre o mesmo cartão em qualquer navegador, sem conta na Pauta,
   e copia. O link vale por 30 dias e mostra só o que está no cartão: o nome da campanha, o
@@ -23,7 +30,7 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   o mesmo endereço. API: `POST /api/campaigns/{id}/links` (`{since, until, metrics}` →
   `{url, expires, ...}`), `DELETE /api/campaigns/{id}/links/{token}`, `links` em
   `GET /api/campaigns/{id}`; `GET /api/r/{token}` e `GET /r/{token}` abrem sem sessão.
-  Esquema v13 (só acrescenta a tabela `report_link`). Decisão 12.
+  Esquema v14 (só acrescenta a tabela `report_link`). Decisão 12.
 
 ## [1.8.0] - 2026-11-04
 

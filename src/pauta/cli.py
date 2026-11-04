@@ -1,4 +1,4 @@
-"""pauta serve | invite | move-link | users | backup | demo | onedrive | meta"""
+"""pauta serve | invite | move-link | users | backup | demo | onedrive | meta | usage"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, obs, sync
+from . import __version__, obs, sync, usage
 from .auth import MOVE_LINK_DAYS, Auth
 from .db import Store
 from .meta import Meta, MetaError
@@ -83,7 +83,11 @@ def cmd_backup(args) -> None:
     """One online backup into --dir as pauta-<stamp>.db, older ones pruned after --keep-days;
     --copy-to puts a second copy elsewhere (the NAS), pruned the same way."""
     name = f"pauta-{time.strftime('%Y%m%d-%H%M%S')}.db"
-    out = Store(db_path()).backup(Path(args.dir) / name)
+    store = Store(db_path())
+    pruned = store.prune_usage(usage.RETENTION_DAYS)  # decision 11: 90 days of usage rows
+    if pruned:
+        print(f"pruned {pruned} usage row(s) older than {usage.RETENTION_DAYS} days")
+    out = store.backup(Path(args.dir) / name)
     print(out)
     dirs = [Path(args.dir)]
     if args.copy_to:
@@ -298,6 +302,17 @@ def cmd_onedrive(args) -> None:
         sys.exit(f"problem: {st['error']}")
 
 
+def cmd_usage(args) -> None:
+    """The usage report (decision 11) over the last --days; --enable/--disable switch the
+    log for this team's file (a team may ask for that)."""
+    store = Store(db_path())
+    if args.enable or args.disable:
+        store.set_usage_enabled(bool(args.enable))
+        print(f"usage log {'enabled' if args.enable else 'disabled'} in {store.path}")
+        return
+    print(usage.render(usage.summary(store, days=args.days)))
+
+
 def cmd_meta(args) -> None:
     """sync: one pass of the campaign sync over every connected portfolio (the hourly one by
     default, --days for more); status: the connections, the linked accounts, the last sync."""
@@ -380,6 +395,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("action", choices=["status", "connect", "disconnect"])
     s.add_argument("--poll", type=float, default=5, help=argparse.SUPPRESS)
     s.set_defaults(fn=cmd_onedrive)
+    s = sub.add_parser("usage", help="how the team uses the app (decision 11)")
+    s.add_argument("--days", type=int, default=7, help="days back, today included")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--enable", action="store_true", help="switch the usage log on")
+    g.add_argument("--disable", action="store_true", help="switch the usage log off")
+    s.set_defaults(fn=cmd_usage)
     s = sub.add_parser("meta", help="the Meta connection and the campaign sync")
     s.add_argument("action", choices=["sync", "status"])
     s.add_argument("--days", type=int, default=sync.HOURLY_DAYS, help="days back to sync")

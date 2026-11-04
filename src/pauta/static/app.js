@@ -26,8 +26,12 @@ async function api(method, path, body) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
+  const t0 = performance.now();
+  let res;
+  try { res = await fetch(path, opts); }
+  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
   const doc = await res.json().catch(() => ({}));
+  trackApi(method, path, res.status, performance.now() - t0);
   if (res.status === 401 && ME?.auth && !path.startsWith("/api/passkey")) {
     ME.logged_in = false;
     showGate();
@@ -50,6 +54,74 @@ function toast(msg, err = false) {
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, err ? 4200 : 2200);
+  if (err) track("error_shown", errorClass());
+}
+
+// ---------- usage log (decision 11) -------------------------------------------------------------
+// What the team does in the app, for `pauta usage`: event names and prop keys from a fixed
+// table (the server drops the rest), the account id (never a name), nothing from the team's
+// data. Events queue here and leave in batches: every 10 s, when the tab hides, on unload.
+
+const USAGE = { queue: [], timer: null, screen: "", dev: "", lastErr: null, flushing: false };
+const USAGE_FLUSH_MS = 10000, USAGE_BATCH = 50, USAGE_QUEUE_MAX = 200;
+
+// phone/standalone/390x840/ios: form factor, installed or not, viewport to 10 px, platform
+// class. Never the user agent string.
+function deviceClass() {
+  const w = Math.round(innerWidth / 10) * 10, h = Math.round(innerHeight / 10) * 10;
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const plat = String(navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+  const touch = navigator.maxTouchPoints > 1;
+  const os = /iphone|ipad|ipod|ios/.test(plat) || (/mac/.test(plat) && touch) ? "ios"
+    : /android/.test(plat) ? "android" : /mac/.test(plat) ? "mac" : /win/.test(plat) ? "win"
+    : /linux|cros/.test(plat) ? "linux" : "other";
+  return `${w < 768 ? "phone" : "desktop"}/${standalone ? "standalone" : "browser"}/${w}x${h}/${os}`;
+}
+
+function track(e, p = {}) {
+  if (USAGE.queue.length >= USAGE_QUEUE_MAX) USAGE.queue.shift();
+  USAGE.queue.push({ t: Date.now(), e, s: USAGE.screen, p });
+  if (!USAGE.timer) USAGE.timer = setTimeout(() => flushUsage(), USAGE_FLUSH_MS);
+}
+
+// one batch; `unload` sends it as a beacon (the page is going away). Nothing leaves before
+// the account is known: the route needs a session, and an event is always for an account.
+function flushUsage(unload = false) {
+  clearTimeout(USAGE.timer);
+  USAGE.timer = null;
+  if (!USAGE.queue.length || !ME || (ME.auth && !ME.logged_in)) return;
+  const events = USAGE.queue.splice(0, USAGE_BATCH);
+  if (USAGE.queue.length) USAGE.timer = setTimeout(() => flushUsage(), 1000);
+  const body = JSON.stringify({ events, dev: USAGE.dev });
+  if (unload && navigator.sendBeacon) {
+    navigator.sendBeacon("/api/usage", new Blob([body], { type: "application/json" }));
+    return;
+  }
+  fetch("/api/usage", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true })
+    .catch(() => {});
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushUsage(true); });
+window.addEventListener("pagehide", () => flushUsage(true));
+
+// the route pattern of an API path (`/api/requests/{id}`), never the ids or tokens in it
+const routePattern = (path) => path.split("?")[0].split("/")
+  .map((seg) => /^\d+$/.test(seg) || /^act_\d+$/.test(seg) ? "{id}" : seg.length > 16 ? "{param}" : seg).join("/");
+
+// every API call's outcome: kept as an `api_slow` row only when slow (> 1.5 s) or failed
+function trackApi(method, path, status, ms) {
+  const route = routePattern(path);
+  if (status === 0 || status >= 400) USAGE.lastErr = { status, route, at: Date.now() };
+  if (ms > 1500 || status === 0 || status >= 400) track("api_slow", { route, ms: Math.round(ms), status, method });
+}
+
+// an error toast's class, from the API error just before it (within 3 s), else a client-side
+// check (an empty file, a form field): validation, network, auth, drive, server
+function errorClass() {
+  const e = USAGE.lastErr;
+  if (!e || Date.now() - e.at > 3000) return { msg: "validation" };
+  const msg = e.status === 0 ? "network" : e.status === 401 || e.status === 403 ? "auth"
+    : /\/files|\/onedrive|\/share/.test(e.route) ? "drive" : e.status >= 500 ? "server" : "validation";
+  return { msg, status: e.status };
 }
 
 const ICONS = {

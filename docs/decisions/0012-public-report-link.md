@@ -4,7 +4,7 @@
   exception to decision 2's rule that everything in Pauta needs a signed-in account.
 - **Depends on:** PR 35 (the client's report, `#/relatorio/<id>`). **Amends:** decision 2
   (one read-only, expiring, unguessable page is open; nothing else changes).
-- **Changes:** schema v13 (a `report_link` table, additive), `POST`/`DELETE
+- **Changes:** schema v14 (a `report_link` table, additive), `POST`/`DELETE
   /api/campaigns/{id}/links`, `links` on `GET /api/campaigns/{id}`, two open routes
   (`GET /r/<token>` and `GET /api/r/<token>`), `static/report.html`, `static/app-report.js`.
 
@@ -59,7 +59,7 @@ token or the address.
 
 - Decision 2's "there is no public view" becomes "there is one, by token, read-only, for
   30 days": the server's docstring and decision 2 say so.
-- Schema v13 is additive (`CREATE TABLE IF NOT EXISTS`): a 1.7 release runs on it.
+- Schema v14 is additive (`CREATE TABLE IF NOT EXISTS`): a 1.8 release runs on it.
 - Two more open routes to keep in `test_security_headers_everywhere`'s spirit: every
   response still carries `noindex`, the CSP and `Referrer-Policy: same-origin`.
 - `static/report.html` and `static/app-report.js` are new files in the wheel; the list CI
