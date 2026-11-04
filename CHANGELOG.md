@@ -19,7 +19,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   chama-se **Abrir conversa**); sem número cadastrado o botão fica desligado e a tela diz onde
   cadastrar. **Enviar imagem** gera a imagem do cartão no próprio celular e abre a lista de
   apps (escolha o WhatsApp e a conversa): o link do WhatsApp só leva texto, a imagem vai por
-  aí; no computador o botão vira **Baixar imagem**. O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
+  aí; no computador o botão vira **Baixar imagem**. **Copiar imagem** põe uma imagem só na área
+  de transferência, para colar na conversa (o Copiar da própria lista de apps do iPhone cola
+  a foto duas vezes). O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
   então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
   `client_contact` e `client_whatsapp`.
 

@@ -682,6 +682,15 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     shared = page.evaluate("window.shared")
     assert shared["names"] == [dl.value.suggested_filename] and shared["types"] == ["image/png"]
     assert shared["sizes"][0] > 10_000 and shared["text"].startswith("Olá, Carla!"), shared
+    # Copiar imagem: one PNG on the clipboard (the share sheet's own Copiar pastes two)
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'clipboard', { value: { write: async (items) => {"
+        " window.copied = items.map((i) => i.types); } } });"
+    )
+    page.reload()
+    page.locator("#copyimg").click()
+    expect(page.locator("#toast")).to_have_text("Imagem copiada: cole na conversa do WhatsApp")
+    assert page.evaluate("window.copied") == [["image/png"]]
     # the card fits a phone (the print goes to WhatsApp)
     page.set_viewport_size({"width": 390, "height": 844})
     box = rep.bounding_box()
