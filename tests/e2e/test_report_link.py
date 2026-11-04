@@ -4,12 +4,15 @@ the card (and nothing of the app), Abrir conversa before any link makes one on t
 Revogar on the campaign page, and the plain page once the link is gone."""
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import pytest
 from playwright.sync_api import expect
 from test_campanhas import PHONE, synced, today  # noqa: F401  (the fixture, by import)
+
+from fakemeta import TZ
 
 pytestmark = pytest.mark.e2e
 
@@ -54,7 +57,9 @@ def test_the_client_opens_the_report_without_an_account(synced, device):  # noqa
     url = page.evaluate("navigator.clipboard.readText()")
     assert re.fullmatch(rf"{re.escape(base)}/r/[A-Za-z0-9_-]{{32,}}", url), url
     token = url.rsplit("/", 1)[1]
-    ends = (datetime.now(UTC) + timedelta(days=30)).date()
+    # "válido até" is the local day (São Paulo, the browsers' zone) of the UTC stamp
+    expires = store.report_link(token)["expires"]
+    ends = datetime.fromisoformat(expires).replace(tzinfo=UTC).astimezone(ZoneInfo(TZ)).date()
     until = f"válido até {ends.day} de {MONTHS_LONG[ends.month - 1]}"
     expect(page.locator("#toast")).to_have_text(f"Link copiado · {until}")
     expect(page.locator("#linkinfo")).to_have_text(f"Link do relatório {until}: {url}")
@@ -73,7 +78,7 @@ def test_the_client_opens_the_report_without_an_account(synced, device):  # noqa
     assert len(store.report_links(int(cid))) == 1
 
     # the client's phone: no cookies, no passkey, never signed in
-    phone = device(**PHONE)
+    phone = device(**PHONE, timezone_id=TZ)
     cp = phone.page
     asked: list[str] = []
     cp.on("request", lambda r: asked.append(r.url) if "/api/" in r.url else None)

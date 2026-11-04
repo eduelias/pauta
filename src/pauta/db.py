@@ -1307,9 +1307,10 @@ class Store:
         fixed, open for `days` days, with the period's reach (from Meta, read now: the
         public page never asks Meta) kept on the row. A live link for the same campaign,
         period and metrics is returned instead of a second one."""
-        self.campaign(cid)  # 404 for an unknown campaign
         keys = json.dumps(metrics)
         with self.db() as db:
+            if not db.execute("SELECT 1 FROM campaign WHERE id=?", (cid,)).fetchone():
+                raise NotFound("campanha não encontrada")
             row = db.execute(
                 "SELECT token FROM report_link WHERE campaign=? AND since=? AND until=? "
                 "AND metrics=? AND revoked IS NULL AND expires > ? ORDER BY created DESC LIMIT 1",

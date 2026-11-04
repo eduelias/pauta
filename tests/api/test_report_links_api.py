@@ -50,6 +50,7 @@ def test_making_a_link_needs_a_session_and_a_valid_card(team, fake_meta):
         ({"metrics": ["results"]}, "período"),
         ({**PERIOD, "metrics": []}, "métrica"),
         ({**PERIOD, "metrics": ["budget"]}, "desconhecida"),
+        ({**PERIOD, "metrics": ["act:Lead"]}, "desconhecida"),
         ({**PERIOD, "metrics": "results"}, "métrica"),
         ({"since": "2026-10-12", "until": "2026-10-10", "metrics": ["results"]}, "depois"),
         ({"since": "2025-01-01", "until": "2026-10-10", "metrics": ["results"]}, "grande"),
@@ -65,11 +66,16 @@ def test_making_a_link_needs_a_session_and_a_valid_card(team, fake_meta):
     assert link["by_name"] == "Piero" and link["created_by"] == 2
     assert link["expires"] > link["created"] and link["revoked"] is None
     assert link["reach"] is None  # no reach tile: Meta wasn't asked
+    # the link_click action is the Cliques no link tile: the card has no chip for it
+    aliased = call(
+        f"{base}/api/campaigns/{cid}/links", {**PERIOD, "metrics": ["act:link_click"]}, piero
+    )[1]
+    assert aliased["metrics"] == ["leads"]
     # the same card again is the same link; the campaign carries its links
     assert call(f"{base}/api/campaigns/{cid}/links", body, piero)[1]["token"] == link["token"]
     doc = call(f"{base}/api/campaigns/{cid}?since=2026-10-10&until=2026-10-12", cookie=nato)[1]
-    assert [x["token"] for x in doc["links"]] == [link["token"]]
-    assert doc["links"][0]["url"] == link["url"]
+    assert [x["token"] for x in doc["links"]] == [aliased["token"], link["token"]]  # newest first
+    assert doc["links"][1]["url"] == link["url"]
     # a reach tile reads Meta once, when the link is made, and keeps the number
     with_reach = call(f"{base}/api/campaigns/{cid}/links", {**PERIOD, "metrics": ["reach"]}, piero)[
         1
@@ -118,13 +124,7 @@ def test_the_public_data_is_open_and_carries_the_card_only(team, fake_meta):
             "result_indicator": CONVERSATIONS,
             "cost_per_result_cents": round((1010 + 1011 + 1012) / 6),
             "days": [
-                {
-                    "day": f"2026-10-{d}",
-                    "spend_cents": 1000 + d,
-                    "results": 2,
-                    "result_indicator": CONVERSATIONS,
-                }
-                for d in (10, 11, 12)
+                {"day": f"2026-10-{d}", "spend_cents": 1000 + d, "results": 2} for d in (10, 11, 12)
             ],
         },
     }
@@ -136,9 +136,21 @@ def test_the_public_data_is_open_and_carries_the_card_only(team, fake_meta):
     assert "spend_cents" in doc["campaign"]["days"][0]  # cpr's bars need it...
     assert "spend_cents" not in doc["campaign"]  # ...but the period's spend is not a tile
     assert "impressions" not in doc["campaign"] and "link_clicks" not in doc["campaign"]
-    # HEAD works on the page (a preview may ask), not on the data (as every /api)
-    assert raw(base, "HEAD", f"/r/{link['token']}")[0] == 200
+    # HEAD works on the page (a preview may ask), not on the data (as every /api); the
+    # page takes nothing but GET
+    status, headers, body = raw(base, "HEAD", f"/r/{link['token']}")
+    assert status == 200 and body == b"" and int(headers["Content-Length"]) > 1000
     assert raw(base, "HEAD", f"/api/r/{link['token']}")[0] == 405
+    for method in ("POST", "PUT", "DELETE"):
+        assert raw(base, method, f"/r/{link['token']}")[0] == 405, method
+    # a reach tile shows the number read when the link was made: opening never asks Meta
+    with_reach = call(
+        f"{base}/api/campaigns/{cid}/links", {**PERIOD, "metrics": ["reach", "freq"]}, piero
+    )[1]
+    seen = len(fake_meta.seen)
+    doc = call(f"{base}/api/r/{with_reach['token']}")[1]
+    assert doc["campaign"]["reach"] == 500 * 3 and doc["campaign"]["impressions"] == 3300
+    assert len(fake_meta.seen) == seen
 
 
 def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_meta):
@@ -163,7 +175,10 @@ def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_m
     assert f'<meta property="og:title" content="{title}">' in page
     assert f'<meta property="og:url" content="{base}/r/{link["token"]}">' in page
     assert f'<meta property="og:image" content="{base}/og.png">' in page
-    assert 'content="3 métricas da campanha, com os dados da Meta. Link válido até ' in page
+    assert (
+        'content="3 métricas da campanha, com os dados da Meta, preparado na Pauta. '
+        'O link vale por 30 dias."' in page
+    )
     assert '<meta name="robots" content="noindex, nofollow">' in page
     assert "{{" not in page
     for script in ("/app.js", "/app-campanhas.js", "/app-report.js"):

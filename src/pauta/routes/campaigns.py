@@ -318,11 +318,10 @@ def install(route, store, auth, drive, meta):
         origin = self._page_origin()
         when = period_label(link["since"], link["until"])
         title = f"Relatório da campanha {k['name']} · {k['client_name'] or 'cliente'} · {when}"
-        ends = date.fromisoformat(link["expires"][:10])
         n = len(link["metrics"])
         description = (
-            f"{n} {'métrica' if n == 1 else 'métricas'} da campanha, com os dados da Meta. "
-            f"Link válido até {period_label(ends.isoformat(), ends.isoformat())}."
+            f"{n} {'métrica' if n == 1 else 'métricas'} da campanha, com os dados da Meta, "
+            "preparado na Pauta. O link vale por 30 dias."
         )
         fill = {
             "{{title}}": title,

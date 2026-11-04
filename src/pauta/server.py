@@ -159,7 +159,7 @@ def make_handler(
             for _, pattern, *_ in routes:
                 if pattern.match(path):
                     return obs.route_label(pattern.pattern)
-            return "/api/unknown"
+            return "/r/unknown" if path.startswith("/r/") else "/api/unknown"
 
         def _observed(self, method: str):
             """Every request: dispatch, turn a crash into a 500, then one log line."""
@@ -334,6 +334,8 @@ def make_handler(
                     return self._json(405, {"error": "método não permitido"})
                 return self._static(path)
             if method == "HEAD" and not public_page:  # a link preview may HEAD the page
+                return self._json(405, {"error": "método não permitido"})
+            if public_page and method not in ("GET", "HEAD"):  # the page is read-only
                 return self._json(405, {"error": "método não permitido"})
             try:
                 if method not in ("GET", "HEAD"):

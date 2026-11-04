@@ -551,11 +551,11 @@ async function viewCampaign(query, id) {
 function linksPanel(links) {
   const row = (l) => {
     const n = l.metrics.length;
-    const state = l.revoked ? `desativado em ${esc(fmtDate(l.revoked.slice(0, 10)))}`
+    const state = l.revoked ? `desativado em ${esc(stampDay(l.revoked))}`
       : l.live ? `válido até ${esc(validUntil(l.expires))} · <a href="${esc(l.url)}" target="_blank" rel="noopener">abrir</a>`
       : `expirou em ${esc(validUntil(l.expires))}`;
     return `<li class="linkrow ${l.live ? "" : "off"}" data-token="${esc(l.token)}">
-      <div class="grow"><b>${esc(periodLabel(l.since, l.until))}</b> · ${n} ${n === 1 ? "métrica" : "métricas"} · por ${esc(firstName(l.by_name) || "—")} em ${esc(fmtDate(l.created.slice(0, 10)))}<br><span class="muted small">${state}</span></div>
+      <div class="grow"><b>${esc(periodLabel(l.since, l.until))}</b> · ${n} ${n === 1 ? "métrica" : "métricas"} · por ${esc(firstName(l.by_name) || "—")} em ${esc(stampDay(l.created))}<br><span class="muted small">${state}</span></div>
       ${l.live ? `<button type="button" class="btn small" data-revoke="${esc(l.token)}">Revogar</button>` : ""}
     </li>`;
   };
@@ -652,8 +652,9 @@ function reportCard(k, { since, until, keys, defs, lastSync, by }) {
       </footer>
     </article>`;
 }
-// "4 de dezembro": when a link stops opening (its `expires` is a UTC stamp; the day is enough)
-const validUntil = (expires) => fmtDate(String(expires).slice(0, 10), { day: "numeric", month: "long" });
+// "4 de dezembro": when a link stops opening (`expires` is a UTC stamp, shown as the local day)
+const validUntil = (expires) => stamp(expires).toLocaleDateString("pt-BR", { day: "numeric", month: "long" });
+const stampDay = (s) => stamp(s).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", "");
 
 async function viewReport(query, id) {
   if (!metaVisible()) { location.hash = "#/"; return; }

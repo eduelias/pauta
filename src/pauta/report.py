@@ -56,6 +56,8 @@ def valid_metrics(keys) -> list[str]:
         raise Invalid("escolha ao menos uma métrica para o relatório")
     out: list[str] = []
     for k in keys:
+        if k == "act:link_click":  # the card's name for that action is the leads tile
+            k = "leads"
         if k not in METRIC_FIELDS and not ACTION.match(k):
             raise Invalid(f"métrica desconhecida: {k[:40]}")
         if k not in out:
@@ -85,8 +87,6 @@ def public_report(k: dict, metrics: list[str]) -> dict:
     days = []
     for d in k.get("days") or []:
         row = {"day": d["day"], **{f: d.get(f) for f in sorted(daily)}}
-        if "results" in daily:
-            row["result_indicator"] = d.get("result_indicator", "")
         if types:
             row["actions"] = {t: (d.get("actions") or {}).get(t, 0) for t in types}
         days.append(row)

@@ -156,7 +156,18 @@ def test_deleting_the_client_takes_the_links(store, campaign):
 def test_valid_metrics():
     assert report.valid_metrics(["results", "spend", "results"]) == ["results", "spend"]
     assert report.valid_metrics(["act:onsite_conversion.lead"]) == ["act:onsite_conversion.lead"]
-    for bad in ([], "results", ["results", 3], ["budget"], ["act:<b>"], None):
+    # the link_click action is the card's Cliques no link tile (metricDefs skips the chip)
+    assert report.valid_metrics(["act:link_click", "leads"]) == ["leads"]
+    for bad in (
+        [],
+        "results",
+        ["results", 3],
+        ["budget"],
+        ["act:<b>"],
+        ["act:"],
+        ["act:Lead"],
+        None,
+    ):
         with pytest.raises(Invalid):
             report.valid_metrics(bad)
     with pytest.raises(Invalid, match="cabe 12"):
@@ -180,9 +191,9 @@ def test_public_report_keeps_only_what_the_metrics_draw(store, campaign):
         "results": 6,
         "result_indicator": "lead",
         "days": [
-            {"day": "2026-10-10", "results": 2, "result_indicator": "lead"},
-            {"day": "2026-10-11", "results": 2, "result_indicator": "lead"},
-            {"day": "2026-10-12", "results": 2, "result_indicator": "lead"},
+            {"day": "2026-10-10", "results": 2},
+            {"day": "2026-10-11", "results": 2},
+            {"day": "2026-10-12", "results": 2},
         ],
     }
     # never, whatever the metrics
@@ -212,6 +223,12 @@ def test_public_report_keeps_only_what_the_metrics_draw(store, campaign):
         "spend_cents": 1010,
         "actions": {"lead": 2},
     }
+    # a day without the chosen action, and a campaign without any, count zero
+    k["days"][0]["actions"] = {}
+    out = report.public_report(k, ["act:lead"])
+    assert out["days"][0] == {"day": "2026-10-10", "actions": {"lead": 0}}
+    del k["actions"]
+    assert report.public_report(k, ["act:lead"])["actions"] == {"lead": 0}
     # freq reads the period only: the days carry nothing but the date
     out = report.public_report(k, ["freq"])
     assert out["impressions"] == 3300 and out["reach"] == 240

@@ -19,7 +19,7 @@ async function showPublicReport() {
     return;
   }
   const k = doc.campaign;
-  const ends = fmtDate(doc.expires.slice(0, 10), { day: "numeric", month: "long" });
+  const ends = validUntil(doc.expires);
   app.innerHTML = `<div class="report">
     ${reportCard(k, { since: doc.since, until: doc.until, keys: doc.metrics, defs: metricDefs(k), lastSync: doc.last_sync, by: doc.prepared_by })}
     <p class="public-note">Relatório preparado na Pauta. Este link vale até ${esc(ends)}.</p>
