@@ -1345,7 +1345,7 @@ class Store:
             rows = db.execute(
                 "SELECT l.*, a.name AS by_name FROM report_link l "
                 "LEFT JOIN account a ON a.id=l.created_by WHERE l.campaign=? "
-                "ORDER BY l.created DESC, l.token",
+                "ORDER BY l.created DESC, l.rowid DESC",
                 (cid,),
             ).fetchall()
         return [self._link_row(r) for r in rows]
