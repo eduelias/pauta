@@ -239,6 +239,7 @@ function gate(html) {
 }
 
 function showGate() {
+  document.body.classList.remove("report");  // the sign-in screen in the app's own colours
   const g = gate(`<h1>pauta</h1><p>Os pedidos do time, num lugar só.</p>
     <button class="btn primary big" id="login">${icon("key")}Entrar com passkey</button>
     <p class="fine">Ainda não tem acesso? Peça um convite a quem administra a Pauta.</p>

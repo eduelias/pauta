@@ -165,10 +165,17 @@ function igUrl(h) {
   const m = h.replace(/^@/, "").match(/^[A-Za-z0-9._]+$/);
   return m ? `https://instagram.com/${m[0]}` : "";
 }
+// wa.me wants the international number, digits only. People type Brazilian numbers as
+// they dial them: "0 32 99999-9999" (the trunk zero), "(11) 98888-7777", "+55 11 ...",
+// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it
 function waUrl(n) {
-  let d = String(n || "").replace(/\D/g, "");
+  const raw = String(n || "").trim();
+  let d = raw.replace(/\D/g, "");
   if (!d) return "";
-  if (d.length <= 11) d = "55" + d;
+  const intl = raw.startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
+  d = d.replace(/^00/, "");  // the international prefix
+  if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
+  if (!intl && d.length <= 11) d = "55" + d;
   return `https://wa.me/${d}`;
 }
 

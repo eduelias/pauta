@@ -15,6 +15,49 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   de imediato e a Meta é lida de novo por trás; a sincronização de hora em hora também a
   mantém atualizada. **Atualizar** em Configurações continua pedindo à Meta na hora.
 
+## [1.8.0] - 2026-11-04
+
+### Added
+
+- **Relatório para o cliente.** Na página da campanha, **Gerar relatório** abre uma tela
+  limpa, sem menus, feita para tirar um print e mandar no WhatsApp: o nome da campanha, o
+  cliente, o período e as métricas marcadas na página da campanha viram cartões, cada um com
+  o número, o que ele conta (nos Resultados) e uma frase curta dizendo o que está sendo
+  medido, mais as barras por dia onde há dados. As cores são fixas (não seguem o tema do
+  celular), para todo cliente receber o mesmo cartão. **Abrir conversa** abre o WhatsApp na
+  conversa com o número cadastrado no cliente, com a mensagem pronta; sem número cadastrado
+  o botão fica desligado e a tela diz onde cadastrar. **Copiar imagem** gera a imagem do cartão no próprio celular e a copia, para
+  colar na conversa (o link do WhatsApp só leva texto; num navegador que não copia imagem,
+  ela é baixada). O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
+  então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
+  `client_contact` e `client_whatsapp`.
+
+### Fixed
+
+- **Link do WhatsApp com número digitado com o zero.** Um WhatsApp cadastrado como se disca
+  ("0 32 99999-9999") virava um link que o WhatsApp recusava ("Não foi possível abrir este
+  link"). O zero do DDD e o "00" internacional saem antes de o 55 do Brasil entrar; vale
+  para o botão Compartilhar com o cliente e para o WhatsApp na página do cliente.
+
+### Changed
+
+- **Campanhas em português direto.** Na página da campanha, as métricas passam a ter o nome
+  do Gerenciador de Anúncios: **Cliques no link** (antes "Leads (cliques)"), **Custo por
+  clique no link** (antes "Custo por lead"), **Taxa de cliques (CTR)** e **Custo por mil
+  impressões (CPM)**; o objetivo da campanha aparece em português ("objetivo: Engajamento",
+  antes "engagement"); as ações da Meta que viram chips, e os Resultados, ganham nome em
+  português para muito mais tipos (conversas, cadastros no site, compras, carrinho,
+  ligações, instalações do app...), inclusive os que apareciam como chave técnica nas
+  campanhas da equipe (`onsite_web_lead` → "Cadastros no site", `post_interaction_net` →
+  "Interações com a publicação (líquidas)", `offsite_search_add_meta_leads` → "Pesquisas
+  (site + Meta)"...); um tipo que a Pauta ainda não conhece é traduzido palavra por palavra,
+  nunca mais aparece como chave. As ações ficam atrás de **Mais métricas (N)** até uma ser
+  marcada, para a fileira de chips não tomar meia tela. O chip "Cliques no link" da ação
+  some: é a mesma métrica. Os cartões seguem um padrão só: título, número, o que ele conta
+  (nos Resultados) e uma frase curta dizendo o que está sendo medido (a mesma que vai no
+  relatório), em vez de uma nota ao lado do título em alguns e nada em outros; o número
+  pequeno acima do gráfico ganha o nome que faltava ("máx. por dia").
+
 ## [1.7.1] - 2026-11-03
 
 ### Changed
@@ -400,7 +443,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/eduelias/pauta/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/eduelias/pauta/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/eduelias/pauta/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/eduelias/pauta/compare/v1.6.0...v1.6.1

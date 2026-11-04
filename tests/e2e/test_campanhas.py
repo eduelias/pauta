@@ -446,12 +446,23 @@ def test_campaign_page_cards_charts_and_remembered_chips(synced):
     expect(page.locator(".mcard[data-card='spend'] svg rect").first).to_be_visible()
     expect(page.locator(".mcard[data-card='spend'] .chart-y")).to_contain_text("R$")
     expect(page.locator(".mcard[data-card='spend'] .chart-x span")).to_have_count(2)
-    # Leads (cliques) and Custo por lead stay in the picker, off by default
-    expect(page.locator("#metrics .chip", has_text="Leads (cliques)")).to_have_attribute(
+    # Cliques no link and Custo por clique no link (Ads Manager's names) stay in the picker, off
+    expect(page.locator("#metrics .chip", has_text="Cliques no link")).to_have_attribute(
         "aria-pressed", "false"
     )
-    expect(page.locator("#metrics .chip", has_text="Custo por lead")).to_have_count(1)
-    # the actions in the data are chips too, with Ads Manager's name when known
+    expect(page.locator("#metrics .chip", has_text="Custo por clique no link")).to_have_count(1)
+    # every card follows one pattern: title, value, what it counts, one explaining line, and
+    # the chart with its per-day maximum named
+    expect(page.locator(".mcard .mwhy")).to_have_count(3)
+    expect(page.locator(".mcard[data-card='spend'] .mwhy")).to_have_text(
+        "Quanto foi investido em anúncios no período."
+    )
+    expect(page.locator(".mcard[data-card='spend'] .chart-y")).to_contain_text("máx. por dia")
+    # the actions in the data are chips too, with Ads Manager's name when known, behind
+    # "Mais métricas" until one is marked
+    expect(page.locator("#metrics .chip", has_text=CONVERSATIONS)).to_have_count(0)
+    page.locator("#morechips").click()
+    expect(page.locator("#morechips")).to_have_text("Menos métricas")
     extra = page.locator("#metrics .chip", has_text=CONVERSATIONS)
     expect(extra).to_have_count(1)
     extra.click()
@@ -466,12 +477,13 @@ def test_campaign_page_cards_charts_and_remembered_chips(synced):
     expect(freq).to_contain_text("Só no período")
     expect(freq.locator("svg")).to_have_count(0)
     page.locator("#metrics .chip", has_text="Valor gasto").click()  # off
-    page.locator("#metrics .chip", has_text="Leads (cliques)").click()  # on
+    page.locator("#metrics .chip", has_text="Cliques no link").click()  # on
     expect(page.locator(".mcard")).to_have_count(5)
     page.reload()
     expect(page.locator("#metrics .chip.on")).to_have_text(
-        ["Resultados", "Custo por resultado", "Leads (cliques)", "Frequência", CONVERSATIONS]
+        ["Resultados", "Custo por resultado", "Cliques no link", "Frequência", CONVERSATIONS]
     )
+    expect(page.locator("#morechips")).to_have_count(0)  # the one action is marked: nothing hidden
     expect(page.locator(".mcard")).to_have_count(5)
     # the period picker works here too: Ontem is one bar
     page.get_by_role("button", name="Ontem").click()
@@ -564,3 +576,149 @@ def test_phone_tab_and_tiles(live, device, meta):
     expect(page.locator(".krow.khead").first).to_be_hidden()
     expect(page.locator("#pdates")).to_be_visible()
     expect(page.locator(".seg button.on")).to_have_text("Últimos 30 dias")
+
+
+def test_report_for_the_client_and_share_on_whatsapp(synced):
+    """Gerar relatório: the campaign page's period and marked metrics become one clean screen
+    (no shell) with a tile per metric, a plain line under each number, and Compartilhar com
+    o cliente opening WhatsApp on the client's registered number; without a number the
+    button is off and the screen says where to register it."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    # typed with the trunk zero, as people dial it: the link still gets Brazil's 55
+    store.save_client({"whatsapp": "0 (11) 98888-7777", "contact": "Carla Mendes"}, clinic["id"])
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    page.locator(".krow[data-id] a", has_text="Limpeza de pele novembro").click()
+    expect(page.locator("#kname")).to_have_text("Limpeza de pele novembro")
+    for typed, digits in [
+        ("0 32 99999-9999", "5532999999999"),
+        ("(32) 99999-9999", "5532999999999"),
+        ("032 9999-9999", "553299999999"),
+        ("+55 32 99999-9999", "5532999999999"),
+        ("0055 32 99999-9999", "5532999999999"),
+        ("+31 6 1234 5678", "31612345678"),
+    ]:
+        assert page.evaluate(f"waUrl({typed!r})") == f"https://wa.me/{digits}", typed
+    # the objective reads in Portuguese, and the link-click action is not a second chip
+    expect(page.locator(".head")).to_contain_text("objetivo: Engajamento")
+    expect(page.get_by_role("button", name="Cliques no link", exact=True)).to_have_count(1)
+    page.get_by_role("button", name="Cliques no link", exact=True).click()
+    expect(page.locator("#metrics .chip.on")).to_have_count(4)
+    page.get_by_role("button", name="Gerar relatório").click()
+    expect(page).to_have_url(
+        re.compile(r"#/relatorio/\d+\?p=this_month&m=results%2Ccpr%2Cspend%2Cleads$")
+    )
+    # no app chrome around the card; the card names the campaign, the client and the period
+    expect(page.locator("body")).to_have_class(re.compile(r"\breport\b"))
+    expect(page.locator(".side")).to_be_hidden()
+    expect(page.locator(".tabbar")).to_be_hidden()
+    rep = page.locator("#rep")
+    expect(rep.locator("h1")).to_have_text("Limpeza de pele novembro")
+    expect(rep.locator(".rep-kicker")).to_have_text("Relatório de campanha")
+    expect(rep.locator(".rep-client")).to_contain_text("Clínica Bem Estar")
+    t = today()
+    expect(rep.locator(".rep-period")).to_have_text(
+        f"{label(t.replace(day=1), t)} · até hoje · campanha ativa"
+    )
+    # the four marked metrics, in the page's order, the first one as the hero number
+    tiles = rep.locator(".rep-tile")
+    expect(tiles).to_have_count(4)
+    assert [tiles.nth(i).get_attribute("data-tile") for i in range(4)] == [
+        "results",
+        "cpr",
+        "spend",
+        "leads",
+    ]
+    expect(tiles.first).to_have_class(re.compile(r"\bhero\b"))
+    expect(tiles.first.locator(".rep-label")).to_have_text("Resultados")
+    expect(tiles.first.locator(".rep-val")).to_have_text(str(2 * t.day))
+    expect(tiles.first.locator(".rep-sub")).to_have_text(CONVERSATIONS)
+    expect(tiles.first.locator(".rep-why")).to_have_text(
+        "Quantas vezes a campanha entregou o que ela busca no período."
+    )
+    spend = rep.locator(".rep-tile[data-tile='spend']")
+    expect(spend.locator(".rep-val")).to_contain_text("R$")
+    expect(spend.locator(".rep-why")).to_have_text("Quanto foi investido em anúncios no período.")
+    expect(spend.locator(".rep-spark rect")).to_have_count(t.day)  # a bar per day
+    expect(rep.locator(".rep-tile[data-tile='leads'] .rep-label")).to_have_text("Cliques no link")
+    expect(rep.locator(".rep-foot")).to_contain_text("preparado por Renato")
+    # Abrir conversa: WhatsApp on the client's number, the message ready
+    share = page.locator("#share")
+    expect(share).to_have_attribute("target", "_blank")
+    href = share.get_attribute("href")
+    assert href.startswith("https://wa.me/5511988887777?text=Ol%C3%A1%2C%20Carla!"), href
+    assert "Limpeza%20de%20pele%20novembro" in href and "relat%C3%B3rio" in href, href
+    expect(page.locator("#sharehint")).to_have_count(0)  # no explanation under the buttons
+    # Copiar imagem: one PNG on the clipboard, pasted in the conversation (the phone's share
+    # sheet was dropped: its own Copiar pasted two photos)
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {"
+        " write: async (items) => { window.copied = items.map((i) => i.types); } } });"
+    )
+    page.reload()
+    expect(page.locator("#rep h1")).to_have_text("Limpeza de pele novembro")
+    expect(page.locator(".report-tools .btn")).to_have_text(
+        ["Voltar à campanha", "Copiar imagem", "Abrir conversa"]
+    )
+    page.locator("#copyimg").click()
+    expect(page.locator("#toast")).to_have_text("Imagem copiada: cole na conversa do WhatsApp")
+    assert page.evaluate("window.copied") == [["image/png"]]
+    # a browser whose clipboard takes no image downloads the PNG: the card at 3x, named
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {} });"
+    )
+    page.reload()
+    with page.expect_download() as dl:
+        page.locator("#copyimg").click()
+    path = dl.value.path()
+    assert dl.value.suggested_filename == (
+        f"relatorio-clinica-bem-estar-limpeza-de-pele-novembro-{t.replace(day=1)}-{t}.png"
+    )
+    png = path.read_bytes()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    box = rep.bounding_box()
+    assert width == 3 * round(box["width"]) and height == 3 * round(box["height"]), (
+        width,
+        height,
+        box,
+    )
+    expect(page.locator("#toast")).to_have_text("Imagem baixada: anexe na conversa")
+    # the card fits a phone (the print goes to WhatsApp)
+    page.set_viewport_size({"width": 390, "height": 844})
+    box = rep.bounding_box()
+    assert box and box["width"] <= 390 - 2 * 12, box
+    expect(tiles.nth(1)).to_be_visible()
+    page.set_viewport_size({"width": 1280, "height": 860})
+    # Voltar: the campaign page, with its shell, and the same period
+    page.get_by_role("link", name="Voltar à campanha").click()
+    expect(page.locator("#kname")).to_have_text("Limpeza de pele novembro")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\breport\b"))
+    expect(page.locator(".side")).to_be_visible()
+    expect(page.locator("#pdates")).to_have_text(label(t.replace(day=1), t))
+    # no number on the client: the button is off and the screen says where to put one
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    page.locator(".krow[data-id] a", has_text="Panetone").click()
+    page.get_by_role("button", name="Gerar relatório").click()
+    expect(page.locator("#rep h1")).to_have_text("Panetone")
+    expect(page.locator("#share")).to_be_disabled()
+    hint = page.locator("#sharehint")
+    expect(hint).to_have_text(
+        "Padaria Trigo de Ouro não tem WhatsApp cadastrado: cadastre o número para abrir a "
+        "conversa daqui."
+    )
+    expect(hint.locator("a")).to_have_attribute("href", f"#/cliente/{bakery['id']}")
+    # without `m` in the address the report takes the metrics marked on the campaign page;
+    # a one-day period reads once; a wrong campaign is an error screen with its navigation
+    panetone = page.url.split("/relatorio/")[1].split("?")[0]
+    page.goto(f"{base}/#/relatorio/{panetone}?p=this_month")
+    expect(page.locator("#rep .rep-tile")).to_have_count(4)
+    page.goto(f"{base}/#/relatorio/{panetone}?p=today")
+    expect(page.locator("#rep .rep-period")).to_have_text(
+        f"{label(t, t).split(' – ')[0]} · hoje · campanha ativa"
+    )
+    laptop.expected.add((404, "/api/campaigns/999"))
+    page.goto(f"{base}/#/relatorio/999?p=today")
+    expect(page.locator("#app .empty")).to_contain_text("campanha não encontrada")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\breport\b"))
+    expect(page.locator(".side")).to_be_visible()
