@@ -21,6 +21,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
   `client_contact` e `client_whatsapp`.
 
+### Fixed
+
+- **Link do WhatsApp com número digitado com o zero.** Um WhatsApp cadastrado como se disca
+  ("0 32 99999-9999") virava um link que o WhatsApp recusava ("Não foi possível abrir este
+  link"). O zero do DDD e o "00" internacional saem antes de o 55 do Brasil entrar; vale
+  para o botão Compartilhar com o cliente e para o WhatsApp na página do cliente.
+
 ### Changed
 
 - **Campanhas em português direto.** Na página da campanha, as métricas passam a ter o nome

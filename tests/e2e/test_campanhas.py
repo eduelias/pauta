@@ -585,10 +585,20 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     button is off and the screen says where to register it."""
     base, store, laptop, clinic, bakery = synced
     page = laptop.page
-    store.save_client({"whatsapp": "(11) 98888-7777", "contact": "Carla Mendes"}, clinic["id"])
+    # typed with the trunk zero, as people dial it: the link still gets Brazil's 55
+    store.save_client({"whatsapp": "0 (11) 98888-7777", "contact": "Carla Mendes"}, clinic["id"])
     page.goto(f"{base}/#/campanhas?p=this_month")
     page.locator(".krow[data-id] a", has_text="Limpeza de pele novembro").click()
     expect(page.locator("#kname")).to_have_text("Limpeza de pele novembro")
+    for typed, digits in [
+        ("0 32 99999-9999", "5532999999999"),
+        ("(32) 99999-9999", "5532999999999"),
+        ("032 9999-9999", "553299999999"),
+        ("+55 32 99999-9999", "5532999999999"),
+        ("0055 32 99999-9999", "5532999999999"),
+        ("+31 6 1234 5678", "31612345678"),
+    ]:
+        assert page.evaluate(f"waUrl({typed!r})") == f"https://wa.me/{digits}", typed
     # the objective reads in Portuguese, and the link-click action is not a second chip
     expect(page.locator(".head")).to_contain_text("objetivo: Engajamento")
     expect(page.get_by_role("button", name="Cliques no link", exact=True)).to_have_count(1)
