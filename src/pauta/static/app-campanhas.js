@@ -560,6 +560,31 @@ function shareText(k, since, until) {
   const who = firstName(k.client_contact);
   return `Olá${who ? `, ${who}` : ""}! Segue o relatório da campanha "${k.name}" (${periodLabel(since, until)}), com o andamento até agora. Qualquer dúvida, é só me chamar.`;
 }
+// The card as a PNG, drawn in the browser (no server, no library: the card's own markup
+// goes into an SVG <foreignObject> with the stylesheet, the SVG is drawn on a canvas at 3x).
+// The logo is inlined (an image in an SVG can't load files). Safari wants a data: URL.
+async function cardImage(node, scale = 3) {
+  const [css, icon] = await Promise.all([fetch("/style.css").then((r) => r.text()), fetch("/icon.svg").then((r) => r.text())]);
+  const style = css.replace(/url\(\/icon\.svg\)/g, `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon)}")`);
+  if (style.includes("]]>")) throw new Error("estilo inválido para a imagem");
+  const w = Math.ceil(node.getBoundingClientRect().width), h = Math.ceil(node.getBoundingClientRect().height);
+  const html = new XMLSerializer().serializeToString(node);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" class="shot" style="width:${w}px"><style><![CDATA[${style}]]></style>${html}</div></foreignObject></svg>`;
+  const img = new Image();
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error("não deu para desenhar a imagem")); img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; });
+  try { await img.decode(); } catch { /* drawn below anyway */ }
+  const canvas = document.createElement("canvas");
+  canvas.width = w * scale; canvas.height = h * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ebeaf3";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((ok, no) => canvas.toBlob((b) => b ? ok(b) : no(new Error("não deu para gerar a imagem")), "image/png"));
+}
+const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 40) || "campanha";
+// the phone's share sheet takes a file (WhatsApp shows a PNG as a photo); a computer gets it as a download
+const canShareFiles = () => typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] });
+
 async function viewReport(query, id) {
   if (!metaVisible()) { location.hash = "#/"; return; }
   const st = readPeriod(query);
@@ -587,17 +612,23 @@ async function viewReport(query, id) {
     </section>`;
   };
   const wa = waUrl(k.client_whatsapp);
+  const text = shareText(k, since, until);
+  const sheet = canShareFiles();
+  const image = `<button class="btn primary" id="shareimg">${icon("image")}${sheet ? "Enviar imagem" : "Baixar imagem"}</button>`;
   const share = wa
-    ? `<a class="btn primary" id="share" href="${esc(`${wa}?text=${encodeURIComponent(shareText(k, since, until))}`)}" target="_blank" rel="noopener">${icon("send")}Compartilhar com o cliente</a>`
-    : `<button class="btn primary" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Compartilhar com o cliente</button>`;
-  const hint = wa
-    ? `Tire um print do cartão abaixo e toque em <b>Compartilhar com o cliente</b>: o WhatsApp abre na conversa com <b>${esc(k.client_name || "o cliente")}</b> com a mensagem pronta; é só anexar o print.`
-    : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado. ${k.client ? `<a href="#/cliente/${k.client}">Cadastre o número do cliente</a>` : "Cadastre o número do cliente"} para compartilhar daqui; até lá, tire o print e envie à mão.`;
+    ? `<a class="btn" id="share" href="${esc(`${wa}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
+    : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
+  const who = `<b>${esc(k.client_name || "o cliente")}</b>`;
+  const hint = (sheet
+    ? `<b>Enviar imagem</b> gera a imagem do cartão e abre a lista de apps do celular: escolha o WhatsApp e a conversa com ${who}.`
+    : `<b>Baixar imagem</b> salva o cartão como imagem (no celular, o botão vira Enviar imagem e abre direto a lista de apps).`)
+    + (wa ? ` <b>Abrir conversa</b> abre o WhatsApp na conversa com ${who} só com a mensagem, para mandar a imagem por lá.`
+      : ` ${who} não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`);
   const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "";
   const today = todayISO();
   app.innerHTML = `<div class="report">
     <div class="report-tools">
-      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${share}</div>
+      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${image}${share}</div>
       <p class="muted small" id="sharehint">${hint}</p>
     </div>
     <article class="rep" id="rep">
@@ -614,4 +645,29 @@ async function viewReport(query, id) {
       </footer>
     </article>
   </div>`;
+  // the image is drawn as soon as the card is on screen, so the tap on Enviar imagem reaches
+  // the share sheet at once (Safari only opens it right after a tap)
+  const name = `relatorio-${slug(k.client_name)}-${slug(k.name)}-${since}-${until}.png`;
+  let shot = cardImage($("#rep")).catch((e) => e);
+  $("#shareimg").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      let blob = await shot;
+      if (blob instanceof Error) { shot = cardImage($("#rep")); blob = await shot; }  // once more, on the tap
+      const file = new File([blob], name, { type: "image/png" });
+      if (sheet) {
+        try { await navigator.share({ files: [file], text }); }
+        catch (err) { if (err.name !== "AbortError") throw err; }  // closed the sheet: nothing to say
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+        toast("Imagem baixada: anexe na conversa");
+      }
+    } catch (err) { toast(err.message, true); }
+    btn.disabled = false;
+  });
 }

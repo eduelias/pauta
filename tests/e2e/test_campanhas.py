@@ -642,13 +642,46 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     expect(spend.locator(".rep-spark rect")).to_have_count(t.day)  # a bar per day
     expect(rep.locator(".rep-tile[data-tile='leads'] .rep-label")).to_have_text("Cliques no link")
     expect(rep.locator(".rep-foot")).to_contain_text("preparado por Renato")
-    # Compartilhar com o cliente: WhatsApp on the client's number, the message ready
+    # Abrir conversa: WhatsApp on the client's number, the message ready
     share = page.locator("#share")
     expect(share).to_have_attribute("target", "_blank")
     href = share.get_attribute("href")
     assert href.startswith("https://wa.me/5511988887777?text=Ol%C3%A1%2C%20Carla!"), href
     assert "Limpeza%20de%20pele%20novembro" in href and "relat%C3%B3rio" in href, href
-    expect(page.locator("#sharehint")).to_contain_text("Tire um print")
+    expect(page.locator("#sharehint")).to_contain_text("Abrir conversa")
+    # the card as an image: a computer (no share sheet) downloads a PNG of the card at 3x
+    expect(page.locator("#shareimg")).to_have_text("Baixar imagem")
+    with page.expect_download() as dl:
+        page.locator("#shareimg").click()
+    path = dl.value.path()
+    assert dl.value.suggested_filename == (
+        f"relatorio-clinica-bem-estar-limpeza-de-pele-novembro-{t.replace(day=1)}-{t}.png"
+    )
+    png = path.read_bytes()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    box = rep.bounding_box()
+    assert width == 3 * round(box["width"]) and height == 3 * round(box["height"]), (
+        width,
+        height,
+        box,
+    )
+    expect(page.locator("#toast")).to_have_text("Imagem baixada: anexe na conversa")
+    # a phone (a share sheet that takes files) sends the PNG and the message to it
+    page.add_init_script(
+        "navigator.canShare = () => true;"
+        "navigator.share = async (d) => { window.shared = "
+        "{ names: d.files.map((f) => f.name), types: d.files.map((f) => f.type), "
+        "sizes: d.files.map((f) => f.size), text: d.text }; };"
+    )
+    page.reload()
+    expect(page.locator("#shareimg")).to_have_text("Enviar imagem")
+    expect(page.locator("#sharehint")).to_contain_text("lista de apps")
+    page.locator("#shareimg").click()
+    expect(page.locator("#shareimg")).to_be_enabled()
+    shared = page.evaluate("window.shared")
+    assert shared["names"] == [dl.value.suggested_filename] and shared["types"] == ["image/png"]
+    assert shared["sizes"][0] > 10_000 and shared["text"].startswith("Olá, Carla!"), shared
     # the card fits a phone (the print goes to WhatsApp)
     page.set_viewport_size({"width": 390, "height": 844})
     box = rep.bounding_box()

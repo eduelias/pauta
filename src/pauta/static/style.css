@@ -746,5 +746,8 @@ body.report .main { padding: 16px 12px 40px; max-width: none; }
 .rep-brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; letter-spacing: -.02em; color: #17161c; }
 .rep-brand .logo { width: 16px; height: 16px; border-radius: 5px; }
 .chips-note { margin: -8px 0 8px; }
+/* the card inside the image: what body gives it on the page */
+.shot { font: 15px/1.5 "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #17161c; -webkit-font-smoothing: antialiased; }
 @media (max-width: 360px) { .rep-tiles { grid-template-columns: 1fr; } }
 @media print { body.report .report-tools { display: none; } body.report { background: #fff; } .rep { box-shadow: none; } }

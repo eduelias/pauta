@@ -15,9 +15,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   o número, o que ele conta (nos Resultados) e uma frase curta dizendo o que está sendo
   medido, mais as barras por dia onde há dados. As cores são fixas (não seguem o tema do
   celular), para todo cliente receber o mesmo cartão. **Compartilhar com o cliente** abre o
-  WhatsApp na conversa com o número cadastrado no cliente, com a mensagem pronta (é só
-  anexar o print); sem número cadastrado o botão fica desligado e a tela diz onde
-  cadastrar. O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
+  WhatsApp na conversa com o número cadastrado no cliente, com a mensagem pronta (o botão
+  chama-se **Abrir conversa**); sem número cadastrado o botão fica desligado e a tela diz onde
+  cadastrar. **Enviar imagem** gera a imagem do cartão no próprio celular e abre a lista de
+  apps (escolha o WhatsApp e a conversa): o link do WhatsApp só leva texto, a imagem vai por
+  aí; no computador o botão vira **Baixar imagem**. O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
   então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
   `client_contact` e `client_whatsapp`.
 
