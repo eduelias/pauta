@@ -127,7 +127,62 @@ const RESULT_LABELS = {
   video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
   "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
 };
-const resultLabel = (type) => RESULT_LABELS[type] || String(type || "").replace(/[._]+/g, " ");
+// a type neither list knows reads in Portuguese (approximate, but never a raw key like
+// "offsite_search_add_meta_leads" on the screen): known phrases first, then word by word,
+// the place ("no site", "no app") last. The chip's tooltip keeps Meta's own name.
+const TYPE_PHRASES = Object.entries({
+  add_to_cart: "adições ao carrinho", add_to_wishlist: "adições à lista de desejos", add_payment_info: "informações de pagamento",
+  initiate_checkout: "finalizações de compra iniciadas", initiated_checkout: "finalizações de compra iniciadas",
+  view_content: "visualizações de conteúdo", content_view: "visualizações de conteúdo", landing_page_view: "visualizações da página de destino",
+  complete_registration: "cadastros concluídos", video_view: "reproduções de vídeo", video_play: "reproduções de vídeo",
+  post_engagement: "engajamentos com a publicação", page_engagement: "engajamentos com a Página", post_interaction: "interações com a publicação",
+  post_net_like: "curtidas líquidas na publicação", post_unlike: "descurtidas na publicação", post_save: "salvamentos",
+  post_reaction: "reações", link_click: "cliques no link", click_to_call: "ligações", call_placed: "ligações feitas", call_connect: "ligações atendidas",
+  message_send: "mensagens enviadas", messaging_conversation_started: "conversas iniciadas", messaging_first_reply: "primeiras respostas",
+  total_messaging_connection: "conexões por mensagem", welcome_message_view: "mensagens de boas-vindas vistas", messaging_block: "bloqueios de mensagens",
+  app_install: "instalações do app", mobile_app_install: "instalações do app", activate_app: "aberturas do app", app_use: "usos do app",
+  start_trial: "avaliações iniciadas", submit_application: "inscrições enviadas", find_location: "buscas por localização",
+  customize_product: "produtos personalizados", photo_view: "visualizações de foto", profile_visit: "visitas ao perfil", ig_profile_visit: "visitas ao perfil",
+  store_visit: "visitas à loja", lead_grouped: "cadastros", flow_complete: "fluxos concluídos", order_created: "pedidos criados",
+}).sort((a, b) => b[0].length - a[0].length);
+const TYPE_WORDS = {
+  lead: "cadastros", leads: "cadastros", purchase: "compras", purchases: "compras", search: "pesquisas", view: "visualizações", views: "visualizações",
+  like: "curtidas", likes: "curtidas", comment: "comentários", share: "compartilhamentos", save: "salvamentos", reaction: "reações",
+  engagement: "engajamentos", interaction: "interações", click: "cliques", clicks: "cliques", call: "ligações", visit: "visitas",
+  subscribe: "assinaturas", schedule: "agendamentos", contact: "contatos", donate: "doações", rsvp: "respostas a eventos", checkin: "check-ins",
+  follow: "seguidores", install: "instalações", use: "usos", play: "reproduções", conversion: "", conversions: "conversões", custom: "personalizadas",
+  offline: "offline", net: "líquidas", gross: "brutas", total: "total", grouped: "", meta: "Meta", omni: "", fb: "", pixel: "", to: "", in: "", the: "",
+  mobile: "", native: "", user: "", event: "eventos", response: "respostas", message: "mensagem", messaging: "mensagens", conversation: "conversas",
+  started: "iniciadas", replied: "respondidas", block: "bloqueios", order: "pedidos", created: "criados", flow: "fluxos", form: "formulário",
+  complete: "concluídos", post: "publicação", page: "Página", video: "vídeo", photo: "foto", profile: "perfil", store: "loja", link: "no link",
+  cart: "carrinho", checkout: "finalizações de compra", payment: "pagamento", info: "informações", registration: "cadastros", content: "conteúdo",
+};
+const TYPE_PLACES = { offsite: "no site", onsite: "na Meta", web: "no site", app: "no app" };
+function cleanType(type) {
+  let t = String(type || "").toLowerCase().replace(/\./g, "_");
+  let tail = "";
+  if (/_add_meta_leads$/.test(t)) { t = t.replace(/_add_meta_leads$/, ""); tail = " (site + Meta)"; }
+  t = t.replace(/messaging_user_depth_(\d+)_message_send/, "conversas com $1 mensagens");
+  for (const [k, v] of TYPE_PHRASES) t = t.replace(new RegExp(`(^|_)${k}(?=_|$)`, "g"), `$1${v}`);  // a phrase has spaces, no "_": it survives the split
+  const words = t.split("_").filter(Boolean);
+  const places = [...new Set(words.filter((w) => TYPE_PLACES[w]).map((w) => TYPE_PLACES[w]))];
+  const rest = words.filter((w) => !TYPE_PLACES[w]).map((w) => w in TYPE_WORDS ? TYPE_WORDS[w] : /^\d/.test(w) ? "" : w).filter(Boolean);
+  const where = tail ? "" : places.filter((x) => x !== "na Meta" || places.length === 1).join(" e ");  // "no site e no app"
+  const out = ([...rest, where].filter(Boolean).join(" ").replace(/\b(\S+) \1\b/g, "$1") + tail).trim()
+    || String(type || "").replace(/[._]+/g, " ");
+  return out.replace(/^./, (c) => c.toUpperCase());
+}
+const resultLabel = (type) => RESULT_LABELS[type] || ACTION_LABELS[type] || cleanType(type);
+// the campaign's objective, as Ads Manager names it in Portuguese
+const OBJECTIVES = {
+  OUTCOME_AWARENESS: "Reconhecimento", OUTCOME_TRAFFIC: "Tráfego", OUTCOME_ENGAGEMENT: "Engajamento",
+  OUTCOME_LEADS: "Cadastros", OUTCOME_APP_PROMOTION: "Promoção do app", OUTCOME_SALES: "Vendas", OUTCOME_MESSAGES: "Mensagens",
+  BRAND_AWARENESS: "Reconhecimento da marca", REACH: "Alcance", LINK_CLICKS: "Tráfego", POST_ENGAGEMENT: "Engajamento com a publicação",
+  PAGE_LIKES: "Curtidas na Página", EVENT_RESPONSES: "Respostas a eventos", MESSAGES: "Mensagens", VIDEO_VIEWS: "Visualizações de vídeo",
+  LEAD_GENERATION: "Geração de cadastros", CONVERSIONS: "Conversões", PRODUCT_CATALOG_SALES: "Vendas do catálogo",
+  STORE_VISITS: "Visitas à loja", APP_INSTALLS: "Instalações do app", LOCAL_AWARENESS: "Reconhecimento local",
+};
+const objectiveLabel = (o) => OBJECTIVES[o] || String(o || "").replace(/^OUTCOME_/, "").toLowerCase().replace(/_/g, " ");
 const NO_RESULTS = "sem resultados registrados para o objetivo da campanha";
 const MIXED_RESULTS = "resultados de objetivos diferentes não somam";
 const NO_REACH = "a Meta não respondeu";
@@ -289,31 +344,74 @@ async function viewCampaigns(query) {
 // One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
 // period value from the campaign's sums, `day` one day's from an insight row; a metric
 // without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart;
-// `sub` names what Resultados count, under the value, as Ads Manager does.
+// `sub` names what Resultados count, under the value, as Ads Manager does; `explain` is the
+// one plain line under each number on the client's report (what is being measured).
 const METRICS = {
-  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta" },
-  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => centsPer(d.spend_cents, d.results), sub: (k) => resultLabel(k.result_indicator) },
-  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
-  leads: { label: "Leads (cliques)", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks },
-  cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => centsPer(d.spend_cents, d.link_clicks) },
-  reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia" },
-  impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions },
-  ctr: { label: "CTR", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões" },
-  cpm: { label: "CPM", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "custo por mil impressões" },
-  freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período" },
+  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta", explain: "Quantas vezes a campanha entregou o que ela busca no período." },
+  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => centsPer(d.spend_cents, d.results), sub: (k) => resultLabel(k.result_indicator), explain: "Quanto custou, em média, cada resultado." },
+  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents, explain: "Quanto foi investido em anúncios no período." },
+  leads: { label: "Cliques no link", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks, explain: "Quantas vezes alguém clicou no link do anúncio." },
+  cpl: { label: "Custo por clique no link", fmt: "money", period: (k) => k.cpl_cents, day: (d) => centsPer(d.spend_cents, d.link_clicks), explain: "Quanto custou, em média, cada clique no link." },
+  reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia", explain: "Quantas pessoas diferentes viram o anúncio pelo menos uma vez." },
+  impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions, explain: "Quantas vezes o anúncio apareceu na tela; a mesma pessoa pode contar mais de uma vez." },
+  ctr: { label: "Taxa de cliques (CTR)", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões", explain: "De cada 100 vezes que o anúncio apareceu, quantas viraram um clique no link." },
+  cpm: { label: "Custo por mil impressões (CPM)", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "valor gasto ÷ impressões × 1.000", explain: "Quanto custou para o anúncio aparecer mil vezes." },
+  freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período", explain: "Quantas vezes, em média, cada pessoa viu o anúncio." },
 };
 // the action chips: Ads Manager's words, told apart where two types would read the same
 const ACTION_LABELS = {
-  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
-  "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
+  ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta, agrupados)", omni_purchase: "Compras (todas)",
+  "onsite_conversion.purchase": "Compras (loja da Meta)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
-  initiate_checkout: "Finalizações iniciadas",
+  initiate_checkout: "Finalizações de compra iniciadas",
+  // the ones on Piero's campaigns (2026-11-04)
+  "onsite_conversion.lead": "Cadastros na Meta", onsite_web_lead: "Cadastros no site",
+  offsite_complete_registration_add_meta_leads: "Cadastros concluídos (site + Meta)",
+  offsite_content_view_add_meta_leads: "Visualizações de conteúdo (site + Meta)",
+  offsite_search_add_meta_leads: "Pesquisas (site + Meta)",
+  onsite_app_purchase: "Compras no app", onsite_web_purchase: "Compras no site (dados da Meta)",
+  onsite_web_app_purchase: "Compras no site e no app",
+  "onsite_conversion.post_net_like": "Curtidas na publicação (líquidas)", "onsite_conversion.post_unlike": "Descurtidas na publicação",
+  post_interaction_gross: "Interações com a publicação (brutas)", post_interaction_net: "Interações com a publicação (líquidas)",
+  // messaging
+  "onsite_conversion.total_messaging_connection": "Conexões por mensagem",
+  "onsite_conversion.messaging_user_depth_2_message_send": "Conversas com 2 mensagens",
+  "onsite_conversion.messaging_user_depth_3_message_send": "Conversas com 3 mensagens",
+  "onsite_conversion.messaging_block": "Bloqueios de mensagens",
+  "onsite_conversion.messaging_welcome_message_view": "Mensagens de boas-vindas vistas",
+  "onsite_conversion.messaging_order_created": "Pedidos criados por mensagem",
+  // leads and forms
+  "offsite_conversion.fb_pixel_lead": "Cadastros no site (pixel)",
+  leadgen_grouped: "Cadastros (formulários)", "onsite_conversion.flow_complete": "Fluxos concluídos",
+  "onsite_conversion.lead_form_grouped": "Cadastros (formulário instantâneo)",
+  // site events (pixel)
+  "offsite_conversion.fb_pixel_purchase": "Compras (no site)", "offsite_conversion.fb_pixel_add_to_cart": "Adições ao carrinho (no site)",
+  omni_add_to_cart: "Adições ao carrinho (todas)", "offsite_conversion.fb_pixel_initiate_checkout": "Finalizações de compra iniciadas (no site)",
+  omni_initiated_checkout: "Finalizações de compra iniciadas (todas)", view_content: "Visualizações de conteúdo",
+  omni_view_content: "Visualizações de conteúdo (todas)", complete_registration: "Cadastros concluídos",
+  "offsite_conversion.fb_pixel_complete_registration": "Cadastros concluídos (no site)", omni_complete_registration: "Cadastros concluídos (todos)",
+  search: "Pesquisas", "offsite_conversion.fb_pixel_search": "Pesquisas (no site)", omni_search: "Pesquisas (todas)",
+  add_payment_info: "Informações de pagamento adicionadas", "offsite_conversion.fb_pixel_add_payment_info": "Informações de pagamento adicionadas (no site)",
+  add_to_wishlist: "Adições à lista de desejos", "offsite_conversion.fb_pixel_add_to_wishlist": "Adições à lista de desejos (no site)",
+  contact: "Contatos", schedule: "Agendamentos", submit_application: "Inscrições enviadas", subscribe: "Assinaturas",
+  start_trial: "Avaliações iniciadas", donate: "Doações", find_location: "Buscas por localização", customize_product: "Produtos personalizados",
+  "offsite_conversion.fb_pixel_custom": "Conversões personalizadas", "offsite_conversion.custom": "Conversões personalizadas",
+  offsite_conversion: "Conversões no site", offline_conversion: "Conversões offline",
+  // page, post and video
+  photo_view: "Visualizações de foto", "onsite_conversion.ig_profile_visit": "Visitas ao perfil",
+  rsvp: "Respostas a eventos", checkin: "Check-ins", video_play: "Reproduções de vídeo",
+  // calls and app
+  click_to_call_call_confirm: "Ligações confirmadas", click_to_call_native_call_placed: "Ligações feitas",
+  app_install: "Instalações do app", omni_app_install: "Instalações do app (todas)", mobile_app_install: "Instalações do app (celular)",
+  app_use: "Usos do app", app_custom_event: "Eventos no app", omni_activate_app: "Aberturas do app",
 };
 const DEFAULT_METRICS = ["results", "cpr", "spend"];
+const ACTION_EXPLAIN = "Quantas vezes essa ação aconteceu por causa do anúncio.";
 function metricDefs(k) {
   const defs = { ...METRICS };
   for (const type of Object.keys(k.actions || {}).sort()) {
-    defs[`act:${type}`] = { label: ACTION_LABELS[type] || type, fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0 };
+    if (type === "link_click") continue;  // Cliques no link is already a metric above
+    defs[`act:${type}`] = { label: ACTION_LABELS[type] || cleanType(type), fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0, note: `o que a Meta chama de ${type}` };
   }
   return defs;
 }
@@ -327,7 +425,11 @@ function fmtMetric(v, fmt, cur) {
 function readMetrics() {
   try {
     const got = JSON.parse(localStorage.getItem("pauta.metrics") || "null");
-    if (Array.isArray(got) && got.every((x) => typeof x === "string")) return got;
+    if (Array.isArray(got) && got.every((x) => typeof x === "string")) {
+      // the link_click action chip is gone (it is Cliques no link): a choice from before keeps the card
+      const keys = got.map((x) => x === "act:link_click" ? "leads" : x);
+      return keys.filter((x, i) => keys.indexOf(x) === i);
+    }
   } catch { /* fall through */ }
   return [...DEFAULT_METRICS];
 }
@@ -345,7 +447,7 @@ function chart(points, fmt, cur) {
     return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"><title>${esc(fmtDate(p.day))}: ${esc(fmtMetric(p.v, fmt, cur))}</title></rect>`;
   }).join("");
   return `<div class="chartbox">
-    <div class="chart-y">${esc(fmtMetric(max, fmt, cur))}</div>
+    <div class="chart-y"><span>máx. por dia</span> ${esc(fmtMetric(max, fmt, cur))}</div>
     <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Por dia, de ${esc(fmtDate(points[0].day))} a ${esc(fmtDate(points[n - 1].day))}">${bars}<line class="axis" x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}"/></svg>
     <div class="chart-x"><span>${esc(fmtDate(points[0].day))}</span><span>${esc(fmtDate(points[n - 1].day))}</span></div>
   </div>`;
@@ -370,7 +472,19 @@ async function viewCampaign(query, id) {
   history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();
-  const chips = () => Object.entries(defs).map(([key, m]) => `<button type="button" class="chip ${picked.includes(key) ? "on" : ""}" data-metric="${esc(key)}" aria-pressed="${picked.includes(key)}" ${m.note ? `title="${esc(m.note)}"` : ""}>${esc(m.label)}</button>`).join("");
+  // the metrics are always chips; the actions Meta reports (there can be twenty) sit behind
+  // "Mais métricas" unless one is marked, so the row stays short
+  let more = false;
+  const chips = () => {
+    const chip = ([key, m]) => `<button type="button" class="chip ${picked.includes(key) ? "on" : ""}" data-metric="${esc(key)}" aria-pressed="${picked.includes(key)}" ${m.note ? `title="${esc(m.note)}"` : ""}>${esc(m.label)}</button>`;
+    const all = Object.entries(defs);
+    const actions = all.filter(([key]) => key.startsWith("act:"));
+    const hidden = more ? [] : actions.filter(([key]) => !picked.includes(key));
+    const toggle = actions.length && !more && hidden.length
+      ? `<button type="button" class="chip more" id="morechips" title="As ações que a Meta registra nesta campanha">Mais métricas (${hidden.length})</button>`
+      : actions.length && more ? `<button type="button" class="chip more" id="morechips">Menos métricas</button>` : "";
+    return all.filter((e) => !hidden.includes(e)).map(chip).join("") + toggle;
+  };
   const cards = () => {
     const shown = picked.filter((key) => defs[key]);
     if (!shown.length) return `<div class="panel empty">Escolha uma métrica acima.</div>`;
@@ -378,9 +492,10 @@ async function viewCampaign(query, id) {
       const m = defs[key];
       const v = m.period(k), sub = m.sub ? m.sub(k) : "";
       return `<section class="panel mcard" data-card="${esc(key)}">
-        <div class="panel-head"><h3>${esc(m.label)}</h3>${m.note ? `<span class="muted small">${esc(m.note)}</span>` : ""}</div>
+        <div class="panel-head"><h3>${esc(m.label)}</h3></div>
         <div class="mval" ${m.sub && v == null ? `title="${NO_RESULTS}"` : ""}>${esc(fmtMetric(v, m.fmt, k.currency))}</div>
-        ${sub ? `<div class="msub muted small">${esc(sub)}</div>` : ""}
+        ${sub ? `<div class="msub">${esc(sub)}</div>` : ""}
+        <p class="mwhy muted small">${esc(m.explain || ACTION_EXPLAIN)}</p>
         ${m.day ? chart(dayPoints(k, since, until, m), m.fmt, k.currency) : `<p class="muted small">Só no período: não há valor por dia.</p>`}
       </section>`;
     }).join("");
@@ -392,21 +507,170 @@ async function viewCampaign(query, id) {
     <div class="head"><div>
       <div class="row-gap"><a class="cl" href="#/cliente/${k.client}">${avatar(k.client_name || "?", "md")}<span style="font-size:16px">${esc(k.client_name || "—")}</span></a>${stateTag(k)}</div>
       <h1 id="kname">${esc(k.name)}</h1>
-      <p>${when}${k.objective ? ` · ${esc(k.objective.replace(/^OUTCOME_/, "").toLowerCase())}` : ""}${k.request ? ` · <a href="#/pedido/${k.request}">Pedido #${k.request}</a>` : ""}</p>
-    </div></div>
+      <p>${when}${k.objective ? ` · objetivo: ${esc(objectiveLabel(k.objective))}` : ""}${k.request ? ` · <a href="#/pedido/${k.request}">Pedido #${k.request}</a>` : ""}</p>
+    </div><div class="actions"><button class="btn primary" id="mkreport" title="Uma tela limpa, com as métricas marcadas abaixo, para tirar um print e mandar ao cliente">${icon("send")}Gerar relatório</button></div></div>
     ${periodPicker(st)}
     <p class="muted small synced" id="synced">${syncLine(doc.last_sync)}</p>
+    <p class="muted small chips-note">As métricas marcadas aqui são as que entram no relatório para o cliente.</p>
     <div class="chips" id="metrics">${chips()}</div>
     <div class="mcards" id="cards">${cards()}</div>
   </div>`;
   bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
+  // Gerar relatório: the period and the marked metrics travel in the address, so the report
+  // is one screen to print (and to reopen later with the same choices)
+  $("#mkreport").addEventListener("click", () => {
+    const shown = picked.filter((key) => defs[key]);
+    if (!shown.length) { toast("Marque ao menos uma métrica para o relatório", true); return; }
+    if (shown.length > REPORT_TILE_MAX) { toast(`O relatório cabe ${REPORT_TILE_MAX} métricas; desmarque ${shown.length - REPORT_TILE_MAX}`, true); return; }
+    location.hash = reportHash(id, st, shown);
+  });
   $("#metrics").addEventListener("click", (e) => {
+    if (e.target.closest("#morechips")) { more = !more; $("#metrics").innerHTML = chips(); return; }
     const b = e.target.closest("[data-metric]");
     if (!b) return;
     const key = b.dataset.metric;
     picked = picked.includes(key) ? picked.filter((x) => x !== key) : [...picked, key];
+    if (key.startsWith("act:") && !picked.includes(key)) more = true;  // the chip just unmarked stays in view
     try { localStorage.setItem("pauta.metrics", JSON.stringify(picked)); } catch { /* not remembered */ }
     $("#metrics").innerHTML = chips();
     $("#cards").innerHTML = cards();
+  });
+}
+
+// ---------- relatório (the client's dashboard) ---------------------------------------------
+
+// One clean screen to screenshot and send to the client on WhatsApp: no app chrome (the
+// router hides the shell for #/relatorio/...), the campaign, the client, the period, the
+// metrics marked on the campaign page as tiles with one plain line under each number
+// (what is being measured), a small bar per day where the metric has days, and the
+// Compartilhar com o cliente button that opens WhatsApp on the client's registered number
+// with the message ready (the person attaches the print there). The colours are fixed
+// (light paper, the accent) whatever the phone's theme, so every client gets the same look.
+const reportHash = (id, st, keys) => `#/relatorio/${id}?${periodQuery(st)}&m=${encodeURIComponent(keys.join(","))}`;
+const REPORT_TILE_MAX = 12;  // a print is one screen: more than this would not fit a phone
+// a compact sparkline, one bar per day, the latest day in full colour
+function spark(points) {
+  const W = 300, H = 40, n = points.length, bw = W / n;
+  const max = Math.max(0, ...points.map((p) => p.v ?? 0)) || 1;
+  const bars = points.map((p, i) => {
+    if (p.v == null) return "";
+    const h = Math.max(p.v > 0 ? 2 : 0, p.v / max * H);
+    return `<rect x="${(i * bw + bw * 0.15).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${Math.max(1, bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="1" class="${i === n - 1 ? "last" : ""}"/>`;
+  }).join("");
+  return `<svg class="rep-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
+}
+// the WhatsApp message that goes with the print: short, in the client's language
+function shareText(k, since, until) {
+  const who = firstName(k.client_contact);
+  return `Olá${who ? `, ${who}` : ""}! Segue o relatório da campanha "${k.name}" (${periodLabel(since, until)}), com o andamento até agora. Qualquer dúvida, é só me chamar.`;
+}
+// The card as a PNG, drawn in the browser (no server, no library: the card's own markup
+// goes into an SVG <foreignObject> with the stylesheet, the SVG is drawn on a canvas at 3x).
+// The logo is inlined (an image in an SVG can't load files). Safari wants a data: URL.
+async function cardImage(node, scale = 3) {
+  const [css, icon] = await Promise.all([fetch("/style.css").then((r) => r.text()), fetch("/icon.svg").then((r) => r.text())]);
+  const style = css.replace(/url\(\/icon\.svg\)/g, `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(icon)}")`);
+  if (style.includes("]]>")) throw new Error("estilo inválido para a imagem");
+  const w = Math.ceil(node.getBoundingClientRect().width), h = Math.ceil(node.getBoundingClientRect().height);
+  const html = new XMLSerializer().serializeToString(node);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" class="shot" style="width:${w}px"><style><![CDATA[${style}]]></style>${html}</div></foreignObject></svg>`;
+  const img = new Image();
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = () => no(new Error("não deu para desenhar a imagem")); img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; });
+  try { await img.decode(); } catch { /* drawn below anyway */ }
+  const canvas = document.createElement("canvas");
+  canvas.width = w * scale; canvas.height = h * scale;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ebeaf3";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((ok, no) => canvas.toBlob((b) => b ? ok(b) : no(new Error("não deu para gerar a imagem")), "image/png"));
+}
+const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 40) || "campanha";
+// the clipboard takes one PNG, to paste in the conversation (the phone's share sheet was
+// tried first: its own "Copiar" put the file there as two items and WhatsApp pasted two
+// photos, so Piero asked for this one button); a browser whose clipboard takes no image
+// gets the PNG as a download instead
+const canCopyImage = () => Boolean(navigator.clipboard?.write && window.ClipboardItem);
+
+async function viewReport(query, id) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  const k = doc.campaign;
+  const defs = metricDefs(k);
+  // the metrics from the address (the campaign page's choice), else the ones marked there
+  const asked = (query.get("m") || "").split(",").filter((key) => defs[key]);
+  const keys = (asked.length ? asked : readMetrics().filter((key) => defs[key])).slice(0, REPORT_TILE_MAX);
+  const shown = keys.length ? keys : DEFAULT_METRICS;
+  const tile = (key, i) => {
+    const m = defs[key];
+    const v = m.period(k), sub = m.sub ? m.sub(k) : "";
+    const explain = m.explain || ACTION_EXPLAIN;
+    const points = m.day ? dayPoints(k, since, until, m) : [];
+    const text = fmtMetric(v, m.fmt, k.currency);
+    // a long value ("R$ 123.456,78") takes the whole row rather than shrinking to nothing
+    return `<section class="rep-tile ${i === 0 ? "hero" : text.length > 10 ? "wide" : ""}" data-tile="${esc(key)}">
+      <span class="rep-label">${esc(m.label)}</span>
+      <b class="rep-val">${esc(text)}</b>
+      ${sub ? `<span class="rep-sub">${esc(sub)}</span>` : ""}
+      <p class="rep-why">${esc(explain)}</p>
+      ${points.length > 1 && points.some((p) => p.v) ? spark(points) : ""}
+    </section>`;
+  };
+  const wa = waUrl(k.client_whatsapp);
+  const text = shareText(k, since, until);
+  const image = `<button class="btn primary" id="copyimg">${icon("image")}Copiar imagem</button>`;
+  const share = wa
+    ? `<a class="btn" id="share" href="${esc(`${wa}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
+    : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
+  // no explanation under the buttons (Piero's ask); only the missing number is worth a line
+  const hint = wa ? "" : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`;
+  const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "";
+  const today = todayISO();
+  app.innerHTML = `<div class="report">
+    <div class="report-tools">
+      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${image}${share}</div>
+      ${hint ? `<p class="muted small" id="sharehint">${hint}</p>` : ""}
+    </div>
+    <article class="rep" id="rep">
+      <header class="rep-hero">
+        <span class="rep-kicker">Relatório de campanha</span>
+        <h1>${esc(k.name)}</h1>
+        <div class="rep-client">${avatar(k.client_name || "?", "md")}<span>${esc(k.client_name || "—")}</span></div>
+        <p class="rep-period">${esc(since === until ? shortDay(since) : periodLabel(since, until))}${until >= today ? (since === until ? " · hoje" : " · até hoje") : ""}${k.state === "active" ? " · campanha ativa" : k.state === "paused" ? " · campanha pausada" : ended}</p>
+      </header>
+      <div class="rep-tiles">${shown.map(tile).join("")}</div>
+      <footer class="rep-foot">
+        <span>${doc.last_sync ? `Dados da Meta de ${esc(stamp(doc.last_sync).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", ""))}` : "Dados da Meta"} · preparado por ${esc(firstName(ME.name))}</span>
+        <span class="rep-brand"><span class="logo" aria-hidden="true"></span>pauta</span>
+      </footer>
+    </article>
+  </div>`;
+  // the image is drawn as soon as the card is on screen, so the tap on Copiar imagem has it
+  // ready (Safari takes a clipboard write only right after a tap)
+  const name = `relatorio-${slug(k.client_name)}-${slug(k.name)}-${since}-${until}.png`;
+  let shot = cardImage($("#rep")).catch((e) => e);
+  $("#copyimg").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      // the ClipboardItem takes the promise: Safari wants the write inside the tap itself
+      const png = shot.then((b) => { if (b instanceof Error) throw b; return b; });
+      if (canCopyImage()) {
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+        toast("Imagem copiada: cole na conversa do WhatsApp");
+      } else {
+        let blob = await shot;
+        if (blob instanceof Error) { shot = cardImage($("#rep")); blob = await shot; }  // once more, on the tap
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+        toast("Imagem baixada: anexe na conversa");
+      }
+    } catch (err) { toast(`Não deu para copiar: ${err.message}`, true); }
+    btn.disabled = false;
   });
 }

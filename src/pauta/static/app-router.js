@@ -16,6 +16,7 @@ const ROUTES = [
   [/^\/financeiro$/, viewFinance],
   [/^\/campanhas$/, viewCampaigns],
   [/^\/campanha\/(\d+)$/, viewCampaign],
+  [/^\/relatorio\/(\d+)$/, viewReport],
   [/^\/configuracoes$/, viewSettings],
   [/^\/perfil$/, viewProfile],
 ];
@@ -55,6 +56,8 @@ async function route() {
   $("#gate").hidden = true;
   $("#shell").hidden = false;
   $(".menu")?.remove();
+  // the client's report is a screen to print: no sidebar, top bar or tab bar around it
+  document.body.classList.toggle("report", /^\/relatorio\//.test(path));
   markNav();
   for (const [re, view] of ROUTES) {
     const m = path.match(re);
@@ -69,6 +72,7 @@ async function route() {
         addMoveBar();
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
+        document.body.classList.remove("report");  // an error screen keeps its navigation
         app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
       } finally { LOADING--; }
       if (seq === NAV_SEQ) window.scrollTo(0, 0);

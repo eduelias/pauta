@@ -1205,10 +1205,12 @@ class Store:
         return out
 
     def campaign(self, cid: int, since: str | None = None, until: str | None = None) -> dict:
-        """One campaign with its daily rows in the range (all of them when no range)."""
+        """One campaign with its daily rows in the range (all of them when no range), and
+        the client's name, contact and WhatsApp (the report's "Compartilhar com o cliente")."""
         with self.db() as db:
             row = db.execute(
-                "SELECT k.*, c.name AS client_name, a.currency FROM campaign k "
+                "SELECT k.*, c.name AS client_name, c.contact AS client_contact, "
+                "c.whatsapp AS client_whatsapp, a.currency FROM campaign k "
                 "LEFT JOIN client c ON c.id=k.client "
                 "LEFT JOIN meta_account a ON a.account_id=k.account_id WHERE k.id=?",
                 (cid,),
