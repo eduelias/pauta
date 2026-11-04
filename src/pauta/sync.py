@@ -11,11 +11,11 @@ One account's trouble doesn't stop the others; a linked account no connection ha
 under its portfolio is reported rather than skipped in silence, after one account list per
 connection tried to place it (`UNCLAIMED` when that read failed, `ORPHAN` when it ran and
 the account is still nobody's: it vanished from Meta, or its portfolio was disconnected).
-That read is not cheap (it pages the accounts and batch-reads every one's insights and
-balance), so it runs again only when the set of unplaced accounts changes (`meta.orphans`
-remembers it); a permanent orphan is reported once with a WARNING and `sync_error`, then
-at INFO in the pass's `errors` only, so Campanhas doesn't toast the same problem on every
-Atualizar agora. A revoked token stops only its own connection's accounts (the other
+That read runs once per pass (it also keeps the list the pages answer from at most an
+hour old). A permanent orphan is reported once with a WARNING and `sync_error`
+(`meta.orphans` remembers it), then at INFO in the pass's `errors` only, so Campanhas
+doesn't toast the same problem on every Atualizar agora. A revoked token stops only its
+own connection's accounts (the other
 portfolios still sync); a throttle stops the pass (nothing retries in a loop: the next
 scheduled pass tries again). Each connection gets its
 `last_sync` and the first error met under it. `Scheduler` runs it in a daemon
@@ -127,7 +127,7 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         "errors": [],
     }
     fetched = _stamp()
-    known = meta.orphans  # unplaced after the last placing read: reported before
+    known = meta.orphans  # unplaced after the last pass: reported before
     accounts, placed = _linked(store, meta, conns)
     first_error = ""  # what `sync_error` says: Meta's errors, and an orphan the first time
     throttled = False
@@ -188,23 +188,19 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
 
 
 def _linked(store: Store, meta: Meta, conns: list[dict]) -> tuple[list[dict], bool]:
-    """The ad accounts linked to a client, and whether a placing read ran. With several
-    connections, a linked row that no read has placed under a portfolio yet (written
-    before v10, or linked before any read) would be nobody's: one account list per
-    connection (cached ten minutes) tags what it can first, through `meta.business_of`
-    and, on the server, the rows (`on_read`). That read pages every account's insights
-    and balance, so it runs only when the unplaced set differs from the one the last read
-    left behind (`meta.orphans`): a permanent orphan doesn't cost every hourly pass a
-    read. Meta refusing the read is the pass's business, not this step's."""
-    accounts = [a for a in store.meta_accounts() if a["client"]]
-    unplaced = frozenset(a["id"] for a in accounts if not _business(a, meta, conns))
-    if len(conns) < 2 or not unplaced or unplaced == meta.orphans:
-        return accounts, False
+    """The ad accounts linked to a client, after the pass's read of the account list
+    (this month's numbers, balances): read here, once an hour, so a visit to Campanhas or
+    a client's page never waits for it (`Meta.accounts` answers from memory and reads
+    behind the page). That read also places every account under the portfolio that reads
+    it (`meta.business_of` and, on the server, the rows through `on_read`), so a linked
+    row written before v10 or linked before any read gets its portfolio here. The second
+    value says whether the read happened: a failed one decides nothing about orphans.
+    Meta refusing the read is the pass's business, not this step's."""
     try:
-        meta.accounts()
+        meta.accounts(stale=False)
     except MetaError as e:
         obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
-        return accounts, False
+        return [a for a in store.meta_accounts() if a["client"]], False
     return [a for a in store.meta_accounts() if a["client"]], True
 
 

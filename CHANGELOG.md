@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-04
+
 ### Added
 
 - **O Pauta agora registra quais telas e ações cada conta usa, para melhorar o app.** Ficam
@@ -31,6 +33,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   `{url, expires, ...}`), `DELETE /api/campaigns/{id}/links/{token}`, `links` em
   `GET /api/campaigns/{id}`; `GET /api/r/{token}` e `GET /r/{token}` abrem sem sessão.
   Esquema v14 (só acrescenta a tabela `report_link`). Decisão 12.
+
+### Changed
+
+- **Campanhas e a página do cliente abrem na hora.** A lista de contas da Meta (números do
+  mês, saldos) valia dez minutos; quem voltava depois disso esperava de quatro a oito
+  segundos pela leitura dos três portfólios, a cada visita. Agora a lista anterior aparece
+  de imediato e a Meta é lida de novo por trás; a sincronização de hora em hora também a
+  mantém atualizada. **Atualizar** em Configurações continua pedindo à Meta na hora.
 
 ## [1.8.0] - 2026-11-04
 
@@ -459,7 +469,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/eduelias/pauta/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/eduelias/pauta/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/eduelias/pauta/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/eduelias/pauta/compare/v1.6.1...v1.7.0
