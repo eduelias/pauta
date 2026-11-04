@@ -40,7 +40,13 @@ def test_connect_round_trip(team, fake_meta):
     base, nato, piero, _ = team
     assert call(f"{base}/api/boot", cookie=piero)[1]["meta"] == {"enabled": True}
     doc = call(f"{base}/api/meta", cookie=nato)[1]
-    assert doc == {"enabled": True, "connected": False, "connections": [], "error": ""}
+    assert doc == {
+        "enabled": True,
+        "connected": False,
+        "connections": [],
+        "error": "",
+        "accounts_at": None,
+    }
     url = start(base, nato)
     assert url.startswith(fake_meta.dialog)
     status, location, _ = through_meta(base, url)

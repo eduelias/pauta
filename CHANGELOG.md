@@ -17,6 +17,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   (`pauta usage --disable`). O responsável lê o resumo com `pauta usage` (decisão 11); veja a
   política de privacidade.
 
+### Changed
+
+- **Campanhas e a página do cliente abrem na hora.** A lista de contas da Meta (números do
+  mês, saldos) valia dez minutos; quem voltava depois disso esperava de quatro a oito
+  segundos pela leitura dos três portfólios, a cada visita. Agora a lista anterior aparece
+  de imediato e a Meta é lida de novo por trás; a sincronização de hora em hora também a
+  mantém atualizada. **Atualizar** em Configurações continua pedindo à Meta na hora.
+
 ## [1.8.0] - 2026-11-04
 
 ### Added

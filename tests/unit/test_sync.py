@@ -94,6 +94,18 @@ def test_run_syncs_linked_accounts_and_fetches_history(team, caplog):
     assert len(insights) == 2
 
 
+def test_the_hourly_pass_keeps_the_account_list_warm(team):
+    """A visit after the pass answers from memory: the pass reads the list itself."""
+    store, meta, fake, *_ = team
+    fake.calls.clear()
+    sync.run(store, meta, days=2, today=TODAY)
+    assert "GET /me/adaccounts" in fake.calls
+    assert meta.status()["accounts_at"] is not None
+    n = len(fake.calls)
+    meta.accounts()
+    assert len(fake.calls) == n  # the pass just read it
+
+
 def test_run_links_done_requests(team):
     store, meta, fake, clinic, _ = team
     r = store.create_request(
@@ -391,11 +403,11 @@ def test_a_permanent_orphan_is_read_once_and_reported_quietly_after(team, caplog
     # the same orphan again: no read, the same error in the summary at INFO, no sync_error
     fake.calls.clear()
     caplog.clear()
-    meta._cache = None  # a cold cache would otherwise spare the call for ten minutes
+    meta._cache = None  # ten minutes passed: the pass reads the list again, once
     out = sync.run(store, meta, days=2, today=TODAY)
     assert out["accounts"] == 2
     assert out["errors"] == [{"account": "333", "business_id": "", "error": msg, "status": 0}]
-    assert "GET /me/adaccounts" not in fake.calls
+    assert fake.calls.count("GET /me/adaccounts") == 2  # one per connection
     assert meta.sync_error == "" and store.sync_state()["sync_error"] == ""
     events = [r for r in caplog.records if '"meta_account_unclaimed"' in r.getMessage()]
     assert len(events) == 1 and events[0].levelno == logging.INFO
