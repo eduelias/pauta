@@ -744,7 +744,7 @@ async function viewReport(query, id) {
       if (blob instanceof Error) { shot = cardImage($("#rep")); blob = await shot; }  // once more, on the tap
       const file = new File([blob], name, { type: "image/png" });
       if (sheet) {
-        try { await navigator.share({ files: [file], text }); }
+        try { await navigator.share({ files: [file], text: text() }); }
         catch (err) { if (err.name !== "AbortError") throw err; }  // closed the sheet: nothing to say
       } else {
         const a = document.createElement("a");
