@@ -1,9 +1,11 @@
 """Tiny stdlib HTTP server: the static app plus JSON endpoints under /api.
 
 Everything except the login/join endpoints and the Meta login's return (authorized by its
-one-time state, see meta.py) needs a signed-in account (client data is private; there is no
-public view). Writes must come from an allowed origin with a JSON body (file
-uploads send the file itself), and the session cookie is SameSite=Strict.
+one-time state, see meta.py) needs a signed-in account (client data is private). The one
+public view is a campaign report behind an unguessable, expiring token (`/r/<token>`,
+decision 12), which shows that card and nothing else. Writes must come from an allowed
+origin with a JSON body (file uploads send the file itself), and the session cookie is
+SameSite=Strict.
 """
 
 from __future__ import annotations
@@ -71,6 +73,12 @@ RATE_BUCKETS = {
     # guards it, so guesses are counted like login attempts
     "/api/meta/callback": "login",
 }
+# the same, for paths with a parameter in them: a report link for the client is handed out
+# like an invite, and a guess at one (the page or its data) is counted like a login attempt
+RATE_PATTERNS = (
+    (re.compile(r"^/api/campaigns/\d{1,9}/links$"), "invite"),
+    (re.compile(r"^(?:/api)?/r/"), "login"),
+)
 
 
 # passkey answers that fail are logged as auth_failed (the request line has the status too)
@@ -146,7 +154,7 @@ def make_handler(
         def _label(self, path: str) -> str:
             if path in QUIET:
                 return path
-            if not path.startswith("/api/"):
+            if not path.startswith(("/api/", "/r/")):
                 return "static"
             for _, pattern, *_ in routes:
                 if pattern.match(path):
@@ -270,6 +278,15 @@ def make_handler(
             self.send_response(302)
             self._headers("text/plain", 0, {"Location": url, "Cache-Control": "no-store"})
 
+        def _page(self, status: int, body: bytes | Path):
+            """An HTML page of our own (the public report, its 404), never cached."""
+            if isinstance(body, Path):
+                body = body.read_bytes()
+            self.send_response(status)
+            self._headers("text/html; charset=utf-8", len(body), {"Cache-Control": "no-store"})
+            self._write(body)
+            return SENT
+
         def _reader(self):
             def read(n: int) -> bytes:
                 try:
@@ -311,25 +328,29 @@ def make_handler(
                 return self._health(method)
             if path == "/metrics":
                 return self._metrics(method)
-            if not path.startswith("/api/"):
+            public_page = path.startswith("/r/")  # the client's report (decision 12)
+            if not path.startswith("/api/") and not public_page:
                 if method not in ("GET", "HEAD"):
                     return self._json(405, {"error": "método não permitido"})
                 return self._static(path)
-            if method == "HEAD":
+            if method == "HEAD" and not public_page:  # a link preview may HEAD the page
                 return self._json(405, {"error": "método não permitido"})
             try:
-                if method != "GET":
+                if method not in ("GET", "HEAD"):
                     self._check_origin()
-                bucket = RATE_BUCKETS.get(path)
+                bucket = RATE_BUCKETS.get(path) or next(
+                    (b for p, b in RATE_PATTERNS if p.match(path)), None
+                )
                 if bucket:
                     wait = limiter.hit(bucket, self._ip())
                     if wait:
                         raise Reply(429, {"error": f"muitas tentativas; espere {wait}s"})
                 viewer = auth.viewer(self.headers.get("Cookie"))
                 self._account = viewer["account"]
+                want = "GET" if method == "HEAD" else method
                 for m, pattern, fn, access, raw in routes:
                     match = pattern.match(path)
-                    if m != method or not match:
+                    if m != want or not match:
                         continue
                     if access in ("member", "admin") and not viewer["logged_in"]:
                         raise Reply(401, {"error": "entre com sua passkey"})
@@ -342,6 +363,8 @@ def make_handler(
                     if isinstance(out, tuple):
                         return self._json(200, out[0], cookie=out[1])
                     return self._json(200, out)
+                if public_page:  # not even the shape of a token: the same plain page
+                    return self._page(404, STATIC / "report-gone.html")
                 raise Reply(404, {"error": "não encontrado"})
             except Reply as r:
                 self._json(r.status, r.doc)

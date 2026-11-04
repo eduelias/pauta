@@ -140,13 +140,6 @@ const META_ERRORS = {
   cancelado: "A conexão foi cancelada na Meta",
   expirou: "O pedido de conexão expirou; tente de novo",
 };
-// a currency code Intl doesn't know (Meta's data, not ours) must not break the card
-const centsMoney = (c, cur) => {
-  if (c == null) return "—";
-  try { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur || "BRL" }).format(c / 100); }
-  catch (e) { return `${cur || "BRL"} ${(c / 100).toFixed(2)}`; }
-};
-const count = (n) => new Intl.NumberFormat("pt-BR").format(n || 0);
 
 async function loadMeta(refresh = false) {
   if (!$("#metabody")) return;

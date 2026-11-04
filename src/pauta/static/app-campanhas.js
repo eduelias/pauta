@@ -510,8 +510,21 @@ async function viewCampaign(query, id) {
     <p class="muted small chips-note">As métricas marcadas aqui são as que entram no relatório para o cliente.</p>
     <div class="chips" id="metrics">${chips()}</div>
     <div class="mcards" id="cards">${cards()}</div>
+    <section class="panel links" id="links" ${doc.links?.length ? "" : "hidden"}>${linksPanel(doc.links || [])}</section>
   </div>`;
   bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
+  // Revogar: the link is a 404 from then on; the row stays in the list as history
+  $("#links").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-revoke]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const row = await api("DELETE", `/api/campaigns/${id}/links/${b.dataset.revoke}`);
+      doc.links = doc.links.map((l) => l.token === row.token ? row : l);
+      $("#links").innerHTML = linksPanel(doc.links);
+      toast("Link desativado");
+    } catch (err) { toast(err.message, true); b.disabled = false; }
+  });
   // Gerar relatório: the period and the marked metrics travel in the address, so the report
   // is one screen to print (and to reopen later with the same choices)
   $("#mkreport").addEventListener("click", () => {
@@ -531,6 +544,23 @@ async function viewCampaign(query, id) {
     $("#metrics").innerHTML = chips();
     $("#cards").innerHTML = cards();
   });
+}
+
+// The report links made for this campaign (decision 12): the card each one opens (period,
+// how many metrics), who made it and when, until when it opens, and Revogar while it does.
+function linksPanel(links) {
+  const row = (l) => {
+    const n = l.metrics.length;
+    const state = l.revoked ? `desativado em ${esc(fmtDate(l.revoked.slice(0, 10)))}`
+      : l.live ? `válido até ${esc(validUntil(l.expires))} · <a href="${esc(l.url)}" target="_blank" rel="noopener">abrir</a>`
+      : `expirou em ${esc(validUntil(l.expires))}`;
+    return `<li class="linkrow ${l.live ? "" : "off"}" data-token="${esc(l.token)}">
+      <div class="grow"><b>${esc(periodLabel(l.since, l.until))}</b> · ${n} ${n === 1 ? "métrica" : "métricas"} · por ${esc(firstName(l.by_name) || "—")} em ${esc(fmtDate(l.created.slice(0, 10)))}<br><span class="muted small">${state}</span></div>
+      ${l.live ? `<button type="button" class="btn small" data-revoke="${esc(l.token)}">Revogar</button>` : ""}
+    </li>`;
+  };
+  return `<div class="panel-head"><h3>Links do relatório</h3><span class="muted small">abrem sem conta, por 30 dias</span></div>
+    <ul class="linklist">${links.map(row).join("")}</ul>`;
 }
 
 // ---------- relatório (the client's dashboard) ---------------------------------------------
@@ -585,17 +615,9 @@ const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").rep
 // the phone's share sheet takes a file (WhatsApp shows a PNG as a photo); a computer gets it as a download
 const canShareFiles = () => typeof navigator.canShare === "function" && navigator.canShare({ files: [new File([""], "x.png", { type: "image/png" })] });
 
-async function viewReport(query, id) {
-  if (!metaVisible()) { location.hash = "#/"; return; }
-  const st = readPeriod(query);
-  const [since, until] = periodDates(st.p, st);
-  const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
-  const k = doc.campaign;
-  const defs = metricDefs(k);
-  // the metrics from the address (the campaign page's choice), else the ones marked there
-  const asked = (query.get("m") || "").split(",").filter((key) => defs[key]);
-  const keys = (asked.length ? asked : readMetrics().filter((key) => defs[key])).slice(0, REPORT_TILE_MAX);
-  const shown = keys.length ? keys : DEFAULT_METRICS;
+// The card itself, shared with the client's public page (app-report.js, decision 12): `keys`
+// are the metric keys to tile, `defs` metricDefs(k), `by` the preparer's first name.
+function reportCard(k, { since, until, keys, defs, lastSync, by }) {
   const tile = (key, i) => {
     const m = defs[key];
     const v = m.period(k), sub = m.sub ? m.sub(k) : "";
@@ -611,40 +633,105 @@ async function viewReport(query, id) {
       ${points.length > 1 && points.some((p) => p.v) ? spark(points) : ""}
     </section>`;
   };
-  const wa = waUrl(k.client_whatsapp);
-  const text = shareText(k, since, until);
-  const sheet = canShareFiles();
-  const image = `<button class="btn primary" id="shareimg">${icon("image")}${sheet ? "Enviar imagem" : "Baixar imagem"}</button>`;
-  const share = wa
-    ? `<a class="btn" id="share" href="${esc(`${wa}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
-    : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
-  const who = `<b>${esc(k.client_name || "o cliente")}</b>`;
-  const hint = (sheet
-    ? `<b>Enviar imagem</b> gera a imagem do cartão e abre a lista de apps do celular: escolha o WhatsApp e a conversa com ${who}.`
-    : `<b>Baixar imagem</b> salva o cartão como imagem (no celular, o botão vira Enviar imagem e abre direto a lista de apps).`)
-    + (wa ? ` <b>Abrir conversa</b> abre o WhatsApp na conversa com ${who} só com a mensagem, para mandar a imagem por lá.`
-      : ` ${who} não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`);
   const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit", year: "numeric" }))}` : "";
   const today = todayISO();
-  app.innerHTML = `<div class="report">
-    <div class="report-tools">
-      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${image}${share}</div>
-      <p class="muted small" id="sharehint">${hint}</p>
-    </div>
-    <article class="rep" id="rep">
+  return `<article class="rep" id="rep">
       <header class="rep-hero">
         <span class="rep-kicker">Relatório de campanha</span>
         <h1>${esc(k.name)}</h1>
         <div class="rep-client">${avatar(k.client_name || "?", "md")}<span>${esc(k.client_name || "—")}</span></div>
         <p class="rep-period">${esc(since === until ? shortDay(since) : periodLabel(since, until))}${until >= today ? (since === until ? " · hoje" : " · até hoje") : ""}${k.state === "active" ? " · campanha ativa" : k.state === "paused" ? " · campanha pausada" : ended}</p>
       </header>
-      <div class="rep-tiles">${shown.map(tile).join("")}</div>
+      <div class="rep-tiles">${keys.map(tile).join("")}</div>
       <footer class="rep-foot">
-        <span>${doc.last_sync ? `Dados da Meta de ${esc(stamp(doc.last_sync).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", ""))}` : "Dados da Meta"} · preparado por ${esc(firstName(ME.name))}</span>
+        <span>${lastSync ? `Dados da Meta de ${esc(stamp(lastSync).toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", ""))}` : "Dados da Meta"}${by ? ` · preparado por ${esc(by)}` : ""}</span>
         <span class="rep-brand"><span class="logo" aria-hidden="true"></span>pauta</span>
       </footer>
-    </article>
+    </article>`;
+}
+// "4 de dezembro": when a link stops opening (its `expires` is a UTC stamp; the day is enough)
+const validUntil = (expires) => fmtDate(String(expires).slice(0, 10), { day: "numeric", month: "long" });
+
+async function viewReport(query, id) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  const k = doc.campaign;
+  const defs = metricDefs(k);
+  // the metrics from the address (the campaign page's choice), else the ones marked there
+  const asked = (query.get("m") || "").split(",").filter((key) => defs[key]);
+  const keys = (asked.length ? asked : readMetrics().filter((key) => defs[key])).slice(0, REPORT_TILE_MAX);
+  const shown = keys.length ? keys : DEFAULT_METRICS;
+  const wa = waUrl(k.client_whatsapp);
+  // the public link (decision 12): the one the team already made for this very card (same
+  // period, same metrics, still open), else made on the first tap of Copiar link or Abrir
+  // conversa. The WhatsApp message carries it once it exists.
+  let link = (doc.links || []).find((l) => l.live && l.since === since && l.until === until && l.metrics.join(",") === shown.join(",")) || null;
+  const text = () => shareText(k, since, until) + (link ? `\n\nVeja o relatório aqui: ${link.url}` : "");
+  const waHref = () => `${wa}?text=${encodeURIComponent(text())}`;
+  const linkInfo = () => link ? `Link do relatório válido até ${esc(validUntil(link.expires))}: <span class="linkurl">${esc(link.url)}</span>` : "";
+  async function ensureLink() {
+    if (!link) {
+      link = await api("POST", `/api/campaigns/${id}/links`, { since, until, metrics: shown });
+      if (wa) $("#share").href = waHref();
+      $("#linkinfo").innerHTML = linkInfo();
+    }
+    return link;
+  }
+  const sheet = canShareFiles();
+  const image = `<button class="btn primary" id="shareimg">${icon("image")}${sheet ? "Enviar imagem" : "Baixar imagem"}</button>`;
+  const copy = `<button class="btn" id="copylink" title="Um endereço do relatório que abre sem conta, por 30 dias">${icon("link")}Copiar link</button>`;
+  const share = wa
+    ? `<a class="btn" id="share" href="${esc(waHref())}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
+    : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
+  const who = `<b>${esc(k.client_name || "o cliente")}</b>`;
+  const hint = (sheet
+    ? `<b>Enviar imagem</b> gera a imagem do cartão e abre a lista de apps do celular: escolha o WhatsApp e a conversa com ${who}.`
+    : `<b>Baixar imagem</b> salva o cartão como imagem (no celular, o botão vira Enviar imagem e abre direto a lista de apps).`)
+    + ` <b>Copiar link</b> cria um endereço deste relatório que abre sem conta, por 30 dias, e copia.`
+    + (wa ? ` <b>Abrir conversa</b> abre o WhatsApp na conversa com ${who} com a mensagem e o link.`
+      : ` ${who} não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`);
+  app.innerHTML = `<div class="report">
+    <div class="report-tools">
+      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${image}${copy}${share}</div>
+      <p class="muted small" id="sharehint">${hint}</p>
+      <p class="muted small" id="linkinfo">${linkInfo()}</p>
+    </div>
+    ${reportCard(k, { since, until, keys: shown, defs, lastSync: doc.last_sync, by: firstName(ME.name) })}
   </div>`;
+  // Copiar link: the link is made on the first tap. Safari only writes the clipboard inside
+  // the tap, but a ClipboardItem takes a promise, so the address can still be made first.
+  $("#copylink").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const made = ensureLink();
+    const blob = made.then((l) => new Blob([l.url], { type: "text/plain" }));
+    blob.catch(() => {});  // a failure to make the link is reported from `made` below
+    try {
+      try {
+        if (typeof ClipboardItem === "function" && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+        else await navigator.clipboard.writeText((await made).url);
+        await made;
+        toast(`Link copiado · válido até ${validUntil(link.expires)}`);
+      } catch (err) {
+        await made;  // the link exists: only the copying failed
+        toast("Não deu para copiar: selecione o link abaixo", true);
+      }
+    } catch (err) { toast(err.message, true); }
+    btn.disabled = false;
+  });
+  // Abrir conversa before any link exists: the tab opens now (inside the tap, or Safari
+  // blocks it) and goes to WhatsApp once the link is made
+  $("#share").addEventListener("click", (e) => {
+    if (link || !wa) return;  // the address already carries the link: a plain link
+    e.preventDefault();
+    const tab = window.open("", "_blank");
+    if (tab) tab.opener = null;
+    ensureLink()
+      .then(() => { const href = waHref(); if (tab) tab.location.replace(href); else location.assign(href); })
+      .catch((err) => { tab?.close(); toast(err.message, true); });
+  });
   // the image is drawn as soon as the card is on screen, so the tap on Enviar imagem reaches
   // the share sheet at once (Safari only opens it right after a tap)
   const name = `relatorio-${slug(k.client_name)}-${slug(k.name)}-${since}-${until}.png`;

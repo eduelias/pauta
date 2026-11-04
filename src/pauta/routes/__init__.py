@@ -12,6 +12,8 @@ ID = r"(\d{1,9})"
 
 CRED = r"([A-Za-z0-9_-]{8,1400})"  # a passkey's credential id, base64url
 
+TOKEN = r"([A-Za-z0-9_-]{32,64})"  # a report link's token (decision 12), base64url
+
 SENT = object()  # a route that wrote its own response (a redirect, an image)
 
 # what a member sees when Meta fails: the real reason ("conecte de novo") is the admin's

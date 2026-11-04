@@ -17,3 +17,4 @@ both files.
 | [9](0009-branch-deploys-to-acceptance.md) | Any branch on acceptance, by hand, by the owner, as its own user (amends 1) | Proposed |
 | [10](0010-perfil-e-configuracoes.md) | Perfil for the person (name, WhatsApp, passkeys, new-passkey link); Equipe becomes Configurações | Proposed (this PR) |
 | [11](0011-analytics.md) | Analytics: a first-party usage log inside the app, Plausible (cloud, EU) on the public site; no session replay | Proposed |
+| [12](0012-public-report-link.md) | A public, expiring, read-only link to one campaign report for the client (amends 2: the first open page) | Proposed (this PR) |

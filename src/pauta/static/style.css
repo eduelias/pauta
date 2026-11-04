@@ -750,4 +750,18 @@ body.report .main { padding: 16px 12px 40px; max-width: none; }
 .shot { font: 15px/1.5 "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: #17161c; -webkit-font-smoothing: antialiased; }
 @media (max-width: 360px) { .rep-tiles { grid-template-columns: 1fr; } }
+/* the client's copy (decision 12): the card alone on the page, and the "não está mais
+   disponível" page; the links made, listed on the campaign page */
+body.public .main { padding: 16px 12px 40px; margin: 0 auto; }
+.public-note { text-align: center; color: #6e6b78; font-size: 12px; margin: 16px 0 0; }
+.rep-gone { padding: 28px 22px 26px; }
+.rep-gone h1 { margin: 16px 0 8px; font-size: 20px; line-height: 1.2; letter-spacing: -.02em; }
+.rep-gone p { margin: 0; color: #6e6b78; font-size: 14px; line-height: 1.45; }
+.linkurl { word-break: break-all; user-select: all; }
+.links { margin-top: 16px; }
+.links .panel-head h3 { margin: 0; font-size: 15px; }
+.linklist { list-style: none; margin: 0; padding: 0; }
+.linkrow { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-2); font-size: 14px; line-height: 1.4; }
+.linkrow.off { color: var(--muted); }
+.linkrow .btn.small { height: 32px; padding: 0 10px; font-size: 13px; flex: none; }
 @media print { body.report .report-tools { display: none; } body.report { background: #fff; } .rep { box-shadow: none; } }
