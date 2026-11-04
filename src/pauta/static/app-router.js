@@ -16,6 +16,7 @@ const ROUTES = [
   [/^\/financeiro$/, viewFinance],
   [/^\/campanhas$/, viewCampaigns],
   [/^\/campanha\/(\d+)$/, viewCampaign],
+  [/^\/relatorio\/(\d+)$/, viewReport],
   [/^\/configuracoes$/, viewSettings],
   [/^\/perfil$/, viewProfile],
 ];
@@ -42,6 +43,8 @@ async function route() {
   $("#gate").hidden = true;
   $("#shell").hidden = false;
   $(".menu")?.remove();
+  // the client's report is a screen to print: no sidebar, top bar or tab bar around it
+  document.body.classList.toggle("report", /^\/relatorio\//.test(path));
   markNav();
   for (const [re, view] of ROUTES) {
     const m = path.match(re);

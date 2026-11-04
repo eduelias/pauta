@@ -7,6 +7,31 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Relatório para o cliente.** Na página da campanha, **Gerar relatório** abre uma tela
+  limpa, sem menus, feita para tirar um print e mandar no WhatsApp: o nome da campanha, o
+  cliente, o período e as métricas marcadas na página da campanha viram cartões, cada um com
+  o número, o que ele conta (nos Resultados) e uma frase curta dizendo o que está sendo
+  medido, mais as barras por dia onde há dados. As cores são fixas (não seguem o tema do
+  celular), para todo cliente receber o mesmo cartão. **Compartilhar com o cliente** abre o
+  WhatsApp na conversa com o número cadastrado no cliente, com a mensagem pronta (é só
+  anexar o print); sem número cadastrado o botão fica desligado e a tela diz onde
+  cadastrar. O endereço (`#/relatorio/<id>?p=...&m=...`) guarda o período e as métricas,
+  então o mesmo relatório pode ser reaberto. API: `GET /api/campaigns/{id}` traz
+  `client_contact` e `client_whatsapp`.
+
+### Changed
+
+- **Campanhas em português direto.** Na página da campanha, as métricas passam a ter o nome
+  do Gerenciador de Anúncios: **Cliques no link** (antes "Leads (cliques)"), **Custo por
+  clique no link** (antes "Custo por lead"), **Taxa de cliques (CTR)** e **Custo por mil
+  impressões (CPM)**; o objetivo da campanha aparece em português ("objetivo: Engajamento",
+  antes "engagement"); as ações da Meta que viram chips, e os Resultados, ganham nome em
+  português para muito mais tipos (conversas, cadastros no site, compras, carrinho,
+  ligações, instalações do app...), e um tipo desconhecido perde os prefixos técnicos da
+  Meta. O chip "Cliques no link" da ação some: é a mesma métrica.
+
 ## [1.7.1] - 2026-11-03
 
 ### Changed

@@ -127,7 +127,19 @@ const RESULT_LABELS = {
   video_view: "Reproduções de vídeo", thruplay: "ThruPlays", page_engagement: "Engajamentos com a Página",
   "onsite_conversion.messaging_first_reply": "Novas conexões por mensagem",
 };
-const resultLabel = (type) => RESULT_LABELS[type] || String(type || "").replace(/[._]+/g, " ");
+// a type neither list knows reads without Meta's prefixes ("onsite_conversion.", "fb_pixel_")
+const cleanType = (type) => String(type || "").replace(/^(onsite_conversion|offsite_conversion|omni)[._]/, "").replace(/^fb_pixel_/, "").replace(/[._]+/g, " ");
+const resultLabel = (type) => RESULT_LABELS[type] || ACTION_LABELS[type] || cleanType(type);
+// the campaign's objective, as Ads Manager names it in Portuguese
+const OBJECTIVES = {
+  OUTCOME_AWARENESS: "Reconhecimento", OUTCOME_TRAFFIC: "Tráfego", OUTCOME_ENGAGEMENT: "Engajamento",
+  OUTCOME_LEADS: "Cadastros", OUTCOME_APP_PROMOTION: "Promoção do app", OUTCOME_SALES: "Vendas", OUTCOME_MESSAGES: "Mensagens",
+  BRAND_AWARENESS: "Reconhecimento da marca", REACH: "Alcance", LINK_CLICKS: "Tráfego", POST_ENGAGEMENT: "Engajamento com a publicação",
+  PAGE_LIKES: "Curtidas na Página", EVENT_RESPONSES: "Respostas a eventos", MESSAGES: "Mensagens", VIDEO_VIEWS: "Visualizações de vídeo",
+  LEAD_GENERATION: "Geração de cadastros", CONVERSIONS: "Conversões", PRODUCT_CATALOG_SALES: "Vendas do catálogo",
+  STORE_VISITS: "Visitas à loja", APP_INSTALLS: "Instalações do app", LOCAL_AWARENESS: "Reconhecimento local",
+};
+const objectiveLabel = (o) => OBJECTIVES[o] || String(o || "").replace(/^OUTCOME_/, "").toLowerCase().replace(/_/g, " ");
 const NO_RESULTS = "sem resultados registrados para o objetivo da campanha";
 const MIXED_RESULTS = "resultados de objetivos diferentes não somam";
 const NO_REACH = "a Meta não respondeu";
@@ -285,30 +297,63 @@ async function viewCampaigns(query) {
 // One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
 // period value from the campaign's sums, `day` one day's from an insight row; a metric
 // without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart;
-// `sub` names what Resultados count, under the value, as Ads Manager does.
+// `sub` names what Resultados count, under the value, as Ads Manager does; `explain` is the
+// one plain line under each number on the client's report (what is being measured).
 const METRICS = {
-  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta" },
-  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => centsPer(d.spend_cents, d.results), sub: (k) => resultLabel(k.result_indicator) },
-  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents },
-  leads: { label: "Leads (cliques)", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks },
-  cpl: { label: "Custo por lead", fmt: "money", period: (k) => k.cpl_cents, day: (d) => centsPer(d.spend_cents, d.link_clicks) },
-  reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia" },
-  impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions },
-  ctr: { label: "CTR", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões" },
-  cpm: { label: "CPM", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "custo por mil impressões" },
-  freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período" },
+  results: { label: "Resultados", fmt: "count", period: (k) => k.results, day: (d) => d.results, sub: (k) => resultLabel(k.result_indicator), note: "o que o objetivo da campanha conta", explain: "Quantas vezes a campanha entregou o que ela busca no período." },
+  cpr: { label: "Custo por resultado", fmt: "money", period: (k) => k.cost_per_result_cents, day: (d) => centsPer(d.spend_cents, d.results), sub: (k) => resultLabel(k.result_indicator), explain: "Quanto custou, em média, cada resultado." },
+  spend: { label: "Valor gasto", fmt: "money", period: (k) => k.spend_cents, day: (d) => d.spend_cents, explain: "Quanto foi investido em anúncios no período." },
+  leads: { label: "Cliques no link", fmt: "count", period: (k) => k.link_clicks, day: (d) => d.link_clicks, explain: "Quantas vezes alguém clicou no link do anúncio." },
+  cpl: { label: "Custo por clique no link", fmt: "money", period: (k) => k.cpl_cents, day: (d) => centsPer(d.spend_cents, d.link_clicks), explain: "Quanto custou, em média, cada clique no link." },
+  reach: { label: "Alcance", fmt: "count", period: (k) => k.reach, day: (d) => d.reach, note: "no período, pessoas diferentes (da Meta); por dia, as de cada dia", explain: "Quantas pessoas diferentes viram o anúncio pelo menos uma vez." },
+  impressions: { label: "Impressões", fmt: "count", period: (k) => k.impressions, day: (d) => d.impressions, explain: "Quantas vezes o anúncio apareceu na tela; a mesma pessoa pode contar mais de uma vez." },
+  ctr: { label: "Taxa de cliques (CTR)", fmt: "pct", period: (k) => k.impressions ? k.link_clicks / k.impressions : null, day: (d) => d.impressions ? d.link_clicks / d.impressions : null, note: "cliques no link ÷ impressões", explain: "De cada 100 vezes que o anúncio apareceu, quantas viraram um clique no link." },
+  cpm: { label: "Custo por mil impressões (CPM)", fmt: "money", period: (k) => k.impressions ? k.spend_cents / k.impressions * 1000 : null, day: (d) => d.impressions ? d.spend_cents / d.impressions * 1000 : null, note: "valor gasto ÷ impressões × 1.000", explain: "Quanto custou para o anúncio aparecer mil vezes." },
+  freq: { label: "Frequência", fmt: "dec", period: (k) => k.reach ? k.impressions / k.reach : null, note: "impressões ÷ alcance, só no período", explain: "Quantas vezes, em média, cada pessoa viu o anúncio." },
 };
 // the action chips: Ads Manager's words, told apart where two types would read the same
 const ACTION_LABELS = {
   ...RESULT_LABELS, "onsite_conversion.lead_grouped": "Cadastros (Meta)", omni_purchase: "Compras (todas)",
   "onsite_conversion.purchase": "Compras (no site)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
-  initiate_checkout: "Finalizações iniciadas",
+  initiate_checkout: "Finalizações de compra iniciadas",
+  // messaging
+  "onsite_conversion.total_messaging_connection": "Conexões por mensagem",
+  "onsite_conversion.messaging_user_depth_2_message_send": "Conversas com 2 mensagens",
+  "onsite_conversion.messaging_user_depth_3_message_send": "Conversas com 3 mensagens",
+  "onsite_conversion.messaging_block": "Bloqueios de mensagens",
+  "onsite_conversion.messaging_welcome_message_view": "Mensagens de boas-vindas vistas",
+  "onsite_conversion.messaging_order_created": "Pedidos criados por mensagem",
+  // leads and forms
+  "offsite_conversion.fb_pixel_lead": "Cadastros no site", onsite_web_lead: "Cadastros no site (formulário)",
+  leadgen_grouped: "Cadastros (formulários)", "onsite_conversion.flow_complete": "Fluxos concluídos",
+  "onsite_conversion.lead_form_grouped": "Cadastros (formulário instantâneo)",
+  // site events (pixel)
+  "offsite_conversion.fb_pixel_purchase": "Compras (no site)", "offsite_conversion.fb_pixel_add_to_cart": "Adições ao carrinho (no site)",
+  omni_add_to_cart: "Adições ao carrinho (todas)", "offsite_conversion.fb_pixel_initiate_checkout": "Finalizações de compra iniciadas (no site)",
+  omni_initiated_checkout: "Finalizações de compra iniciadas (todas)", view_content: "Visualizações de conteúdo",
+  omni_view_content: "Visualizações de conteúdo (todas)", complete_registration: "Cadastros concluídos",
+  "offsite_conversion.fb_pixel_complete_registration": "Cadastros concluídos (no site)", omni_complete_registration: "Cadastros concluídos (todos)",
+  search: "Pesquisas", "offsite_conversion.fb_pixel_search": "Pesquisas (no site)", omni_search: "Pesquisas (todas)",
+  add_payment_info: "Informações de pagamento adicionadas", "offsite_conversion.fb_pixel_add_payment_info": "Informações de pagamento adicionadas (no site)",
+  add_to_wishlist: "Adições à lista de desejos", "offsite_conversion.fb_pixel_add_to_wishlist": "Adições à lista de desejos (no site)",
+  contact: "Contatos", schedule: "Agendamentos", submit_application: "Candidaturas enviadas", subscribe: "Assinaturas",
+  start_trial: "Testes iniciados", donate: "Doações", find_location: "Buscas por localização", customize_product: "Produtos personalizados",
+  "offsite_conversion.fb_pixel_custom": "Conversões personalizadas", "offsite_conversion.custom": "Conversões personalizadas",
+  offsite_conversion: "Conversões no site", offline_conversion: "Conversões offline",
+  // page, post and video
+  photo_view: "Visualizações de foto", "onsite_conversion.ig_profile_visit": "Visitas ao perfil",
+  rsvp: "Respostas a eventos", checkin: "Check-ins", video_play: "Reproduções de vídeo",
+  // calls and app
+  click_to_call_call_confirm: "Ligações confirmadas", click_to_call_native_call_placed: "Ligações feitas",
+  app_install: "Instalações do app", omni_app_install: "Instalações do app (todas)", mobile_app_install: "Instalações do app (celular)",
+  app_use: "Usos do app", app_custom_event: "Eventos no app", omni_activate_app: "Aberturas do app",
 };
 const DEFAULT_METRICS = ["results", "cpr", "spend"];
 function metricDefs(k) {
   const defs = { ...METRICS };
   for (const type of Object.keys(k.actions || {}).sort()) {
+    if (type === "link_click") continue;  // Cliques no link is already a metric above
     defs[`act:${type}`] = { label: ACTION_LABELS[type] || type, fmt: "count", period: (c) => c.actions?.[type] ?? 0, day: (d) => d.actions?.[type] ?? 0 };
   }
   return defs;
@@ -388,14 +433,22 @@ async function viewCampaign(query, id) {
     <div class="head"><div>
       <div class="row-gap"><a class="cl" href="#/cliente/${k.client}">${avatar(k.client_name || "?", "md")}<span style="font-size:16px">${esc(k.client_name || "—")}</span></a>${stateTag(k)}</div>
       <h1 id="kname">${esc(k.name)}</h1>
-      <p>${when}${k.objective ? ` · ${esc(k.objective.replace(/^OUTCOME_/, "").toLowerCase())}` : ""}${k.request ? ` · <a href="#/pedido/${k.request}">Pedido #${k.request}</a>` : ""}</p>
-    </div></div>
+      <p>${when}${k.objective ? ` · objetivo: ${esc(objectiveLabel(k.objective))}` : ""}${k.request ? ` · <a href="#/pedido/${k.request}">Pedido #${k.request}</a>` : ""}</p>
+    </div><div class="actions"><button class="btn primary" id="mkreport" title="Uma tela limpa, com as métricas marcadas abaixo, para tirar um print e mandar ao cliente">${icon("send")}Gerar relatório</button></div></div>
     ${periodPicker(st)}
     <p class="muted small synced" id="synced">${syncLine(doc.last_sync)}</p>
+    <p class="muted small chips-note">As métricas marcadas aqui são as que entram no relatório para o cliente.</p>
     <div class="chips" id="metrics">${chips()}</div>
     <div class="mcards" id="cards">${cards()}</div>
   </div>`;
   bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
+  // Gerar relatório: the period and the marked metrics travel in the address, so the report
+  // is one screen to print (and to reopen later with the same choices)
+  $("#mkreport").addEventListener("click", () => {
+    const shown = picked.filter((key) => defs[key]);
+    if (!shown.length) { toast("Marque ao menos uma métrica para o relatório", true); return; }
+    location.hash = reportHash(id, st, shown);
+  });
   $("#metrics").addEventListener("click", (e) => {
     const b = e.target.closest("[data-metric]");
     if (!b) return;
@@ -405,4 +458,85 @@ async function viewCampaign(query, id) {
     $("#metrics").innerHTML = chips();
     $("#cards").innerHTML = cards();
   });
+}
+
+// ---------- relatório (the client's dashboard) ---------------------------------------------
+
+// One clean screen to screenshot and send to the client on WhatsApp: no app chrome (the
+// router hides the shell for #/relatorio/...), the campaign, the client, the period, the
+// metrics marked on the campaign page as tiles with one plain line under each number
+// (what is being measured), a small bar per day where the metric has days, and the
+// Compartilhar com o cliente button that opens WhatsApp on the client's registered number
+// with the message ready (the person attaches the print there). The colours are fixed
+// (light paper, the accent) whatever the phone's theme, so every client gets the same look.
+const reportHash = (id, st, keys) => `#/relatorio/${id}?${periodQuery(st)}&m=${encodeURIComponent(keys.join(","))}`;
+const REPORT_TILE_MAX = 12;  // a print is one screen: more than this would not fit a phone
+// a compact sparkline, one bar per day, the latest day in full colour
+function spark(points) {
+  const W = 300, H = 40, n = points.length, bw = W / n;
+  const max = Math.max(0, ...points.map((p) => p.v ?? 0)) || 1;
+  const bars = points.map((p, i) => {
+    if (p.v == null) return "";
+    const h = Math.max(p.v > 0 ? 2 : 0, p.v / max * H);
+    return `<rect x="${(i * bw + bw * 0.15).toFixed(1)}" y="${(H - h).toFixed(1)}" width="${Math.max(1, bw * 0.7).toFixed(1)}" height="${h.toFixed(1)}" rx="1" class="${i === n - 1 ? "last" : ""}"/>`;
+  }).join("");
+  return `<svg class="rep-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${bars}</svg>`;
+}
+// the WhatsApp message that goes with the print: short, in the client's language
+function shareText(k, since, until) {
+  const who = firstName(k.client_contact);
+  return `Olá${who ? `, ${who}` : ""}! Segue o relatório da campanha "${k.name}" (${periodLabel(since, until)}), com o andamento até agora. Qualquer dúvida, é só me chamar.`;
+}
+async function viewReport(query, id) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  const k = doc.campaign;
+  const defs = metricDefs(k);
+  // the metrics from the address (the campaign page's choice), else the ones marked there
+  const asked = (query.get("m") || "").split(",").filter((key) => defs[key]);
+  const keys = (asked.length ? asked : readMetrics().filter((key) => defs[key])).slice(0, REPORT_TILE_MAX);
+  const shown = keys.length ? keys : DEFAULT_METRICS;
+  const tile = (key, i) => {
+    const m = defs[key];
+    const v = m.period(k), sub = m.sub ? m.sub(k) : "";
+    const explain = m.explain || `Quantas vezes essa ação aconteceu por causa do anúncio.`;
+    const points = m.day ? dayPoints(k, since, until, m) : [];
+    return `<section class="rep-tile ${i === 0 ? "hero" : ""}" data-tile="${esc(key)}">
+      <span class="rep-label">${esc(m.label)}</span>
+      <b class="rep-val">${esc(fmtMetric(v, m.fmt, k.currency))}</b>
+      ${sub ? `<span class="rep-sub">${esc(sub)}</span>` : ""}
+      <p class="rep-why">${esc(explain)}</p>
+      ${points.length > 1 && points.some((p) => p.v) ? spark(points) : ""}
+    </section>`;
+  };
+  const wa = waUrl(k.client_whatsapp);
+  const share = wa
+    ? `<a class="btn primary" id="share" href="${esc(`${wa}?text=${encodeURIComponent(shareText(k, since, until))}`)}" target="_blank" rel="noopener">${icon("send")}Compartilhar com o cliente</a>`
+    : `<button class="btn primary" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Compartilhar com o cliente</button>`;
+  const hint = wa
+    ? `Tire um print do cartão abaixo e toque em <b>Compartilhar com o cliente</b>: o WhatsApp abre na conversa com <b>${esc(k.client_name || "o cliente")}</b> com a mensagem pronta; é só anexar o print.`
+    : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado. <a href="#/cliente/${k.client}">Cadastre o número do cliente</a> para compartilhar daqui; até lá, tire o print e envie à mão.`;
+  const ended = k.state !== "active" && k.ended ? ` · encerrada em ${esc(fmtDate(k.ended, { day: "2-digit", month: "2-digit" }))}` : "";
+  const today = todayISO();
+  app.innerHTML = `<div class="report">
+    <div class="report-tools">
+      <div class="row-gap"><a class="btn" href="#/campanha/${id}?${periodQuery(st)}">${icon("back")}Voltar à campanha</a>${share}</div>
+      <p class="muted small" id="sharehint">${hint}</p>
+    </div>
+    <article class="rep" id="rep">
+      <header class="rep-hero">
+        <span class="rep-kicker">Relatório de campanha</span>
+        <h1>${esc(k.name)}</h1>
+        <div class="rep-client">${avatar(k.client_name || "?", "md")}<span>${esc(k.client_name || "—")}</span></div>
+        <p class="rep-period">${esc(periodLabel(since, until))}${until >= today ? " · até hoje" : ""}${k.state === "active" ? " · campanha ativa" : k.state === "paused" ? " · campanha pausada" : ended}</p>
+      </header>
+      <div class="rep-tiles">${shown.map(tile).join("")}</div>
+      <footer class="rep-foot">
+        <span>${doc.last_sync ? `Dados da Meta de ${esc(fmtDate(String(doc.last_sync).slice(0, 10)))}` : "Dados da Meta"} · preparado por ${esc(firstName(ME.name))}</span>
+        <span class="rep-brand"><span class="logo" aria-hidden="true"></span>pauta</span>
+      </footer>
+    </article>
+  </div>`;
 }
