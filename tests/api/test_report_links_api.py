@@ -177,7 +177,7 @@ def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_m
     assert f'<meta property="og:image" content="{base}/og.png">' in page
     assert (
         'content="3 métricas da campanha, com os dados da Meta, preparado na Pauta. '
-        'O link vale por 30 dias."' in page
+        'O link vale por 5 dias."' in page
     )
     assert '<meta name="robots" content="noindex, nofollow">' in page
     assert "{{" not in page

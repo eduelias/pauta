@@ -2,6 +2,8 @@
 
 - **Status:** proposed (2026-11-04), built in this PR for the owner's review. It is the first
   exception to decision 2's rule that everything in Pauta needs a signed-in account.
+- **Amended 2026-11-05:** the lifetime went from 30 days (as released in 1.8.2) to 5. Links
+  made before keep the expiry stored on their row.
 - **Depends on:** PR 35 (the client's report, `#/relatorio/<id>`). **Amends:** decision 2
   (one read-only, expiring, unguessable page is open; nothing else changes).
 - **Changes:** schema v14 (a `report_link` table, additive), `POST`/`DELETE
@@ -32,7 +34,7 @@ only what the card shows.
 | What is public | One campaign's report card as the team saw it: the campaign's name, the client's name (with the initials avatar), the period, whether the campaign is active, paused or ended (and when), one tile per metric chosen when the link was made (the period's value, Ads Manager's label for Resultados, the plain line, a bar per day), the date of Meta's numbers and the first name of the teammate who prepared it. Nothing else: no phone, contact or address, no ad account or Meta campaign ids, no budgets, notes, requests or other campaigns |
 | Only the chosen metrics | `GET /api/r/<token>` returns the period sums and the daily rows **filtered to the fields the chosen metrics need** (`report.py`, `METRIC_FIELDS`). A link for "Resultados" alone does not carry the spend; one for "Cliques no link" does not carry the Resultados. The period's reach (a live number from Meta) is read once, when the link is made, and stored on the link: an anonymous page never calls Meta |
 | The token | `secrets.token_urlsafe(32)` (43 characters, 256 bits): not guessable, not enumerable. Stored as is, not hashed, so the campaign page can show the link again and the person can revoke it by its address; a copy of the database already holds everything a link shows, so hashing would protect nothing here. The route patterns keep tokens out of the request log (`/r/{param}`) |
-| Lifetime | 30 days (`report.LINK_DAYS`) from creation, then 404. Not renewable: a new link is made instead |
+| Lifetime | 5 days (`report.LINK_DAYS`) from creation, then 404: long enough for the client to open it the week it was sent, short enough that a forwarded link goes dead soon. Not renewable: a new link is made instead |
 | Revoking | From the campaign page ("Links do relatório": period, metrics, who made it, until when, **Revogar**). A revoked link is a 404 from then on; the row stays as history |
 | One link per card | Asking for a link to the same campaign, period and metrics while one is still live returns that one, so a report shared twice has one address and one Revogar |
 | The period is fixed | A link holds `since` and `until` as dates. "Este mês" on 4 November becomes 1–4 November for good: the client sees the report that was sent, not a page that keeps moving |
@@ -45,7 +47,7 @@ only what the card shows.
 
 ## What a link exposes, and for how long
 
-Anyone holding the address, for 30 days or until it is revoked, sees: the campaign's name,
+Anyone holding the address, for 5 days or until it is revoked, sees: the campaign's name,
 the client's name, the period, the campaign's state, the values of the chosen metrics
 (money included, when "Valor gasto", "Custo por resultado", "Custo por clique no link" or
 "Custo por mil impressões" were chosen) with their daily bars, the date of Meta's numbers
@@ -58,7 +60,7 @@ token or the address.
 ## Consequences
 
 - Decision 2's "there is no public view" becomes "there is one, by token, read-only, for
-  30 days": the server's docstring and decision 2 say so.
+  5 days": the server's docstring and decision 2 say so.
 - Schema v14 is additive (`CREATE TABLE IF NOT EXISTS`): a 1.8 release runs on it.
 - Two more open routes to keep in `test_security_headers_everywhere`'s spirit: every
   response still carries `noindex`, the CSP and `Referrer-Policy: same-origin`.
@@ -78,7 +80,7 @@ token or the address.
 - **A link that follows the period** ("this month", always current). Convenient, but the
   report then changes after it was sent and the client may be looking at numbers nobody on
   the team has seen; and a link that never goes stale needs a longer lifetime. Fixed dates,
-  30 days.
+  5 days.
 - **Hashing the token** as invites are. Invites create accounts; a hashed token could not
   be shown again or listed with its address, and a database copy already contains the
   card's data. Not worth the loss.

@@ -7,6 +7,12 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **O link do relatório vale 5 dias, não 30.** Tempo de sobra para o cliente abrir na semana
+  em que recebeu, e um link repassado adiante morre logo. Os links já criados na 1.8.2
+  continuam com a validade que tinham. Decisão 12 atualizada.
+
 ## [1.8.2] - 2026-11-05
 
 ### Added

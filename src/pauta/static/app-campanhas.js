@@ -563,7 +563,7 @@ function linksPanel(links) {
       ${l.live ? `<button type="button" class="btn small" data-revoke="${esc(l.token)}">Revogar</button>` : ""}
     </li>`;
   };
-  return `<div class="panel-head"><h3>Links do relatório</h3><span class="muted small">abrem sem conta, por 30 dias</span></div>
+  return `<div class="panel-head"><h3>Links do relatório</h3><span class="muted small">abrem sem conta, por 5 dias</span></div>
     <ul class="linklist">${links.map(row).join("")}</ul>`;
 }
 
@@ -688,7 +688,7 @@ async function viewReport(query, id) {
     return link;
   }
   const image = `<button class="btn primary" id="copyimg">${icon("image")}Copiar imagem</button>`;
-  const copy = `<button class="btn" id="copylink" title="Um endereço do relatório que abre sem conta, por 30 dias">${icon("link")}Copiar link</button>`;
+  const copy = `<button class="btn" id="copylink" title="Um endereço do relatório que abre sem conta, por 5 dias">${icon("link")}Copiar link</button>`;
   const share = wa
     ? `<a class="btn" id="share" href="${esc(waHref())}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
     : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;

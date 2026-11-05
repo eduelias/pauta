@@ -77,7 +77,7 @@ def test_schema_v14_gains_the_report_link_table(tmp_path):
     }
 
 
-def test_a_link_is_long_random_and_live_for_30_days(store, campaign):
+def test_a_link_is_long_random_and_live_for_5_days(store, campaign):
     link = store.create_report_link(
         campaign, "2026-10-10", "2026-10-12", ["results", "spend"], by=None, reach=240
     )
@@ -88,7 +88,7 @@ def test_a_link_is_long_random_and_live_for_30_days(store, campaign):
     assert link["created_by"] is None and link["by_name"] is None
     assert len(link["created"]) == 19 and len(link["expires"]) == 19
     created, expires = link["created"][:10], link["expires"][:10]
-    assert date.fromisoformat(expires) - date.fromisoformat(created) == timedelta(days=30)
+    assert date.fromisoformat(expires) - date.fromisoformat(created) == timedelta(days=5)
     assert store.report_link(link["token"]) == link
     assert store.report_link("nobody-made-this-one-at-all-0123456789") is None
     # two links are two tokens
