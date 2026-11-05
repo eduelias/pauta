@@ -77,7 +77,7 @@ def test_schema_v14_gains_the_report_link_table(tmp_path):
     }
 
 
-def test_a_link_is_long_random_and_live_for_30_days(store, campaign):
+def test_a_link_is_long_random_and_live_for_5_days(store, campaign):
     link = store.create_report_link(
         campaign, "2026-10-10", "2026-10-12", ["results", "spend"], by=None, reach=240
     )
