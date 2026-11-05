@@ -254,7 +254,7 @@ def install(route, store, auth, drive, meta):
     @route("POST", f"/api/campaigns/{ID}/links")
     def make_report_link(self, viewer, body, cid):
         """A public address for the report card as it is on screen: `since`, `until` and
-        the `metrics` shown, fixed. Opens for 30 days without an account, then 404; a live
+        the `metrics` shown, fixed. Opens for 5 days without an account, then 404; a live
         link for the same card is returned again instead of a second one. The period's
         reach is read from Meta now and kept with the link (the public page never asks
         Meta). Answers the row with `url` and `expires`."""
@@ -321,7 +321,7 @@ def install(route, store, auth, drive, meta):
         n = len(link["metrics"])
         description = (
             f"{n} {'métrica' if n == 1 else 'métricas'} da campanha, com os dados da Meta, "
-            "preparado na Pauta. O link vale por 30 dias."
+            "preparado na Pauta. O link vale por 5 dias."
         )
         fill = {
             "{{title}}": title,

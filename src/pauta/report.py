@@ -15,7 +15,7 @@ from datetime import date
 
 from .db import Invalid
 
-LINK_DAYS = 30  # a link opens for this long, then it is a 404
+LINK_DAYS = 5  # a link opens for this long, then it is a 404
 
 MAX_METRICS = 12  # the card's limit (REPORT_TILE_MAX in app-campanhas.js)
 

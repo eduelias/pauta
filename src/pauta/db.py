@@ -1308,7 +1308,7 @@ class Store:
         metrics: list[str],
         by: int | None,
         reach: int | None = None,
-        days: int = 30,
+        days: int = 5,
     ) -> dict:
         """A public address for one campaign's report card: the period and the metrics
         fixed, open for `days` days, with the period's reach (from Meta, read now: the
