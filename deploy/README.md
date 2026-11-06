@@ -18,6 +18,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 | Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
 | DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
 | Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
+| Thumbnail cache | `~/.local/share/pauta/pauta.db.thumbs/<file id>.<item digest>.<type>`: a file's OneDrive thumbnail, fetched once. A cache: not backed up, safe to delete wholesale (the next view fetches again); clear it when restoring a backup |
 | Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
@@ -107,7 +108,7 @@ database (the `passkey.rp_id` column is additive) and the old address still work
 
 Schema changes are additive (new tables and columns), so an older release runs on a newer
 database. If one ever isn't, restore the matching file from `~/backups/pauta/pre-deploy`
-(stop `pauta`, copy it over `~/.local/share/pauta/pauta.db`, start `pauta`).
+(stop `pauta`, copy it over `~/.local/share/pauta/pauta.db`, remove `pauta.db.thumbs/`, start `pauta`).
 
 ## Acceptance: trying a branch
 

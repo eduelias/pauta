@@ -41,7 +41,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 
 from . import obs
-from .db import Store
+from .db import CAMPAIGN_STATES, Store
 from .meta import DEFAULT_PERIOD_DAYS, LEGACY, NOT_CONNECTED, Meta, MetaError, local_today
 
 HOURLY_DAYS = 2
@@ -217,9 +217,9 @@ def _warm_reach(store: Store, meta: Meta, accounts: list[dict], today: date | No
     day = today or local_today(accounts[0].get("timezone_name") or "")
     until = day - timedelta(days=1)
     since = until - timedelta(days=DEFAULT_PERIOD_DAYS - 1)
-    pairs = [
+    pairs = [  # every state: the "include skipped" view asks for the skipped ones too
         (k["account_id"], k["meta_id"])
-        for c in store.campaign_rows(since.isoformat(), until.isoformat())
+        for c in store.campaign_rows(since.isoformat(), until.isoformat(), CAMPAIGN_STATES)
         for k in c["campaigns"]
         if k["meta_id"] and k["account_id"]
     ]

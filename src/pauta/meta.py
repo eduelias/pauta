@@ -1104,6 +1104,7 @@ class Meta:
         out: dict[str, int] = {}
         todo: list[str] = []
         behind: list[str] = []  # answered from an old read: Meta is asked again behind
+        kept: dict[str, int] = {}  # ...those old answers
         with self._lock:
             for aid, ids in by_account.items():
                 hit = self._reach.get((aid, since, until))
@@ -1111,19 +1112,21 @@ class Meta:
                     todo.append(aid)
                     continue
                 age = now - hit[0]
-                if age < REACH_SECONDS or (stale and age < REACH_STALE_SECONDS):
+                if age < REACH_SECONDS:
                     out.update({m: hit[1][m] for m in ids if hit[1][m] is not None})
-                    if age >= REACH_SECONDS:
-                        behind.append(aid)
+                elif stale and age < REACH_STALE_SECONDS:
+                    kept.update({m: hit[1][m] for m in ids if hit[1][m] is not None})
+                    behind.append(aid)
                 else:
                     todo.append(aid)
         if not todo:
             if behind:
+                out.update(kept)
                 self._refresh_reach_soon(
                     [(a, m) for a, m in pairs if _digits(a) in behind], since, until, today
                 )
             return out
-        todo += behind  # Meta is asked anyway: the old answers come back fresh in one go
+        todo += behind  # Meta is asked anyway: the old answers are read fresh in one go
         by_business: dict[str, list[str]] = {}
         for aid in todo:
             try:
