@@ -6,7 +6,7 @@ handlers are plain functions taking the request handler as `self`. What the area
 
 from __future__ import annotations
 
-from ..meta import ACCOUNT_STATUS
+from ..meta import ACCOUNT_STATUS, DEFAULT_PERIOD_DAYS  # noqa: F401  (routes import it here)
 
 ID = r"(\d{1,9})"
 
@@ -20,8 +20,6 @@ SENT = object()  # a route that wrote its own response (a redirect, an image)
 META_DOWN = "os números da Meta estão indisponíveis no momento"
 
 MAX_PERIOD_DAYS = 400  # /api/campaigns refuses a longer range
-
-DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default: "Últimos 30 dias", yesterday back
 
 
 def _stale(row: dict, names: dict[str, str] | None = None) -> dict:

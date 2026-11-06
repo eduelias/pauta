@@ -134,7 +134,9 @@ OBJECTIVE_RESULTS = {
 # "today" is the ad account's day, not the server's (du7 runs on CET; Piero's accounts are
 # in São Paulo): the team's default when an account doesn't say, PAUTA_TZ overrides it
 DEFAULT_TZ = "America/Sao_Paulo"
-REACH_SECONDS = 3600  # a period's reach per campaign is kept this long
+DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default period: "Últimos 30 dias", yesterday back
+REACH_SECONDS = 3600  # a period's reach per campaign is answered from memory this long...
+REACH_STALE_SECONDS = 24 * 3600  # ...and, while Meta is read again behind it, up to this long
 HISTORY_MONTHS = 37  # Meta keeps this much insight history
 MAX_PAGES = 200  # paging stops here whatever Meta says: never loop forever
 LEGACY = "legacy"  # the business "id" of a pre-connection token file without one
@@ -327,6 +329,8 @@ class Meta:
         self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
         self.sync_error = ""  # what the last sync ran into, "" when it went well
         self._reach: dict[tuple, tuple[float, dict[str, int]]] = {}
+        self._reach_reading = threading.Lock()  # one reach read behind a page at a time
+        self._reach_failed = 0.0  # when a read behind a page last failed (not retried for a minute)
         # account id -> business id, from the last read; the server seeds it from the DB
         self.business_of: dict[str, str] = {}
         # linked accounts the sync's last placing read could not put under a connection
@@ -1075,12 +1079,21 @@ class Meta:
         return out
 
     def reach(
-        self, pairs: list[tuple[str, str]], since: date, until: date, today: date | None = None
+        self,
+        pairs: list[tuple[str, str]],
+        since: date,
+        until: date,
+        today: date | None = None,
+        stale: bool = True,
     ) -> dict[str, int]:
         """The period's reach per campaign ({meta_id: people}) for (account_id, meta_id)
-        pairs: one batched read per account, with its portfolio's token, kept for an hour per
-        (account, period). Reach doesn't add over days, so this is the only honest period
-        number. A campaign Meta says nothing about is left out (the caller shows a dash)."""
+        pairs: one batched read per account, with its portfolio's token, answered from
+        memory for an hour per (account, period). After the hour the last numbers answer
+        at once (up to a day old) while Meta is read again on a thread of its own, so the
+        page never waits for a read it already had once; `stale=False` (the hourly sync, a
+        refresh) waits for Meta. Reach doesn't add over days, so this is the only honest
+        period number. A campaign Meta says nothing about is left out (the caller shows
+        a dash)."""
         since = clamp_since(since, today)
         if since > until or not pairs:
             return {}
@@ -1090,15 +1103,30 @@ class Meta:
         now = time.time()
         out: dict[str, int] = {}
         todo: list[str] = []
+        behind: list[str] = []  # answered from an old read: Meta is asked again behind
+        kept: dict[str, int] = {}  # ...those old answers
         with self._lock:
             for aid, ids in by_account.items():
                 hit = self._reach.get((aid, since, until))
-                if hit and now - hit[0] < REACH_SECONDS and all(m in hit[1] for m in ids):
+                if not hit or not all(m in hit[1] for m in ids):
+                    todo.append(aid)
+                    continue
+                age = now - hit[0]
+                if age < REACH_SECONDS:
                     out.update({m: hit[1][m] for m in ids if hit[1][m] is not None})
+                elif stale and age < REACH_STALE_SECONDS:
+                    kept.update({m: hit[1][m] for m in ids if hit[1][m] is not None})
+                    behind.append(aid)
                 else:
                     todo.append(aid)
         if not todo:
+            if behind:
+                out.update(kept)
+                self._refresh_reach_soon(
+                    [(a, m) for a, m in pairs if _digits(a) in behind], since, until, today
+                )
             return out
+        todo += behind  # Meta is asked anyway: the old answers are read fresh in one go
         by_business: dict[str, list[str]] = {}
         for aid in todo:
             try:
@@ -1142,8 +1170,35 @@ class Meta:
                         got[mid] = _int(r.get("reach"))
                 with self._lock:
                     self._reach = {
-                        k: v for k, v in self._reach.items() if now - v[0] < REACH_SECONDS
+                        k: v for k, v in self._reach.items() if now - v[0] < REACH_STALE_SECONDS
                     }
                     self._reach[(aid, since, until)] = (now, got)
                 out.update({m: v for m, v in got.items() if v is not None})
         return out
+
+    def _refresh_reach_soon(
+        self, pairs: list[tuple[str, str]], since: date, until: date, today: date | None
+    ) -> None:
+        """Read the period's reach again on a thread of its own, unless one is already
+        under way or the last one failed a moment ago (the old numbers stand meanwhile)."""
+        if time.time() - self._reach_failed < FAIL_SECONDS:
+            return
+        if not self._reach_reading.acquire(blocking=False):
+            return
+
+        def work():
+            try:
+                self.reach(pairs, since, until, today=today, stale=False)
+            except MetaError:
+                self._reach_failed = time.time()  # the next page after a minute tries again
+            except Exception:
+                obs.event("meta_reach_failed", logging.ERROR)
+                logging.getLogger("pauta").exception("reach read failed behind a page")
+            finally:
+                self._reach_reading.release()
+
+        try:
+            threading.Thread(target=work, name="meta-reach", daemon=True).start()
+        except RuntimeError:  # no thread to be had: the old numbers stand, nothing waits
+            self._reach_reading.release()
+            obs.event("meta_read_thread_failed", logging.ERROR)

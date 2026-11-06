@@ -3,6 +3,7 @@
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -167,3 +168,32 @@ def test_metrics_report_the_connection(filed, drive):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
         return None
+
+
+def test_a_thumbnail_is_fetched_from_onedrive_once(filed, fake, store):
+    base, nato, _ = filed
+    f = upload(base, 1, "foto.png", b"\x89PNG-bytes", nato)[1]
+    status, body, headers = get(f"{base}/api/files/{f['id']}/thumb", nato)
+    assert status == 200 and headers["Content-Type"] == "image/png"
+    thumbs = Path(f"{store.path}.thumbs")
+    kept = next(thumbs.glob(f"{f['id']}.*"))
+    assert kept.read_bytes() == body and kept.suffix == ".png"
+    fake.down = True  # OneDrive is not asked again
+    assert get(f"{base}/api/files/{f['id']}/thumb", nato)[1] == body
+    fake.down = False
+    req = urllib.request.Request(
+        f"{base}/api/files/{f['id']}", headers={"Cookie": nato}, method="DELETE"
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200
+    assert not kept.exists()
+    # SQLite hands the deleted file's id to the next upload: it gets its own thumbnail,
+    # never the old picture, even when the old one is still on disk
+    kept.write_bytes(body)
+    g = upload(base, 1, "outra.png", b"\x89PNG-other", nato)[1]
+    assert g["id"] == f["id"]
+    fake.down = True  # the old picture is not it: OneDrive is asked for the new file's
+    assert get(f"{base}/api/files/{g['id']}/thumb", nato)[0] != 200
+    fake.down = False
+    assert get(f"{base}/api/files/{g['id']}/thumb", nato)[0] == 200
+    assert len(list(thumbs.glob(f"{g['id']}.*"))) == 2 and not list(thumbs.glob(".*.tmp"))

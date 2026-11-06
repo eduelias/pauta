@@ -41,8 +41,8 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 
 from . import obs
-from .db import Store
-from .meta import LEGACY, NOT_CONNECTED, Meta, MetaError, local_today
+from .db import CAMPAIGN_STATES, Store
+from .meta import DEFAULT_PERIOD_DAYS, LEGACY, NOT_CONNECTED, Meta, MetaError, local_today
 
 HOURLY_DAYS = 2
 NIGHTLY_DAYS = 28
@@ -171,6 +171,8 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
     if placed or not unplaced:  # a failed read decides nothing: the next pass reads again
         meta.orphans = frozenset(a["id"] for a in unplaced)
     out["linked"] = store.link_requests_to_campaigns()
+    if not throttled:
+        _warm_reach(store, meta, accounts, today)
     error = first_error
     meta.last_sync, meta.sync_error = fetched, error
     store.set_sync_state(fetched, error)
@@ -202,6 +204,29 @@ def _linked(store: Store, meta: Meta, conns: list[dict]) -> tuple[list[dict], bo
         obs.event("meta_sync_accounts_read_failed", logging.WARNING, status=e.status)
         return [a for a in store.meta_accounts() if a["client"]], False
     return [a for a in store.meta_accounts() if a["client"]], True
+
+
+def _warm_reach(store: Store, meta: Meta, accounts: list[dict], today: date | None) -> None:
+    """Campanhas' default period (the last 30 days, yesterday back) answers its reach per
+    campaign from memory after the pass: read here, once an hour, like the account list.
+    Another period, or a first visit before any pass, reads on the page (then from memory
+    for an hour, and after that the old numbers answer while Meta is read behind). A
+    failed read is the next pass's to retry: never the pass's error."""
+    if not accounts:
+        return
+    day = today or local_today(accounts[0].get("timezone_name") or "")
+    until = day - timedelta(days=1)
+    since = until - timedelta(days=DEFAULT_PERIOD_DAYS - 1)
+    pairs = [  # every state: the "include skipped" view asks for the skipped ones too
+        (k["account_id"], k["meta_id"])
+        for c in store.campaign_rows(since.isoformat(), until.isoformat(), CAMPAIGN_STATES)
+        for k in c["campaigns"]
+        if k["meta_id"] and k["account_id"]
+    ]
+    try:
+        meta.reach(pairs, since, until, today=day, stale=False)
+    except MetaError as e:
+        obs.event("meta_sync_reach_read_failed", logging.WARNING, status=e.status)
 
 
 def _business(account: dict, meta: Meta, conns: list[dict]) -> str:

@@ -556,3 +556,24 @@ def test_scheduler_tick_waits_when_a_manual_pass_runs(team, caplog):
     thread.join(timeout=30)
     assert s.tick()["accounts"] == 2  # the next tick runs it (the nightly, here)
     assert s.last_hourly == now and s.last_nightly == now
+
+
+def test_the_hourly_pass_keeps_the_default_period_reach_warm(team):
+    """Campanhas' default period (30 days, yesterday back) answers its reach from memory
+    after the pass: the pass reads it itself; another period still reads on the page."""
+    store, meta, fake, *_ = team
+    sync.run(store, meta, days=2, today=TODAY)
+    until = TODAY - timedelta(days=1)
+    since = until - timedelta(days=meta_mod.DEFAULT_PERIOD_DAYS - 1)
+    assert any(k[1:] == (since, until) for k in meta._reach)
+    n = fake.calls.count("POST /")
+    pairs = [
+        (k["account_id"], k["meta_id"])
+        for c in store.campaign_rows(since.isoformat(), until.isoformat())
+        for k in c["campaigns"]
+    ]
+    assert pairs
+    meta.reach(pairs, since, until, today=TODAY)
+    assert fake.calls.count("POST /") == n  # the pass just read it
+    meta.reach(pairs, since - timedelta(days=1), until, today=TODAY)
+    assert fake.calls.count("POST /") == n + 1
