@@ -7,6 +7,18 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Campanhas abre na hora também depois de uma hora parada.** O alcance de cada campanha
+  vem da Meta e valia uma hora; a primeira visita depois disso esperava de três a cinco
+  segundos pela leitura, portfólio por portfólio. Agora os números anteriores aparecem de
+  imediato (até um dia de idade) enquanto a Meta é lida de novo por trás, e a sincronização
+  de hora em hora já lê o alcance do período padrão (últimos 30 dias). **Atualizar** continua
+  pedindo à Meta na hora.
+- **As miniaturas dos arquivos abrem na hora.** Cada miniatura era pedida ao OneDrive a cada
+  vez (duas idas, um a três segundos). Agora é guardada ao lado do banco na primeira vez e
+  servida dali depois, em qualquer aparelho; some junto com o arquivo.
+
 ## [1.8.3] - 2026-11-05
 
 ### Changed

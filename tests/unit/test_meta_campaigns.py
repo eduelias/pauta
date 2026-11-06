@@ -5,6 +5,7 @@ campaign ids), the period's reach with its hour-long cache, the account's day, a
 error mapping."""
 
 import logging
+import time
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -295,3 +296,71 @@ def test_errors_map_like_the_other_reads(linked, fake_meta):
     with pytest.raises(MetaError) as e:
         off.campaigns("111")
     assert e.value.status == 409
+
+
+def _reach_settles(meta, seconds: float = 3.0) -> None:
+    """Until the read behind a page has let go of its lock."""
+    end = time.monotonic() + seconds
+    while meta._reach_reading.locked() and time.monotonic() < end:
+        time.sleep(0.01)
+    assert not meta._reach_reading.locked()
+
+
+def test_after_an_hour_the_last_reach_answers_while_meta_is_read_again(linked, fake_meta):
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001"), ("222", "23850004")]
+    out = linked.reach(pairs, since, until, today=TODAY)
+    assert fake_meta.calls.count("POST /") == 1
+    for key in list(linked._reach):
+        linked._reach[key] = (linked._reach[key][0] - 3601, linked._reach[key][1])
+    old = {k: v[0] for k, v in linked._reach.items()}
+    fake_meta.hold()
+    assert linked.reach(pairs, since, until, today=TODAY) == out  # at once, from the old read
+    assert linked._reach_reading.locked()  # ...and Meta is being asked behind it
+    assert linked.reach(pairs, since, until, today=TODAY) == out  # a second page: no second thread
+    fake_meta.held.wait(2)
+    fake_meta.release()
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == 2
+    assert all(v[0] > old[k] for k, v in linked._reach.items())  # the numbers are fresh again
+    assert linked.reach(pairs, since, until, today=TODAY) == out
+    assert fake_meta.calls.count("POST /") == 2
+    # older than a day: nothing to answer from, the page waits for Meta
+    for key in list(linked._reach):
+        linked._reach[key] = (
+            linked._reach[key][0] - meta_mod.REACH_STALE_SECONDS,
+            linked._reach[key][1],
+        )
+    assert linked.reach(pairs, since, until, today=TODAY) == out
+    assert fake_meta.calls.count("POST /") == 3 and not linked._reach_reading.locked()
+
+
+def test_the_sync_waits_for_fresh_reach(linked, fake_meta):
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001")]
+    linked.reach(pairs, since, until, today=TODAY)
+    for key in list(linked._reach):
+        linked._reach[key] = (linked._reach[key][0] - 3601, linked._reach[key][1])
+    assert linked.reach(pairs, since, until, today=TODAY, stale=False) == {"23850001": 500 * 11}
+    assert fake_meta.calls.count("POST /") == 2 and not linked._reach_reading.locked()
+
+
+def test_a_reach_read_failing_behind_the_page_keeps_the_numbers(linked, fake_meta):
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001")]
+    out = linked.reach(pairs, since, until, today=TODAY)
+    for key in list(linked._reach):
+        linked._reach[key] = (linked._reach[key][0] - 3601, linked._reach[key][1])
+    fake_meta.down = True
+    assert linked.reach(pairs, since, until, today=TODAY) == out
+    _reach_settles(linked)
+    assert linked._reach_failed > 0
+    n = fake_meta.calls.count("POST /")
+    assert linked.reach(pairs, since, until, today=TODAY) == out  # not retried for a minute
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == n
+    fake_meta.down = False
+    linked._reach_failed -= meta_mod.FAIL_SECONDS + 1
+    assert linked.reach(pairs, since, until, today=TODAY) == out
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == n + 1

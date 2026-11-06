@@ -3,6 +3,7 @@
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -167,3 +168,21 @@ def test_metrics_report_the_connection(filed, drive):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):
         return None
+
+
+def test_a_thumbnail_is_fetched_from_onedrive_once(filed, fake, store):
+    base, nato, _ = filed
+    f = upload(base, 1, "foto.png", b"\x89PNG-bytes", nato)[1]
+    status, body, headers = get(f"{base}/api/files/{f['id']}/thumb", nato)
+    assert status == 200 and headers["Content-Type"] == "image/png"
+    kept = Path(f"{store.path}.thumbs") / f"{f['id']}.png"
+    assert kept.read_bytes() == body
+    fake.down = True  # OneDrive is not asked again
+    assert get(f"{base}/api/files/{f['id']}/thumb", nato)[1] == body
+    fake.down = False
+    req = urllib.request.Request(
+        f"{base}/api/files/{f['id']}", headers={"Cookie": nato}, method="DELETE"
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200
+    assert not kept.exists()
