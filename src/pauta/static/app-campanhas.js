@@ -256,6 +256,8 @@ async function viewCampaigns(query) {
   const checkable = doc.clients.filter((c) => c.campaigns.length);
   const clients = [...checkable.filter((c) => !c.seen_today), ...checkable.filter((c) => c.seen_today), ...doc.clients.filter((c) => !c.campaigns.length)];
   const seen = doc.seen || { done: 0, total: checkable.length };
+  // "Visto hoje: todos" while a client with a live campaign is still to see today
+  const toSee = checkable.filter((c) => !c.seen_today && c.campaigns.some((k) => k.state === "active"));
   const seenBox = (c) => c.seen_today
     ? `<span class="seen" title="${esc(c.seen_today.at ? `às ${stamp(c.seen_today.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "")}">${icon("check")}visto hoje${c.seen_today.by ? ` por ${esc(firstName(c.seen_today.by))}` : ""}</span>`
     : `<span class="row-gap"><button class="btn small" data-seen="${c.id}" data-name="${esc(c.name)}">${icon("check")}Visto hoje</button><button class="btn ghost small icon-only" data-seen="${c.id}" data-name="${esc(c.name)}" data-note="1" title="Visto hoje, com uma nota" aria-label="Visto hoje, com uma nota">${icon("msg")}</button></span>`;
@@ -287,7 +289,7 @@ async function viewCampaigns(query) {
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
-    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
+    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${toSee.length ? `<button class="btn small" id="seenall" title="Marca visto hoje em todos os clientes com campanha ativa que ainda não foram vistos">${icon("check")}Visto hoje: todos</button>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
@@ -313,6 +315,18 @@ async function viewCampaigns(query) {
       if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
       if (done === SYNC_LOST) { toast(SYNC_UNFINISHED, true); btn.disabled = false; return; }
       toast(done.sync_error ? `Sincronização com problema: ${done.sync_error}` : "Dados da Meta atualizados", Boolean(done.sync_error));
+      redraw();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
+  $("#seenall")?.addEventListener("click", async (e) => {
+    // every client with a live campaign not yet seen today, in one request; the per-client
+    // button and its note stay for the day someone has something to say about one client
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const out = await api("POST", "/api/reviews/today", {});
+      track("seen_today", { n: out.clients });
+      toast(out.clients ? `${out.clients} ${out.clients === 1 ? "cliente visto" : "clientes vistos"} hoje` : "Todos já estavam vistos hoje");
       redraw();
     } catch (err) { toast(err.message, true); btn.disabled = false; }
   });

@@ -376,6 +376,37 @@ def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
     assert status == 400 and "campanha ativa" in out["error"]
 
 
+def test_visto_hoje_todos_marks_every_client_not_yet_seen(team, fake_meta):
+    """Piero marked seven clients one by one in thirty seconds: one request marks every
+    client with an active campaign that nobody has seen today, a review per campaign
+    with the same snapshot as the per-client button; the ones already seen are left
+    alone, and a second tap marks nothing (not an error)."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    clinic, bakery = doc["clients"]
+    # the clinic was seen by hand first, with a note
+    call(f"{base}/api/clients/{clinic['id']}/reviews", {"note": "subi a verba"}, piero)
+    status, out, _ = call(f"{base}/api/reviews/today", {}, piero)
+    assert status == 200, out
+    assert out == {"clients": 1, "campaigns": 1, "seen": {"done": 2, "total": 2}}
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["seen"] == {"done": 2, "total": 2}
+    assert [c["seen_today"]["by"] for c in doc["clients"]] == ["Piero", "Piero"]
+    today = today_in_sao_paulo().isoformat()
+    reviews = call(f"{base}/api/export", cookie=nato)[1]["review"]
+    assert len(reviews) == 3 and {r["on"] for r in reviews} == {today}
+    assert [r["note"] for r in reviews] == ["subi a verba", "subi a verba", ""]
+    snap = json.loads(reviews[-1]["snapshot"])
+    assert snap["since"] == today[:8] + "01" and snap["until"] == today
+    assert {"spend_cents", "results", "reach", "impressions", "cpl_cents"} <= set(snap)
+    assert bakery["id"] == [c["id"] for c in doc["clients"]][1]
+    # everyone seen: a second tap marks nothing
+    status, out, _ = call(f"{base}/api/reviews/today", {}, piero)
+    assert status == 200 and out == {"clients": 0, "campaigns": 0, "seen": {"done": 2, "total": 2}}
+    assert len(call(f"{base}/api/export", cookie=nato)[1]["review"]) == 3
+    assert call(f"{base}/api/reviews/today", {})[0] == 401
+
+
 def test_today_is_the_ad_accounts_day(team, fake_meta, monkeypatch):
     """A frozen clock at 2026-11-01 01:30 CET (00:30 UTC): still 31 Oct in São Paulo, where
     the accounts are. The default range, `today_included` and the review's date follow

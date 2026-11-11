@@ -638,6 +638,7 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .synced { margin: 0 0 18px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
 .synced b { font-size: 14px; }
 .synced b.alldone { color: var(--s-done); }
+.synced .btn.small { height: 30px; padding: 0 10px; font-size: 13px; align-self: center; }
 .cblock .panel-head { flex-wrap: wrap; }
 .cblock .panel-head h2 { flex-wrap: wrap; }
 .cblock .panel-head h2 a { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }

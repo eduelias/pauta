@@ -355,6 +355,26 @@ def test_visto_hoje(synced):
     assert notes == ["", "", "subi a verba"]  # the clinic's two campaigns, then the bakery's
 
 
+def test_visto_hoje_todos(synced):
+    """One tap at the top marks every client still to see; the per-client button and the
+    note icon stay for the clients not yet seen, and the button goes once everyone is."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 0 de 2 clientes vistos")
+    expect(page.locator(".cblock").first.locator("[data-note]")).to_be_visible()
+    page.get_by_role("button", name="Visto hoje: todos").click()
+    expect(page.locator("#toast")).to_have_text("2 clientes vistos hoje")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 2 de 2 clientes vistos")
+    expect(page.locator("#seenline")).to_have_class(re.compile(r"alldone"))
+    expect(page.get_by_role("button", name="Visto hoje: todos")).to_have_count(0)
+    expect(page.get_by_role("button", name="Visto hoje", exact=True)).to_have_count(0)
+    expect(page.locator(".cblock .seen")).to_have_count(2)
+    with store.db() as db:
+        rows = [tuple(r) for r in db.execute('SELECT campaign, "on", note FROM review ORDER BY id')]
+    assert len(rows) == 3 and {r[2] for r in rows} == {""}  # the clinic's two, the bakery's one
+
+
 def test_client_with_a_linked_account_and_no_campaigns(live, device, meta, fake_meta):
     """A client whose linked account holds no campaign (Piero's second portfolio) is on the
     list, last, saying so with the account's name and balance and without Visto hoje; the

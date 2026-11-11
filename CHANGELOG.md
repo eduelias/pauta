@@ -7,6 +7,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Visto hoje: todos.** Em Campanhas, um botão no alto marca de uma vez todos os clientes
+  com campanha ativa que ainda não foram vistos hoje (antes, marcava-se um por um, sete toques
+  em trinta segundos). O botão de cada cliente e o ícone da nota continuam lá, para o dia em
+  que há algo a dizer sobre um cliente. API: `POST /api/reviews/today` (nota opcional).
+
 ### Changed
 
 - **O WhatsApp do cliente ficou em destaque no cadastro.** Só 1 de 12 clientes tinha o
