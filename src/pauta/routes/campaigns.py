@@ -369,6 +369,15 @@ def install(route, store, auth, drive, meta):
 
     @route("PATCH", f"/api/campaigns/{ID}")
     def campaign_state(self, viewer, body, cid):
+        """`state` (Não acompanhar / Acompanhar) for anyone on the team; `request` (the
+        request this campaign came from, or null) for admins: the chooser shown when a
+        "Criar campanha" request is marked done, for a campaign of the same client."""
+        if "request" in body:
+            if not viewer["is_admin"]:
+                raise Reply(403, {"error": "só para administradores"})
+            out = store.link_campaign_request(int(cid), body["request"], viewer["account"])
+            if "state" not in body:
+                return out
         return store.set_campaign_state(int(cid), body.get("state"), viewer["account"])
 
     @route("POST", "/api/meta/sync", "admin")

@@ -13,6 +13,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   com campanha ativa que ainda não foram vistos hoje (antes, marcava-se um por um, sete toques
   em trinta segundos). O botão de cada cliente e o ícone da nota continuam lá, para o dia em
   que há algo a dizer sobre um cliente. API: `POST /api/reviews/today` (nota opcional).
+- **O pedido fica ligado à campanha que ele criou.** Nenhuma das 13 campanhas tinha pedido
+  e só 1 de 16 pedidos tinha o link do Gerenciador, então a Pauta não conseguia ligar os
+  dois sozinha. Agora, quando um pedido de **Criar campanha** (ou Reativar) vai para
+  Concluído, no quadro ou na página, aparece a pergunta "Qual campanha o pedido criou?" com
+  as campanhas do cliente que começaram nos últimos 7 dias e ainda não têm pedido,
+  **Nenhuma** por padrão. Escolhendo uma, a página da campanha mostra "Pedido #n" e o
+  histórico do pedido diz qual campanha. Só administradores; nada aparece quando não há
+  campanha candidata. API: `PATCH /api/campaigns/{id}` com `{"request": id}` (ou null).
 
 ### Changed
 

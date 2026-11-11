@@ -101,6 +101,7 @@ async function viewBoard() {
         track("request_status", { from: r.status, to: status, via: "board" });
         toast(`#${id} → ${STATUS()[status]}`);
         viewBoard();
+        if (status === "done") offerCampaignLink(r);  // which campaign did it create?
       } catch (err) { toast(err.message, true); }
     });
   });
@@ -436,7 +437,15 @@ async function viewRequest(_q, id) {
       toast(`Status: ${STATUS()[b.dataset.v]}`);
     }
     const from = r.status;
-    save({ [f]: b.dataset.v }).then((ok) => { if (ok && f === "status") track("request_status", { from, to: b.dataset.v, via: "page" }); });
+    save({ [f]: b.dataset.v }).then((ok) => {
+      if (!ok || f !== "status") return;
+      track("request_status", { from, to: b.dataset.v, via: "page" });
+      // which campaign did it create? The timeline then says so, if the page is still up
+      if (b.dataset.v === "done") offerCampaignLink(r, async () => {
+        const fresh = await api("GET", `/api/requests/${r.id}`);
+        if ($("#tl")) { r = fresh; $("#tl").innerHTML = timeline(r); }
+      });
+    });
   }));
   const autosize = (t) => { t.style.height = "auto"; t.style.height = t.scrollHeight + 2 + "px"; };
   $$("textarea.input").forEach((t) => { autosize(t); t.addEventListener("input", () => autosize(t)); });

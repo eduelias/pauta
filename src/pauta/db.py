@@ -1265,6 +1265,43 @@ class Store:
         obs.event("campaign_state", account=by, campaign=cid, state=state)
         return self.campaign(cid)
 
+    def link_campaign_request(self, cid: int, rid, by: int | None = None) -> dict:
+        """The request a campaign came from, set by hand (the chooser when a "Criar
+        campanha" request is marked done): `rid` must be a request of the campaign's
+        client, not linked to another campaign; None unlinks. The request's timeline
+        says so (the same `campaign` event the sync writes)."""
+        if rid is not None and not (isinstance(rid, int) and not isinstance(rid, bool)):
+            raise Invalid("pedido inválido")
+        with self.db() as db:
+            k = db.execute(
+                "SELECT client, meta_id, request FROM campaign WHERE id=?", (cid,)
+            ).fetchone()
+            if not k:
+                raise NotFound("campanha não encontrada")
+            if rid is not None:
+                r = db.execute("SELECT client FROM request WHERE id=?", (rid,)).fetchone()
+                if not r:
+                    raise NotFound("pedido não encontrado")
+                if r["client"] != k["client"]:
+                    raise Invalid("o pedido é de outro cliente")
+                taken = db.execute(
+                    "SELECT id FROM campaign WHERE request=? AND id<>?", (rid, cid)
+                ).fetchone()
+                if taken:
+                    raise Invalid("esse pedido já está vinculado a outra campanha")
+            if k["request"] == rid:
+                return self.campaign(cid)
+            db.execute(
+                "UPDATE campaign SET request=?, updated=datetime('now') WHERE id=?", (rid, cid)
+            )
+            if rid is not None:
+                db.execute(
+                    "INSERT INTO event(request, account, kind, text) VALUES (?,?,'campaign',?)",
+                    (rid, by, f"meta:{k['meta_id'] or ''}"),
+                )
+        obs.event("campaign_linked", account=by, campaign=cid, request=rid)
+        return self.campaign(cid)
+
     def add_reviews(self, cid: int, on: str, by: int | None, note: str, snapshots: list) -> int:
         """Visto hoje (decision 8, phase 1 on the Meta rows): one `review` row per campaign
         in `snapshots` ([(campaign id, numbers)]), dated `on`, by `by`, with the note and

@@ -355,6 +355,46 @@ async function viewCampaigns(query) {
   }));
 }
 
+// A "Criar campanha" request just marked Concluído: which campaign did it produce? The
+// chooser lists the client's campaigns that started in the last 7 days and have no request
+// yet, "Nenhuma" first (the default: a done request isn't always a new campaign). Choosing
+// one sets `campaign.request` (admins; the API refuses the rest), so the campaign page says
+// "Pedido #n" and the request's timeline says which campaign. Nothing shows when there is
+// no candidate. The kinds mirror db.TRACKING_KINDS. `onLinked` runs after a link is made
+// (the request page redraws its timeline).
+const TRACKING_KINDS = ["Criar campanha", "Reativar campanha"];
+const LINK_DAYS_BACK = 7;
+async function offerCampaignLink(r, onLinked) {
+  if (!metaVisible() || !ME.is_admin || !TRACKING_KINDS.includes(r.kind)) return;
+  const t = todayISO(), floor = addDays(t, -LINK_DAYS_BACK);
+  let doc;
+  try { doc = await api("GET", `/api/campaigns?client=${r.client}&since=${floor}&until=${t}`); }
+  catch { return; }  // Meta down, or nothing to list: the link can wait for the sync
+  const candidates = (doc.clients[0]?.campaigns || []).filter((k) => !k.request && k.state !== "skipped" && k.started && k.started >= floor);
+  if (!candidates.length) return;
+  const m = $("#modal");
+  m.innerHTML = `<form class="panel" id="linkcamp"><h2>Qual campanha o pedido #${r.id} criou?</h2>
+    <p class="muted small" style="margin:-8px 0 14px">Campanhas de <b>${esc(r.client_name || "")}</b> que começaram nos últimos ${LINK_DAYS_BACK} dias e ainda não têm pedido. A campanha passa a mostrar "Pedido #${r.id}".</p>
+    <div class="field"><label>Campanha</label><select class="input" name="campaign"><option value="">Nenhuma</option>${candidates.map((k) => `<option value="${k.id}">${esc(k.name)} · ativa desde ${esc(shortDay(k.started))}</option>`).join("")}</select></div>
+    <div class="actions"><button type="button" class="btn ghost" data-a="cancel">Agora não</button><button class="btn primary" data-a="ok">Vincular</button></div></form>`;
+  m.hidden = false;
+  const close = () => { m.hidden = true; m.innerHTML = ""; };
+  const f = $("#linkcamp");
+  f.campaign.focus();
+  m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") close(); };
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = f.campaign.value;
+    if (!id) { close(); return; }
+    try {
+      const k = await api("PATCH", `/api/campaigns/${id}`, { request: r.id });
+      close();
+      toast(`${k.name}: vinculada ao pedido #${r.id}`);
+      if (onLinked) onLinked(k);
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
 // One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
 // period value from the campaign's sums, `day` one day's from an insight row; a metric
 // without `day` (frequency: impressions ÷ reach, and reach only comes per period) has no chart;
