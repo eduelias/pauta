@@ -14,6 +14,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   cliente o campo vem logo abaixo do nome, com a dica "para abrir a conversa do relatório
   daqui"; na lista de clientes, quem não tem número mostra "sem WhatsApp". Continua
   opcional: há cliente que não tem mesmo.
+- **O registro de uso diz em que chamada ou formulário o erro apareceu.** Cada aviso de
+  erro ficava registrado só como "validation". Agora leva o método, a rota e o status da
+  chamada que falhou logo antes (até 3 s) ou, quando nenhuma falhou (uma checagem na
+  própria tela), o formulário ou a tela de onde veio; `pauta usage` mostra isso na seção
+  dos erros. Nada do conteúdo dos campos é registrado. Decisão 11 atualizada.
 
 ## [1.8.4] - 2026-11-06
 

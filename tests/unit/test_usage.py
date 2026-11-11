@@ -160,7 +160,13 @@ def filled_store(tmp_path) -> tuple[Store, date]:
             (_at(yesterday, "08:00"), "screen", "painel", p(**{"from": ""})),
             (_at(yesterday, "08:01"), "screen", "quadro", p(**{"from": "painel"})),
             (_at(yesterday, "08:02"), "request_status", "quadro", p(via="board")),
-            (_at(yesterday, "08:03"), "error_shown", "quadro", p(msg="network", status=0)),
+            (
+                _at(yesterday, "08:03"),
+                "error_shown",
+                "quadro",
+                p(msg="network", status=0, route=REQ, method="PATCH"),
+            ),
+            (_at(yesterday, "08:06"), "error_shown", "novo", p(msg="validation", form="f")),
             (_at(yesterday, "08:03"), "api_slow", "quadro", p(route=REQ, ms=2200, status=200)),
             (_at(yesterday, "08:04"), "api_slow", "quadro", p(route=REQ, ms=100, status=400)),
             (_at(yesterday, "08:05"), "api_slow", "quadro", p(route="/api/boot", status=0)),
@@ -185,12 +191,15 @@ def filled_store(tmp_path) -> tuple[Store, date]:
 def test_summary_counts_the_week(tmp_path):
     store, today = filled_store(tmp_path)
     s = usage.summary(store, days=7, today=today)
-    assert (s["since"], s["until"], s["rows"]) == ("2026-10-28", "2026-11-03", 12)
+    assert (s["since"], s["until"], s["rows"]) == ("2026-10-28", "2026-11-03", 13)
     assert s["active"] == [("2026-11-02", [1]), ("2026-11-03", [2])]
     assert s["screens"] == {"painel": {1: 1, 2: 1}, "quadro": {1: 1, 2: 1}}
     assert s["actions"] == {"request_status": {1: 1}, "comment_added": {2: 1}}
     assert s["paths"] == [(("painel", "quadro"), 2)]
-    assert s["errors"] == [(("network", "quadro", "0"), 1)]
+    assert s["errors"] == [
+        (("network", "quadro", "0", "PATCH /api/requests/{id}"), 1),
+        (("validation", "novo", "", "form f"), 1),
+    ]
     assert s["slow"] == [
         {"route": "/api/requests/{id}", "n": 2, "p95_ms": 2200.0, "failed": 1},
         {"route": "/api/boot", "n": 1, "p95_ms": None, "failed": 1},
@@ -218,11 +227,12 @@ def test_render_and_the_cli_print_every_section(tmp_path, monkeypatch, capsys):
     store, today = filled_store(tmp_path)
     text = usage.render(usage.summary(store, days=7, today=today))
     for needle in (
-        "Pauta usage, 7 day(s) (2026-10-28 to 2026-11-03): 12 event row(s)",
+        "Pauta usage, 7 day(s) (2026-10-28 to 2026-11-03): 13 event row(s)",
         "2026-11-03  1  (Piero)",
         "painel             2  (Renato 1, Piero 1)",
         "painel -> quadro  2",
-        "network     quadro         0    1",
+        "network     quadro         0    1    PATCH /api/requests/{id}",
+        "validation  novo           -    1    form f",
         "/api/requests/{id}                   n=2    p95=2200 ms   failed=1",
         "2 open(s): 1 phone, 1 desktop; 50% installed (standalone)",
         "all kinds: n=2 median=3 p90=5",

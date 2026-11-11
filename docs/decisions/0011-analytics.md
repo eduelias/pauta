@@ -166,7 +166,7 @@ The 15 events for the first release (name, props):
 | 9 | `seen_today` | `n` (campaigns marked) | Decision 8's daily check is done from the list or per campaign |
 | 10 | `finance_entry` | `kind` (payment, cycle) | Financeiro is used by whom and how often |
 | 11 | `search` / `filter` | `what` (status, client, text) | How people find requests |
-| 12 | `error_shown` | `msg` (class: validation, network, auth, drive, server), `screen`, `status` | Where people hit a wall |
+| 12 | `error_shown` | `msg` (class: validation, network, auth, drive, server), `screen`, `status`, `route` and `method` (the call that failed within 3 s), `form` (the form id or screen, when no call failed) | Where people hit a wall, and on which call or form |
 | 13 | `api_slow` | `route` (pattern), `ms` bucket, `status` | Slow calls as felt on the phone |
 | 14 | `settings_changed` | `section` (equipe, financeiro, acompanhamento, meta, perfil) | Which settings get touched |
 | 15 | `login` | `ok`, `method` (passkey, autofill, link) | Sign-in friction on phones |
