@@ -7,6 +7,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **O WhatsApp do cliente ficou em destaque no cadastro.** Só 1 de 12 clientes tinha o
+  número, e sem ele o **Abrir conversa** do relatório fica desligado. No formulário do
+  cliente o campo vem logo abaixo do nome, com a dica "para abrir a conversa do relatório
+  daqui"; na lista de clientes, quem não tem número mostra "sem WhatsApp". Continua
+  opcional: há cliente que não tem mesmo.
+
 ## [1.8.4] - 2026-11-06
 
 ### Changed
