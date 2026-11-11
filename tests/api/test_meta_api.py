@@ -46,6 +46,8 @@ def test_connect_round_trip(team, fake_meta):
         "connections": [],
         "error": "",
         "accounts_at": None,
+        "accounts_error": "",
+        "stale": False,
     }
     url = start(base, nato)
     assert url.startswith(fake_meta.dialog)
@@ -53,7 +55,7 @@ def test_connect_round_trip(team, fake_meta):
     assert status == 302 and location == "/#/configuracoes?meta=conectado"
 
     doc = call(f"{base}/api/meta", cookie=nato)[1]
-    assert doc["connected"] and doc["error"] == ""
+    assert doc["connected"] and doc["error"] == "" and doc["stale"] is False
     (conn,) = doc["connections"]
     assert conn == {
         "business_id": BUSINESS,

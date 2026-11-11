@@ -558,14 +558,17 @@ def test_scheduler_tick_waits_when_a_manual_pass_runs(team, caplog):
     assert s.last_hourly == now and s.last_nightly == now
 
 
-def test_the_hourly_pass_keeps_the_default_period_reach_warm(team):
-    """Campanhas' default period (30 days, yesterday back) answers its reach from memory
-    after the pass: the pass reads it itself; another period still reads on the page."""
+def test_the_hourly_pass_keeps_every_quick_period_reach_warm(team):
+    """Every period of Campanhas' picker (the default 30 days, yesterday back, and the
+    other quick choices) answers its reach from memory after the pass: the pass reads
+    them itself; a custom period still reads on the page."""
     store, meta, fake, *_ = team
     sync.run(store, meta, days=2, today=TODAY)
+    periods = sync.quick_periods(TODAY)
     until = TODAY - timedelta(days=1)
     since = until - timedelta(days=meta_mod.DEFAULT_PERIOD_DAYS - 1)
-    assert any(k[1:] == (since, until) for k in meta._reach)
+    assert periods[0] == (since, until) and len(periods) == 6
+    assert {k[1:] for k in meta._reach} >= set(periods)
     n = fake.calls.count("POST /")
     pairs = [
         (k["account_id"], k["meta_id"])
@@ -573,7 +576,24 @@ def test_the_hourly_pass_keeps_the_default_period_reach_warm(team):
         for k in c["campaigns"]
     ]
     assert pairs
-    meta.reach(pairs, since, until, today=TODAY)
-    assert fake.calls.count("POST /") == n  # the pass just read it
+    for a, b in periods:
+        meta.reach(pairs, a, b, today=TODAY)
+    assert fake.calls.count("POST /") == n  # the pass just read them
     meta.reach(pairs, since - timedelta(days=1), until, today=TODAY)
     assert fake.calls.count("POST /") == n + 1
+
+
+def test_quick_periods_are_the_pickers():
+    """What app-campanhas.js periodDates computes, for a day mid-month and on the 1st."""
+    d = date(2026, 11, 10)
+    assert sync.quick_periods(d) == [
+        (date(2026, 10, 11), date(2026, 11, 9)),  # Últimos 30 dias
+        (date(2026, 11, 3), date(2026, 11, 9)),  # Últimos 7 dias
+        (date(2026, 11, 1), date(2026, 11, 10)),  # Este mês
+        (date(2026, 11, 9), date(2026, 11, 9)),  # Ontem
+        (date(2026, 11, 10), date(2026, 11, 10)),  # Hoje
+        (date(2026, 10, 1), date(2026, 10, 31)),  # Mês passado
+    ]
+    # on the 1st, Últimos 30 dias is Mês passado, Hoje is Este mês, Ontem is one day: 4 reads
+    first = sync.quick_periods(date(2026, 12, 1))
+    assert (date(2026, 11, 1), date(2026, 11, 30)) in first and len(first) == 4

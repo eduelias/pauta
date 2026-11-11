@@ -405,9 +405,13 @@ def install(route, store, auth, drive, meta):
     @route("GET", "/api/meta", "admin")
     def meta_status(self, viewer, _body):
         """The connections (one per portfolio, with who connected it and its last sync)
-        and every account under them. Meta failing is reported in `error`, with the
-        accounts Pauta already knew (stale), never as a failed page: the admin still
-        sees each connection's state and can act on it."""
+        and every account under them. The list answers from memory: the last read, at
+        once, while Meta is read again behind it when it is past its ten minutes (then
+        `stale` is true and the page asks again until it clears; `accounts_error` says
+        why a read behind failed). Only `?refresh=1` (Atualizar) and a server with no
+        list yet wait for Meta. Meta failing is reported in `error`, with the accounts
+        Pauta already knew, never as a failed page: the admin still sees each
+        connection's state and can act on it."""
         accounts, failed = None, ""
         if meta.connected:
             refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
@@ -420,6 +424,8 @@ def install(route, store, auth, drive, meta):
         out = meta.status()
         out["connections"] = _connections(self)
         out["error"] = failed or out["error"]
+        stale = out.pop("accounts_stale")
+        out["stale"] = bool(accounts) and stale
         if accounts is not None:
             out["accounts"] = _with_clients(self, accounts)
         return out

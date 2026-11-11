@@ -549,6 +549,7 @@ class Meta:
         code = self._code(doc)
         obs.event("meta_error", logging.WARNING, status=status, code=code, step=step)
         if code == 190:
+            # dropped, not aged: the pages must report the revocation, not an old list
             self._cache = None
             self._gen += 1
             obs.event("meta_revoked", logging.ERROR, business=business_id or None)
@@ -680,8 +681,7 @@ class Meta:
             }
         )
         with self._lock:
-            self._cache = self._failed = None
-            self._gen += 1
+            self._age_list()  # the new portfolio's accounts come with the read behind
             now = time.time()
             self._done = {s: t for s, t in self._done.items() if t > now}
             self._done[state] = now + STATE_SECONDS
@@ -697,14 +697,19 @@ class Meta:
             for b in gone:
                 with contextlib.suppress(FileNotFoundError):
                     self.token_file(b).unlink()
-            self._cache = self._failed = None
-            self._gen += 1
+            if business_id:
+                self._age_list(business_id)
+            else:
+                self._cache = self._failed = None
+                self._gen += 1
         obs.event("meta_disconnected", business=business_id)
         self._changed()
 
     def status(self) -> dict:
         """For the Configurações page and /metrics. Never the token."""
         conns = self.connections()
+        cached = self._cache
+        failed = self._recent_failure()
         return {
             "enabled": self.enabled,
             "connected": bool(conns),
@@ -714,10 +719,30 @@ class Meta:
             # that old while a new read runs behind it); None before the first read
             "accounts_at": (
                 datetime.fromtimestamp(cached[0], UTC).isoformat(timespec="seconds")
-                if (cached := self._cache)
+                if cached
                 else None
             ),
+            # the list the pages answer with is past its ten minutes (or there is none):
+            # Meta is being read behind it, and the page asks again until this clears
+            "accounts_stale": not cached or time.time() - cached[0] >= CACHE_SECONDS,
+            # what the last read ran into, while it is too recent to try again ("" otherwise)
+            "accounts_error": str(failed) if failed else "",
         }
+
+    def _age_list(self, drop_business: str | None = None) -> None:
+        """A connect or a disconnect (`_lock` held): the kept list is not dropped but aged
+        past its ten minutes, so the next page answers with it at once (without
+        `drop_business`'s accounts) while Meta is read again behind it. Dropping it made
+        the first page after a connect wait for a full read of every portfolio (seven to
+        seventeen seconds with nine of them). A revocation still drops it: the pages
+        must report that, not show an old list."""
+        self._gen += 1
+        self._failed = None
+        cached = self._cache
+        if not cached:
+            return
+        kept = [a for a in cached[1] if a.get("business_id") != drop_business]
+        self._cache = (min(cached[0], time.time() - CACHE_SECONDS), kept)
 
     # ---- reading -------------------------------------------------------------------------
 

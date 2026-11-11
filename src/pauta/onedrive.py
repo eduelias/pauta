@@ -40,7 +40,10 @@ DRIVE_SCOPES = "offline_access User.Read Files.ReadWrite"
 # upload chunks must be multiples of 320 KiB; 5 MiB keeps memory low on the Pi
 CHUNK = 16 * 320 * 1024
 TIMEOUT = 30
-QUOTA_SECONDS = 5 * 60  # how long a quota read serves the Configurações page
+# how long a quota read serves the Configurações page: an upload or a removal drops it,
+# and otherwise the number barely moves (reading it, with the token renewal it may
+# need first, was the one to three seconds GET /api/onedrive took on every visit)
+QUOTA_SECONDS = 60 * 60
 DEFAULT_MAX_MB = 200
 # what OneDrive refuses in a file or folder name
 BAD_NAME = re.compile(r'["*:<>?/\\|\x00-\x1f\x7f]')

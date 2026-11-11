@@ -206,27 +206,50 @@ def _linked(store: Store, meta: Meta, conns: list[dict]) -> tuple[list[dict], bo
     return [a for a in store.meta_accounts() if a["client"]], True
 
 
+def quick_periods(day: date) -> list[tuple[date, date]]:
+    """The periods Campanhas' picker offers, as the browser computes them for `day`
+    (app-campanhas.js periodDates), the default first: Últimos 30 dias, Últimos 7 dias,
+    Este mês, Ontem, Hoje, Mês passado. Personalizado can't be known ahead."""
+    yesterday = day - timedelta(days=1)
+    first = day.replace(day=1)
+    last_month_end = first - timedelta(days=1)
+    periods = [
+        (yesterday - timedelta(days=DEFAULT_PERIOD_DAYS - 1), yesterday),
+        (yesterday - timedelta(days=6), yesterday),
+        (first, day),
+        (yesterday, yesterday),
+        (day, day),
+        (last_month_end.replace(day=1), last_month_end),
+    ]
+    return list(dict.fromkeys(periods))  # on the 1st, Ontem and Mês passado can coincide
+
+
 def _warm_reach(store: Store, meta: Meta, accounts: list[dict], today: date | None) -> None:
-    """Campanhas' default period (the last 30 days, yesterday back) answers its reach per
-    campaign from memory after the pass: read here, once an hour, like the account list.
-    Another period, or a first visit before any pass, reads on the page (then from memory
-    for an hour, and after that the old numbers answer while Meta is read behind). A
-    failed read is the next pass's to retry: never the pass's error."""
+    """Every quick period of Campanhas' picker answers its reach per campaign from memory
+    after the pass: read here, once an hour, like the account list (until 1.8.5 only the
+    default period was, and a browser that remembered "Este mês" or "Últimos 7 dias" read
+    Meta on the page, six seconds with nine portfolios). A custom period, or a first visit
+    before any pass, still reads on the page (then from memory for an hour, and after that
+    the old numbers answer while Meta is read behind). A failed read is the next pass's
+    to retry, never the pass's error; a throttle ends the warm-up."""
     if not accounts:
         return
     day = today or local_today(accounts[0].get("timezone_name") or "")
-    until = day - timedelta(days=1)
-    since = until - timedelta(days=DEFAULT_PERIOD_DAYS - 1)
     pairs = [  # every state: the "include skipped" view asks for the skipped ones too
         (k["account_id"], k["meta_id"])
-        for c in store.campaign_rows(since.isoformat(), until.isoformat(), CAMPAIGN_STATES)
+        for c in store.campaign_rows(day.isoformat(), day.isoformat(), CAMPAIGN_STATES)
         for k in c["campaigns"]
         if k["meta_id"] and k["account_id"]
     ]
-    try:
-        meta.reach(pairs, since, until, today=day, stale=False)
-    except MetaError as e:
-        obs.event("meta_sync_reach_read_failed", logging.WARNING, status=e.status)
+    if not pairs:
+        return
+    for since, until in quick_periods(day):
+        try:
+            meta.reach(pairs, since, until, today=day, stale=False)
+        except MetaError as e:
+            obs.event("meta_sync_reach_read_failed", logging.WARNING, status=e.status)
+            if e.status == 503:
+                return
 
 
 def _business(account: dict, meta: Meta, conns: list[dict]) -> str:

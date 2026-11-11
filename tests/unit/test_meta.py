@@ -66,6 +66,8 @@ def test_off_without_app_config_or_secret(store):
         "connections": [],
         "error": "",
         "accounts_at": None,
+        "accounts_stale": True,
+        "accounts_error": "",
     }
     assert m.connections() == [] and not m.error
     with pytest.raises(MetaError) as e:
@@ -358,10 +360,41 @@ def test_no_thread_to_read_behind_the_list_keeps_the_list_and_the_lock_free(link
     assert linked.accounts(stale=False) == first  # a waiting reader isn't stuck behind it
 
 
-def test_status_says_when_the_list_was_read(linked):
-    assert linked.status()["accounts_at"] is None
+def test_status_says_when_the_list_was_read(linked, monkeypatch):
+    assert linked.status()["accounts_at"] is None and linked.status()["accounts_stale"]
     linked.accounts()
     assert linked.status()["accounts_at"].endswith("+00:00")
+    assert not linked.status()["accounts_stale"] and linked.status()["accounts_error"] == ""
+    now = meta_mod.time.time()
+    monkeypatch.setattr(meta_mod.time, "time", lambda: now + 601)
+    assert linked.status()["accounts_stale"]
+
+
+def test_a_connect_or_disconnect_keeps_the_list_aged_instead_of_dropping_it(
+    linked, fake_meta, monkeypatch
+):
+    """After a connect (or a disconnect, or a revocation) the next page used to wait for
+    a full read of every portfolio: the kept list now answers at once, past its ten
+    minutes, and Meta is read again behind it. A disconnected portfolio's accounts leave
+    the kept list at once."""
+    first = linked.accounts()
+    assert first and not linked.status()["accounts_stale"]
+    n = len(fake_meta.seen)
+    fake_meta.hold()
+    with linked._lock:
+        linked._age_list()  # what finish_connect does
+    assert linked.status()["accounts_stale"]
+    assert linked.accounts() == first  # at once, and a read starts behind it
+    assert fake_meta.held.wait(2)
+    fake_meta.release()
+    _settles(linked, meta_mod.time.time() - meta_mod.CACHE_SECONDS)
+    assert not linked.status()["accounts_stale"]
+    assert len(fake_meta.seen) == 2 * n - 2  # one read behind
+    # a disconnect: that portfolio's accounts leave the kept list at once
+    (business,) = {a["business_id"] for a in first}
+    linked.disconnect(business)
+    assert linked._cache is not None and linked._cache[1] == []
+    assert not linked.connected
 
 
 def test_balance_refused_is_not_an_error(linked, fake_meta, caplog):

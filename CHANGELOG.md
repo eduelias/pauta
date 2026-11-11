@@ -21,6 +21,20 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   **Nenhuma** por padrão. Escolhendo uma, a página da campanha mostra "Pedido #n" e o
   histórico do pedido diz qual campanha. Só administradores; nada aparece quando não há
   campanha candidata. API: `PATCH /api/campaigns/{id}` com `{"request": id}` (ou null).
+- **Configurações → Meta abre na hora.** Logo depois de conectar (ou desconectar) um
+  portfólio, a lista de contas era descartada e a primeira visita esperava a leitura de
+  todos os portfólios de novo: de sete a dezessete segundos com nove conectados. Agora a
+  lista anterior aparece de imediato, com "Lendo a Meta de novo…", a Meta é lida por trás e
+  a tabela se atualiza sozinha quando a leitura chega (as contas do portfólio
+  desconectado saem na hora). **Atualizar** continua pedindo à Meta na hora. `GET /api/meta`
+  ganha `stale` e `accounts_error`.
+- **Campanhas abre na hora em qualquer período rápido.** A sincronização de hora em hora
+  só deixava pronto o alcance de "Últimos 30 dias"; quem tinha "Este mês" ou "Últimos 7
+  dias" guardado no navegador esperava a Meta a cada visita (seis segundos). Agora os seis
+  períodos do seletor são lidos a cada hora; só "Personalizado" ainda lê na tela.
+- **O espaço do OneDrive em Configurações → Arquivos** vale uma hora em vez de cinco
+  minutos (um envio ou uma remoção zera): a leitura, às vezes com a renovação do token
+  antes, era o que `GET /api/onedrive` esperava a cada visita.
 
 ### Changed
 

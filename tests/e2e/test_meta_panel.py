@@ -97,7 +97,11 @@ def test_adding_a_new_clients_account(live, device, fake_meta):
     page.once("dialog", lambda d: d.accept())
     card.get_by_role("button", name="Adicionar contas").click()
     expect(page.locator("#toast")).to_have_text("Meta conectada")
+    # the page answers at once with the list from before the login (one account), says
+    # Meta is being read again, and redraws itself when the new list lands
+    expect(card.locator("#metareading")).to_have_text("Lendo a Meta de novo…")
     expect(page.locator("#metaaccounts tbody tr")).to_have_count(2)
+    expect(card.locator("#metareading")).to_have_count(0)
     assert fake_meta.exchanges == 2
 
 
