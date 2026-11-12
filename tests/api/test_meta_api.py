@@ -447,9 +447,9 @@ def test_swapping_the_only_portfolio_still_reads_behind_the_page(team, fake_meta
     assert status == 200 and doc["connected"] and doc["stale"] is True
     assert [a["stale"] for a in doc["accounts"]] == [True, True]  # the rows, not Meta's list
     fake_meta.release()
-    for _ in range(100):
+    for _ in range(250):  # the read behind lands, then its rows (on_read) a moment later
         doc = call(f"{base}/api/meta", cookie=nato)[1]
-        if not doc["stale"]:
+        if not doc["stale"] and not any(a["stale"] for a in doc["accounts"]):
             break
         time.sleep(0.02)
-    assert [a["stale"] for a in doc["accounts"]] == [False, False]
+    assert doc["stale"] is False and [a["stale"] for a in doc["accounts"]] == [False, False]

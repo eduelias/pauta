@@ -487,11 +487,14 @@ def install(route, store, auth, drive, meta):
         list yet wait for Meta. Meta failing is reported in `error`, with the accounts
         Pauta already knew, never as a failed page: the admin still sees each
         connection's state and can act on it."""
-        accounts, failed = None, ""
+        accounts, stale, failed = None, False, ""
         if meta.connected:
             refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
             try:
-                accounts = meta.accounts(refresh=refresh)
+                # stale comes with the list: an empty kept list (the only portfolio was
+                # swapped) is still one being re-read, and status() a moment later may
+                # already say "fresh" about a list that is not the one answered with
+                accounts, stale = meta.accounts_served(refresh=refresh)
             except MetaError as e:
                 accounts, failed = [], str(e)
         # after the read: a 190 just now shows on its connection (a kept list answers
@@ -499,9 +502,8 @@ def install(route, store, auth, drive, meta):
         out = meta.status()
         out["connections"] = _connections(self)
         out["error"] = failed or out["error"]
-        stale = out.pop("accounts_stale")
-        # an empty kept list (the only portfolio was swapped) is still one being re-read
-        out["stale"] = accounts is not None and stale
+        out.pop("accounts_stale")
+        out["stale"] = stale
         if accounts is not None:
             out["accounts"] = _with_clients(self, accounts)
         return out
