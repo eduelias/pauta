@@ -7,6 +7,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Configurações → Meta não fica parada numa lista antiga.** A página sabia se a lista
+  era antiga por uma leitura de estado feita logo depois; numa Meta rápida a releitura
+  por trás já tinha acabado nesse instante, a página ouvia "atual" sobre a lista velha e
+  não perguntava de novo (a tabela só mudava num Atualizar). Agora o aviso vem junto com
+  a lista.
+
 ## [1.9.0] - 2026-11-12
 
 ### Added
