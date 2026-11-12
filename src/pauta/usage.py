@@ -37,6 +37,7 @@ EVENTS: dict[str, tuple[str, ...]] = {
     "client_saved": ("new",),
     "seen_today": ("n",),
     "period": ("p",),
+    "client_message": ("kind",),
     "finance_entry": ("kind",),
     "search": ("what",),
     "filter": ("what",),

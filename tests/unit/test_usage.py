@@ -45,6 +45,12 @@ def test_unknown_screens_and_props_shapes_fall_back():
         {"e": "period", "s": "campanhas", "p": {"p": "this_month", "since": "x"}}, NOW
     )
     assert (event, screen, json.loads(props)) == ("period", "campanhas", {"p": "this_month"})
+    # a message written for a client: the kind, never whom it was for or what it said
+    _, event, _, props = usage.clean_event(
+        {"e": "client_message", "p": {"kind": "balance", "to": "5511988887777", "text": "Olá"}},
+        NOW,
+    )
+    assert (event, json.loads(props)) == ("client_message", {"kind": "balance"})
 
 
 def test_client_time_is_clamped_to_the_last_day():

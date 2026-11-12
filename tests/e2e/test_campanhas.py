@@ -11,11 +11,14 @@ the hour the suite runs at on a CET machine."""
 
 import json
 import re
+import time
 from datetime import date, datetime, timedelta
+from urllib.parse import unquote
 
 import pytest
 from playwright.sync_api import expect
 
+import fakemeta
 from fakemeta import EMPTY_ACCOUNT, TZ, expected
 from pauta import sync
 from pauta.db import cents_per
@@ -865,6 +868,132 @@ def test_visao_geral_every_client_on_one_row(synced):
     page.locator(".ctabs").get_by_role("link", name="Por cliente").click()
     expect(page).to_have_url(re.compile(r"#/campanhas\?p=last_7$"))
     expect(page.locator(".cblock")).to_have_count(2)
+
+
+def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch):
+    """Avisar o cliente: a row writes the WhatsApp message and opens the client's own
+    conversation with it, for the person to read and send. "Enviar resumo" carries the
+    period's numbers as the row shows them; "Avisar do saldo" is there only with the
+    balance alert and says how long the balance lasts. Without a number on the client
+    WhatsApp asks which conversation. The usage log counts the kind, never the client."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    store.save_client({"whatsapp": "0 (11) 98888-7777", "contact": "Carla Mendes"}, clinic["id"])
+    close = "Qualquer dúvida, é só me chamar."
+
+    def n(value: int) -> str:
+        return f"{value:,}".replace(",", ".")
+
+    def overview():
+        page.goto(f"{base}/#/campanhas")
+        page.goto(f"{base}/#/campanhas/geral")
+        expect(page.locator(".orow[data-client]")).to_have_count(2)
+        doc = page.evaluate("fetch('/api/campaigns/overview').then((r) => r.json())")
+        return doc, {c["name"]: c for c in doc["clients"]}
+
+    def message(link) -> tuple[str, str]:
+        expect(link).to_have_attribute("target", "_blank")
+        to, text = link.get_attribute("href").split("?text=")
+        return to, unquote(text)
+
+    doc, rows = overview()
+    period = label(date.fromisoformat(doc["since"]), date.fromisoformat(doc["until"]))
+    row = page.locator(".orow[data-client]").filter(has_text="Clínica Bem Estar")
+    c = rows["Clínica Bem Estar"]
+    # plenty of balance: nothing to warn about, the summary only. Two campaigns that count
+    # different things: no results line
+    expect(row.locator(".oacts a")).to_have_text(["Enviar resumo"])
+    to, text = message(row.locator("[data-act=summary]"))
+    assert to == "https://wa.me/5511988887777"
+    assert text == (
+        f"Olá, Carla! Resumo das suas campanhas ({period}):\n"
+        f"• Investimento: R$ {brl(c['period']['spend_cents'])}\n"
+        f"• Cliques no link: {n(c['period']['link_clicks'])}\n{close}"
+    )
+    # no number and no contact: WhatsApp asks for whom; clicks counted as the result once
+    other = page.locator(".orow[data-client]").filter(has_text="Padaria Trigo de Ouro")
+    b = rows["Padaria Trigo de Ouro"]
+    to, text = message(other.locator("[data-act=summary]"))
+    assert to == "https://wa.me/"
+    assert text == (
+        f"Olá! Resumo da sua campanha ({period}):\n"
+        f"• Investimento: R$ {brl(b['period']['spend_cents'])}\n"
+        f"• Cliques no link: {n(b['period']['link_clicks'])}\n{close}"
+    )
+    expect(other.locator("[data-act=summary]")).to_have_attribute(
+        "title", "O cliente não tem WhatsApp cadastrado: o WhatsApp pergunta para quem enviar"
+    )
+
+    # one campaign left on the clinic: its results add up, and the summary names them
+    with store.db() as db:
+        botox = db.execute("SELECT id FROM campaign WHERE meta_id='23850002'").fetchone()["id"]
+    store.set_campaign_state(botox, "skipped")
+    doc, rows = overview()
+    c = rows["Clínica Bem Estar"]
+    assert c["period"]["results"] and c["period"]["cost_per_result_cents"]
+    _, text = message(row.locator("[data-act=summary]"))
+    assert text == (
+        f"Olá, Carla! Resumo da sua campanha ({period}):\n"
+        f"• Investimento: R$ {brl(c['period']['spend_cents'])}\n"
+        f"• Cliques no link: {n(c['period']['link_clicks'])}\n"
+        f"• {CONVERSATIONS}: {n(c['period']['results'])} "
+        f"(R$ {brl(c['period']['cost_per_result_cents'])} cada)\n{close}"
+    )
+
+    # the balance runs low: what is left covers two days at the last seven days' pace
+    week = sum(d["spend_cents"] for d in c["days"][-7:])
+    assert week > 0
+
+    def leave(cents: int):
+        spent = str(500000 - cents)
+        account = {**fakemeta.BALANCE["111"], "amount_spent": spent}
+        monkeypatch.setitem(fakemeta.BALANCE, "111", account)
+        meta.accounts(refresh=True)
+        return overview()[1]["Clínica Bem Estar"]
+
+    left = -(-2 * week // 7) + 1
+    c = leave(left)
+    assert c["balance"] == {"remaining_cents": left, "days_left": 2}
+    expect(row.locator("[data-flag=balance]")).to_have_text("saldo para 2 dias")
+    expect(row.locator(".oacts a")).to_have_text(["Avisar do saldo", "Enviar resumo"])
+    to, text = message(row.locator("[data-act=balance]"))
+    assert to == "https://wa.me/5511988887777"
+    assert text == (
+        f"Olá, Carla! O saldo dos seus anúncios dura mais 2 dias no ritmo atual "
+        f"(restam R$ {brl(left)}). Para as campanhas não pararem, vale colocar crédito nos "
+        f"próximos dias. {close}"
+    )
+    expect(row.locator("[data-act=balance]")).to_have_attribute(
+        "title", "Abre a conversa com Carla Mendes com a mensagem escrita: você lê e envia"
+    )
+    # the bakery has no balance to speak of: never the warning
+    expect(other.locator("[data-act=balance]")).to_have_count(0)
+
+    c = leave(1)  # one cent: not a day's worth
+    assert c["balance"]["days_left"] == 0
+    expect(row.locator("[data-flag=balance]")).to_have_text("saldo acaba hoje")
+    _, text = message(row.locator("[data-act=balance]"))
+    assert text == (
+        "Olá, Carla! O saldo dos seus anúncios acaba hoje (restam R$ 0,01). Para as "
+        f"campanhas não pararem, vale colocar crédito ainda hoje. {close}"
+    )
+
+    # the tap opens WhatsApp in its own tab; the log keeps the kind and nothing of the client
+    laptop.context.route("https://wa.me/**", lambda r: r.fulfill(body="ok"))
+    with page.expect_popup() as tab:
+        row.locator("[data-act=balance]").click()
+    assert tab.value.url.startswith("https://wa.me/5511988887777?text=Ol%C3%A1%2C%20Carla!")
+    tab.value.close()
+    page.goto("about:blank")  # pagehide: the batch leaves as a beacon
+    sent = []
+    for _ in range(100):
+        with store.db() as db:
+            found = db.execute("SELECT props FROM usage WHERE event='client_message'")
+            sent = [r["props"] for r in found]
+        if sent:
+            break
+        time.sleep(0.05)
+    assert sent == ['{"kind":"balance"}']
 
 
 def test_configuracoes_campanhas_sets_the_alerts(synced):

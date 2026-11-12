@@ -7,6 +7,21 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Campanhas → Visão geral: a mensagem para o cliente já escrita, a um toque.** Cada linha
+  ganhou até dois atalhos que abrem o WhatsApp na conversa do próprio cliente (o número do
+  cadastro) com o texto pronto; você lê, muda o que quiser e envia. **Avisar do saldo**
+  aparece junto do alerta "saldo para N dias" e diz quanto resta e por quantos dias no ritmo
+  atual: "Olá, Carla! O saldo dos seus anúncios dura mais 2 dias no ritmo atual (restam
+  R$ 48,00). Para as campanhas não pararem, vale colocar crédito nos próximos dias."
+  **Enviar resumo** leva os números do período escolhido como a linha mostra: investimento,
+  cliques no link e, quando as campanhas contam a mesma coisa, os resultados com o custo de
+  cada um. O cumprimento usa o primeiro nome do contato do cliente. Sem número no cadastro,
+  o WhatsApp pergunta para quem enviar. A Pauta não envia nada sozinha. O registro de uso
+  anota só o tipo da mensagem aberta (saldo ou resumo), nunca o cliente nem o texto. API:
+  as linhas de `GET /api/campaigns/overview` levam `contact` e `whatsapp`.
+
 ## [1.10.2] - 2026-11-12
 
 ### Fixed
