@@ -40,6 +40,11 @@ def test_unknown_screens_and_props_shapes_fall_back():
     assert (event, screen, props) == ("screen", "", "{}")
     at, _, _, props = usage.clean_event({"e": "login", "p": {"ok": True, "method": None}}, NOW)
     assert json.loads(props) == {"ok": True}
+    # the period a Campanhas draw used, next to the api_slow row it may have cost
+    _, event, screen, props = usage.clean_event(
+        {"e": "period", "s": "campanhas", "p": {"p": "this_month", "since": "x"}}, NOW
+    )
+    assert (event, screen, json.loads(props)) == ("period", "campanhas", {"p": "this_month"})
 
 
 def test_client_time_is_clamped_to_the_last_day():

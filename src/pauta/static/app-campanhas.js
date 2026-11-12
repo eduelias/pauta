@@ -246,6 +246,7 @@ async function viewCampaigns(query) {
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`);
   savePeriod(st);
+  track("period", { p: st.p });  // after the call: an api_slow row sits next to the period that cost it
   history.replaceState(null, "", `#/campanhas?${periodQuery(st)}`);
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
   // a campaign younger than the period has numbers only from its "ativa desde" on
@@ -523,6 +524,7 @@ async function viewCampaign(query, id) {
   const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
   const k = doc.campaign;
   savePeriod(st);
+  track("period", { p: st.p });
   history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();

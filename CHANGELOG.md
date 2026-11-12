@@ -43,6 +43,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   cliente o campo vem logo abaixo do nome, com a dica "para abrir a conversa do relatório
   daqui"; na lista de clientes, quem não tem número mostra "sem WhatsApp". Continua
   opcional: há cliente que não tem mesmo.
+- **O registro de uso anota o período de cada abertura de Campanhas.** Uma espera de 6,6 s
+  em Campanhas no dia 11 não dizia qual período custou isso; agora cada abertura de
+  Campanhas ou de uma campanha registra o período escolhido (`period`, decisão 11).
 - **O registro de uso diz em que chamada ou formulário o erro apareceu.** Cada aviso de
   erro ficava registrado só como "validation". Agora leva o método, a rota e o status da
   chamada que falhou logo antes (até 3 s) ou, quando nenhuma falhou (uma checagem na
