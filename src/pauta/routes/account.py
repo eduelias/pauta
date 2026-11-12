@@ -10,7 +10,7 @@ from ..db import EXPORT_TABLES
 from . import CRED, ID, Reply, finance_visible
 
 
-def install(route, store, auth, drive, meta):
+def install(route, store, auth, drive, meta, ig=None):
     # ---- passkeys and invites ---------------------------------------------------------
 
     @route("POST", "/api/invite", "admin")
@@ -162,6 +162,8 @@ def install(route, store, auth, drive, meta):
             },
             "finance": {**fin, "visible": finance_visible(viewer, fin)},
             "meta": {"enabled": meta.enabled},
+            # Publicações (docs/publishing-spec.md): the tab only where the Instagram app is set
+            "publishing": {"enabled": bool(ig and ig.enabled)},
             # Configurações → Campanhas: the alert thresholds, and the request kinds the
             # "which campaign did this request create?" chooser goes by
             "campaigns": store.campaign_settings(),

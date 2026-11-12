@@ -7,6 +7,21 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Publicações (beta, só onde o app do Instagram estiver configurado).** Um módulo novo,
+  com integração própria e separada da de Campanhas: um administrador conecta o perfil do
+  Instagram de um cliente (login do Instagram, perfil profissional), e o time cria
+  publicações com uma imagem, a legenda e, se quiser, uma hora marcada. **Publicar agora**
+  espera o Instagram e diz como terminou; **Agendar** guarda a publicação e a Pauta publica
+  na hora (o Instagram não agenda pela API). A imagem escolhida vira JPEG no navegador, na
+  largura que o Instagram aceita, e uma proporção fora de 4:5 a 1,91:1 é recusada antes de
+  enviar. Uma recusa do Instagram fica na própria publicação, com o motivo, e ela continua
+  ali para sair de novo. Sem `PAUTA_IG_APP_ID` e o arquivo `<db>.ig-secret` nada disso
+  aparece: produção não muda. Esquema v15 (`ig_profile`, `post`). API: `GET
+  /api/publishing`, `POST`/`DELETE /api/clients/{id}/instagram`, `/api/posts…`. Desenho,
+  limites e o que falta: `docs/publishing-spec.md`.
+
 ## [1.11.1] - 2026-11-12
 
 ### Fixed

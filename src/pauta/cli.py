@@ -14,8 +14,10 @@ from pathlib import Path
 from . import __version__, obs, sync, usage
 from .auth import MOVE_LINK_DAYS, Auth
 from .db import Store
+from .instagram import Instagram
 from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
+from .publishing import Posts, Publisher
 
 
 def db_path() -> Path:
@@ -29,7 +31,9 @@ def cmd_serve(args) -> None:
     store = Store(db_path())
     auth = Auth(store)
     meta = Meta.from_env(store.path)
-    httpd = ThreadingHTTPServer((args.host, args.port), make_handler(store, auth, meta=meta))
+    ig = Instagram.from_env(store.path)
+    handler = make_handler(store, auth, meta=meta, ig=ig)
+    httpd = ThreadingHTTPServer((args.host, args.port), handler)
     mode = f"passkeys on {','.join(auth.rp_ids)}" if auth.enabled else "open (no accounts)"
     print(f"pauta on http://{args.host}:{args.port} ({mode}), db {store.path}", flush=True)
     obs.setup_logging()
@@ -37,6 +41,9 @@ def cmd_serve(args) -> None:
     if meta.enabled and os.environ.get("PAUTA_META_SYNC") != "off":
         sync.Scheduler(store, meta).start()
         obs.event("meta_sync_scheduled")
+    if ig.enabled:  # Publicações: the scheduled posts leave from this thread
+        Publisher(Posts(store), ig, ig.origin).start()
+        obs.event("publisher_started")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

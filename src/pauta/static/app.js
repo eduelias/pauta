@@ -322,8 +322,9 @@ function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
+  // Publicações (beta, docs/publishing-spec.md) after those, where the Instagram app is set
   const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
-    : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : [e]));
+    : e[0] === "#/pedidos" ? [e, ...(metaVisible() ? [CAMP_NAV] : []), ...(pubVisible() ? [PUB_NAV] : [])] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
   $("#tabbar").innerHTML = [

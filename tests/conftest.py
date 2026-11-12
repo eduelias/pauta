@@ -4,9 +4,11 @@ import pytest
 
 from appserver import serve
 from fakegraph import CLIENT, FakeGraph
+from fakeinstagram import IG_APP_ID, FakeInstagram, ig_secret
 from fakemeta import APP_ID, CONFIG_ID, FakeMeta, secret
 from pauta.auth import Auth
 from pauta.db import Store
+from pauta.instagram import Instagram
 from pauta.meta import Meta
 from pauta.onedrive import OneDrive
 from softpasskey import ORIGIN, RP_ID, SoftPasskey, call, join
@@ -70,8 +72,35 @@ def meta_on(store, fake_meta):
 
 
 @pytest.fixture()
-def site(store, auth, drive, meta):
-    httpd = serve(store, auth, drive, meta)
+def ig(store):
+    """Publicações off (no Instagram app). Tests about it override this with `ig_on`."""
+    return Instagram(store.path)
+
+
+@pytest.fixture()
+def fake_ig():
+    """A fake Instagram login and API on localhost (tests/fakeinstagram.py)."""
+    f = FakeInstagram()
+    yield f
+    f.close()
+
+
+@pytest.fixture()
+def ig_on(store, fake_ig):
+    """Publicações on, against the fake, with the app secret in its file; no profile yet.
+    The server fixture gives it the address the app answers on."""
+    ig_secret(store.path)
+    on = Instagram(
+        store.path, app_id=IG_APP_ID, dialog=fake_ig.dialog, api=fake_ig.api, graph=fake_ig.graph
+    )
+    on.sleep = lambda _s: None  # a container that isn't ready is asked again at once
+    return on
+
+
+@pytest.fixture()
+def site(store, auth, drive, meta, ig):
+    httpd = serve(store, auth, drive, meta, ig)
+    ig.at(f"http://127.0.0.1:{httpd.server_address[1]}")
     yield f"http://127.0.0.1:{httpd.server_address[1]}", auth, store
     httpd.shutdown()
     httpd.server_close()

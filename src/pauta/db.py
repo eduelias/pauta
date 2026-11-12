@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -172,6 +172,27 @@ CREATE TABLE IF NOT EXISTS report_link (
     created_by INTEGER REFERENCES account(id), expires TEXT NOT NULL, revoked TEXT
 );
 CREATE INDEX IF NOT EXISTS report_link_campaign ON report_link(campaign);
+CREATE TABLE IF NOT EXISTS ig_profile (
+    client INTEGER PRIMARY KEY REFERENCES client(id) ON DELETE CASCADE,
+    ig_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '', account_type TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'ok', error TEXT NOT NULL DEFAULT '', expires TEXT,
+    connected_by INTEGER REFERENCES account(id),
+    connected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS post (
+    id INTEGER PRIMARY KEY,
+    client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    caption TEXT NOT NULL DEFAULT '', alt_text TEXT NOT NULL DEFAULT '',
+    media TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'draft', due TEXT,
+    container TEXT NOT NULL DEFAULT '', media_id TEXT NOT NULL DEFAULT '',
+    permalink TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+    account INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now')), updated TEXT, started TEXT,
+    published_at TEXT
+);
+CREATE INDEX IF NOT EXISTS post_due ON post(status, due);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -215,7 +236,15 @@ CAMPAIGN_URL_ID = (
     r"campaign_id=(\d+)",
     r"/campaigns/(\d+)",
 )
-EXPORT_TABLES = ("campaign", "review", "insight", "meta_connection", "meta_log")
+EXPORT_TABLES = (
+    "campaign",
+    "review",
+    "insight",
+    "meta_connection",
+    "meta_log",
+    "ig_profile",  # who is connected, never a token
+    "post",
+)
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -679,6 +708,7 @@ class Store:
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
+            # v15: ig_profile and post (Publicações, docs/publishing-spec.md) are new tables
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),

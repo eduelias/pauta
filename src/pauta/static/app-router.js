@@ -18,6 +18,8 @@ const ROUTES = [
   [/^\/campanhas\/geral$/, viewOverview],
   [/^\/campanha\/(\d+)$/, viewCampaign],
   [/^\/relatorio\/(\d+)$/, viewReport],
+  [/^\/publicacoes$/, viewPublishing],
+  [/^\/publicacoes\/(nova|\d+)$/, viewPost],
   [/^\/configuracoes$/, viewSettings],
   [/^\/perfil$/, viewProfile],
 ];

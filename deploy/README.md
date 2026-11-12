@@ -160,6 +160,18 @@ mean something to that app, so switching apps means deleting them and connecting
 Check: `curl -s 127.0.0.1:8089/metrics` shows `"meta": {"enabled": true, …}` after
 `sudo systemctl restart pauta-acc`.
 
+**Acceptance's Instagram app** (Publicações, beta, `docs/publishing-spec.md`): the same test
+app carries the Instagram product. Its *Instagram* app id (not the Facebook one) is the
+drop-in `/etc/systemd/system/pauta-acc.service.d/instagram.conf`
+(`Environment=PAUTA_IG_APP_ID=…`); its Instagram app secret is
+`/var/lib/pauta-acc/pauta.db.ig-secret` (owner `pauta-acc`, mode 600), rendered from the
+1Password item "pauta-acc instagram app secret" (Du7 Tech) and pushed, never typed or
+committed. The redirect URI in the Meta dashboard is
+`https://acc.pauta.cc/api/instagram/callback`. The profiles' tokens are
+`/var/lib/pauta-acc/pauta.db.ig-tokens` and the posts' images
+`/var/lib/pauta-acc/pauta.db.media/`. Without the drop-in or the secret the module is off.
+Check: the journal says `publisher_started` after a restart. Production has neither.
+
 **Another environment** (`dev`): a line in `env_config` in `pauta-deploy-branch` (its port),
 `deploy/pauta-dev.service`, a Caddy block, `dev` in the workflow's `environment` choices, then
 `sudo deploy/provision-branch-env.sh dev`.
