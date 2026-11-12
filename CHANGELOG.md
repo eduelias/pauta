@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-11-12
+
 ### Fixed
 
 - **"Atualizar agora" não diz mais "A sincronização não terminou" sobre números novos.** A
@@ -603,7 +605,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.10.2...HEAD
+[1.10.2]: https://github.com/eduelias/pauta/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/eduelias/pauta/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/eduelias/pauta/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/eduelias/pauta/compare/v1.9.0...v1.9.1
