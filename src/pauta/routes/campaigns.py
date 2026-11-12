@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import (
     obs,
+    overview,
     server,  # for the settings the tests patch there
     sync,
 )
@@ -157,6 +158,80 @@ def install(route, store, auth, drive, meta):
             },
             "clients": clients,
         }
+
+    @route("GET", "/api/campaigns/overview")
+    def campaigns_overview(self, viewer, _body):
+        """Visão geral (docs/campaign-overview-spec.md): one row per client with a tracked
+        campaign, the ones that need a look first. Each has the period's sums (`period`),
+        how cost and volume moved against the period of the same length before (`change`:
+        by result when both count the same thing, else by link click; `partial` and no
+        percentages when the client's numbers start after that period did), one entry per day
+        of the last 14 (`days`), what is left on its accounts and for how many days at the
+        last 7 days' pace (`balance`, null when Meta gives none), `seen_today` and its
+        `flags` ([{key, level, text}], rules over the last 7 full days against the 7
+        before). Read from the stored daily numbers and Meta's cached account list: never
+        a wait on Meta. Why a client has no fresh numbers is spelled out to admins only."""
+        since, until, today = _period(self)
+        last, before = overview.flag_windows(today)
+        windows = {
+            "period": (since, until),
+            "previous": overview.previous(since, until),
+            "last": last,
+            "before": before,
+        }
+        clients = store.campaign_overview(windows, overview.trend_window(today), today)
+        for c in clients:
+            c["sums"] = {name: overview.sums(rows) for name, rows in c.pop("rows").items()}
+        live = _live_accounts(self)
+        troubled = {
+            c["business_id"]: c["error"] or c["state"]
+            for c in store.connections()
+            if c["state"] != "ok" or c["error"]
+        }
+        remaining: dict[int, int | None] = {}
+        problems: dict[int, str] = {}
+        for a in store.meta_accounts():
+            if not a["client"]:
+                continue
+            cid = a["client"]["id"]
+            left = ((live.get(a["id"]) or {}).get("balance") or {}).get("remaining_cents")
+            if left is not None:
+                remaining[cid] = (remaining.get(cid) or 0) + left
+            why = troubled.get(a["business_id"]) if meta.connected else NOT_CONNECTED
+            if why:
+                problems[cid] = (
+                    f"{overview.NO_DATA}: {why}" if viewer["is_admin"] else overview.NO_DATA
+                )
+        rows = overview.rows(
+            clients,
+            today,
+            windows["previous"][0],
+            remaining,
+            problems,
+            store.seen_on(today),
+            store.reviews_used(),
+            store.campaign_settings(),
+        )
+        return {
+            "since": since,
+            "until": until,
+            "previous": list(windows["previous"]),
+            "today_included": until >= today,
+            "last_sync": meta.last_sync,
+            "sync_error": meta.sync_error,
+            "flagged": sum(1 for r in rows if r["flags"]),
+            "clients": rows,
+        }
+
+    @route("GET", "/api/campaigns/settings", "admin")
+    def campaign_settings(self, viewer, _body):
+        """Configurações → Campanhas: Visão geral's alert thresholds and the request kinds
+        that put a campaign on air (db.CAMPAIGN_DEFAULTS says what each is)."""
+        return store.campaign_settings()
+
+    @route("PATCH", "/api/campaigns/settings", "admin")
+    def edit_campaign_settings(self, viewer, body):
+        return store.set_campaign_settings(body, viewer["account"])
 
     def _review(self, viewer, clients: list[dict], note: str, since: str, until: str) -> int:
         """One `review` per active campaign of each client in `clients` (campaign_rows

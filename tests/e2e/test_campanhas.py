@@ -787,3 +787,125 @@ def test_report_for_the_client_and_share_on_whatsapp(synced):
     expect(page.locator("#app .empty")).to_contain_text("campanha não encontrada")
     expect(page.locator("body")).not_to_have_class(re.compile(r"\breport\b"))
     expect(page.locator(".side")).to_be_visible()
+
+
+def test_visao_geral_every_client_on_one_row(synced):
+    """The second tab (docs/campaign-overview-spec.md): one row per client in the server's
+    order (the ones that need a look first), its alerts as chips, the balance with the days
+    it covers, a trend line, "só com alerta", and the period shared with the list."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    t = today()
+    with store.db() as db:
+        ids = {r["client"]: r["id"] for r in db.execute("SELECT id, client FROM campaign")}
+    # the clinic was last looked at three days ago, the bakery today
+    old = (t - timedelta(days=3)).isoformat()
+    store.add_reviews(clinic["id"], old, None, "", [(ids[clinic["id"]], {})])
+    store.add_reviews(bakery["id"], t.isoformat(), None, "", [(ids[bakery["id"]], {})])
+
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator(".ctabs a.on")).to_have_text("Por cliente")
+    page.locator(".ctabs").get_by_role("link", name="Visão geral").click()
+    expect(page).to_have_url(re.compile(r"#/campanhas/geral\?p=last_30$"))
+    expect(page.locator(".ctabs a.on")).to_have_text("Visão geral")
+    expect(page.locator("#nav a[data-nav='#/campanhas']")).to_have_class(re.compile(r"\bon\b"))
+    rows = page.locator(".orow[data-client]")
+    expect(rows).to_have_count(2)
+    doc = page.evaluate("fetch('/api/campaigns/overview').then((r) => r.json())")
+    by_name = {c["name"]: c for c in doc["clients"]}
+    expect(rows.locator(".oname b")).to_have_text([c["name"] for c in doc["clients"]])
+    expect(page.locator(".ohead .om")).to_have_text(
+        [
+            "Valor gasto",
+            "Cliques no link",
+            "Resultados",
+            "Contra o período anterior",
+            "Tendência, 14 dias",
+            "Saldo",
+            "Visto",
+        ]
+    )
+    assert doc["flagged"] >= 1  # the clinic at least: nobody looked for three days
+    expect(page.locator("#ovsummary")).to_contain_text(
+        f"2 clientes com campanhas acompanhadas, {doc['flagged']} ped"
+    )
+
+    row = rows.filter(has_text="Clínica Bem Estar")
+    expect(row.locator(".oname")).to_contain_text("2 de 2 campanhas ativas")
+    expect(row.locator("[data-flag=unseen]")).to_have_text("sem análise há 3 dias")
+    expect(row.locator(".om-spend b")).to_contain_text(
+        brl(by_name["Clínica Bem Estar"]["period"]["spend_cents"])
+    )
+    # conversations and leads don't add up: a dash, and the change is by click
+    expect(row.locator(".om-results b")).to_have_count(0)
+    expect(row.locator(".om-balance b")).to_contain_text("3.765,44")  # R$ 5.000 − R$ 1.234,56
+    expect(row.locator(".om-balance .ksub")).to_have_text(re.compile(r"^para \d+ dias$"))
+    expect(row.locator(".om-trend svg.otrend path.line")).to_have_count(1)
+    expect(row.locator(".om-seen")).to_contain_text(f"{(t - timedelta(days=3)).day} ")
+
+    other = rows.filter(has_text="Padaria Trigo de Ouro")
+    expect(other.locator(".om-seen .oseen")).to_contain_text("hoje")
+    expect(other.locator("[data-flag=unseen]")).to_have_count(0)
+    expect(other.locator(".om-balance b")).to_have_count(0)  # no limit: nothing to divide
+    expect(other.locator(".om-results .ksub")).to_contain_text("Cliques no link")
+
+    # the trend follows the picker; "só com alerta" keeps the flagged rows
+    page.select_option("#ovtrend", "clicks")
+    expect(row.locator("svg.otrend")).to_have_attribute(
+        "aria-label", "Cliques no link por dia, últimos 14 dias"
+    )
+    page.locator("label.toggle", has_text="só com alerta").click()
+    expect(rows).to_have_count(doc["flagged"])
+    expect(rows.filter(has_text="Clínica Bem Estar")).to_have_count(1)
+
+    # the period is the list's: changing it here carries over to "Por cliente"
+    page.locator("#period .seg button", has_text="Últimos 7 dias").click()
+    expect(page).to_have_url(re.compile(r"#/campanhas/geral\?p=last_7$"))
+    expect(page.locator(".orow[data-client]")).not_to_have_count(0)
+    page.locator(".ctabs").get_by_role("link", name="Por cliente").click()
+    expect(page).to_have_url(re.compile(r"#/campanhas\?p=last_7$"))
+    expect(page.locator(".cblock")).to_have_count(2)
+
+
+def test_configuracoes_campanhas_sets_the_alerts(synced):
+    """Configurações → Campanhas: the thresholds Visão geral's alerts go by and the request
+    kinds that put a campaign on air; saved for the team, and the rows follow at once."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    t = today()
+    with store.db() as db:
+        ids = {r["client"]: r["id"] for r in db.execute("SELECT id, client FROM campaign")}
+    for c in (clinic, bakery):  # both last looked at yesterday: within the default two days
+        day = (t - timedelta(days=1)).isoformat()
+        store.add_reviews(c["id"], day, None, "", [(ids[c["id"]], {})])
+    page.goto(f"{base}/#/campanhas/geral")
+    expect(page.locator(".orow[data-client]")).to_have_count(2)
+    expect(page.locator("[data-flag=unseen]")).to_have_count(0)
+
+    page.goto(f"{base}/#/configuracoes")
+    panel = page.locator("#campsettings")
+    expect(panel.get_by_role("heading", name="Campanhas")).to_be_visible()
+    expect(panel.locator("[data-camp=rise_pct]")).to_have_value("30")
+    expect(panel.locator("[data-camp=unseen_days]")).to_have_value("2")
+    kinds = panel.locator("#campkinds label")
+    expect(kinds.filter(has_text="Criar campanha").locator("input")).to_be_checked()
+    expect(kinds.filter(has_text="Reativar campanha").locator("input")).to_be_checked()
+    panel.locator("[data-camp=unseen_days]").fill("1")
+    kinds.filter(has_text="Reativar campanha").click()
+    panel.get_by_role("button", name="Salvar campanhas").click()
+    expect(page.locator("#toast")).to_have_text("Campanhas salvo")
+    cfg = store.campaign_settings()
+    assert cfg["unseen_days"] == 1 and cfg["tracking_kinds"] == ["Criar campanha"]
+    assert cfg["rise_pct"] == 30
+
+    page.goto(f"{base}/#/campanhas/geral")
+    expect(page.locator("[data-flag=unseen]")).to_have_text(["sem análise há 1 dia"] * 2)
+
+    # a number out of range is refused with the reason, nothing saved
+    laptop.expected.add((400, "/api/campaigns/settings"))
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.locator("#campsettings [data-camp=unseen_days]")).to_have_value("1")
+    page.locator("#campsettings [data-camp=rise_pct]").fill("2")
+    page.locator("#campsettings").get_by_role("button", name="Salvar campanhas").click()
+    expect(page.locator("#toast")).to_contain_text("a alta de custo fora do intervalo")
+    assert store.campaign_settings()["rise_pct"] == 30

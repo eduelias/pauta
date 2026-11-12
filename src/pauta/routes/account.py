@@ -162,6 +162,9 @@ def install(route, store, auth, drive, meta):
             },
             "finance": {**fin, "visible": finance_visible(viewer, fin)},
             "meta": {"enabled": meta.enabled},
+            # Configurações → Campanhas: the alert thresholds, and the request kinds the
+            # "which campaign did this request create?" chooser goes by
+            "campaigns": store.campaign_settings(),
         }
 
     @route("GET", "/api/export", "admin")
@@ -171,6 +174,7 @@ def install(route, store, auth, drive, meta):
             "clients": store.clients(),
             "requests": [store.request(r["id"]) for r in store.requests()],
             "finance": store.finance_settings(),
+            "campaign_settings": store.campaign_settings(),
             "payments": [p for c in store.clients() for p in store.client(c["id"])["payments"]],
             "meta_account": store.meta_accounts(),
             **{t: store.table(t) for t in EXPORT_TABLES},

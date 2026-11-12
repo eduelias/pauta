@@ -7,6 +7,33 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Campanhas → Visão geral: todos os clientes numa tela, quem precisa de atenção
+  primeiro.** Uma segunda aba em Campanhas (a lista de sempre vira "Por cliente") mostra
+  uma linha por cliente: valor gasto, cliques e custo por clique, resultados quando as
+  campanhas contam a mesma coisa, a variação contra o período anterior, uma linha de
+  tendência dos últimos 14 dias, o saldo com "para N dias" e o Visto. Cada linha traz seus
+  alertas em uma frase que dá para conferir no Gerenciador: "custo por clique subiu 42% em
+  7 dias", "resultados caíram 35% com o mesmo investimento", "sem entrega desde ontem",
+  "saldo para 2 dias", "sem dados novos da Meta", "sem análise há 3 dias". Os alertas
+  comparam sempre os últimos 7 dias com os 7 anteriores, sem contar hoje, e só falam acima
+  de R$ 20 gastos em cada semana; um cliente cujas campanhas começaram há pouco não é
+  comparado com um período em que ainda não existia. Filtros: só com alerta, segmento e o
+  que a tendência desenha. Pedido da equipe, para o dia em que forem 50 clientes; nada é
+  lido da Meta ao abrir (são os números diários que a Pauta já guarda). API:
+  `GET /api/campaigns/overview`. Desenho e perguntas em aberto:
+  `docs/campaign-overview-spec.md`.
+- **Configurações → Campanhas.** Um bloco novo, para administradores, com os números que os
+  alertas da Visão geral usam: a partir de quantos por cento o custo subindo e o volume
+  caindo viram alerta, quanto o investimento pode variar para ainda ser "o mesmo", o gasto
+  e a contagem mínimos por semana para a Pauta dizer alguma coisa, e com quantos dias o
+  saldo acabando e a falta de análise avisam (0 desliga cada um). No mesmo bloco, **quais
+  tipos de pedido colocam uma campanha no ar**: até aqui eram sempre "Criar campanha" e
+  "Reativar campanha", fixos no código, e renomear um deles em Listas desligava em silêncio
+  a pergunta "Qual campanha o pedido criou?". Vale para todo o time. API:
+  `GET`/`PATCH /api/campaigns/settings`; `GET /api/boot` e a exportação levam o bloco.
+
 ## [1.9.1] - 2026-11-12
 
 ### Fixed
