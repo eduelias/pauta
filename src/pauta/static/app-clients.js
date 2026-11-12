@@ -32,7 +32,7 @@ async function viewClients(query) {
     if (!b) return;
     st = b.dataset.v;
     $$("#states button").forEach((x) => x.classList.toggle("on", x === b));
-    history.replaceState(null, "", st ? `#/clientes?s=${encodeURIComponent(st)}` : "#/clientes");
+    keepHash(st ? `#/clientes?s=${encodeURIComponent(st)}` : "#/clientes");
     draw();
   });
   draw();

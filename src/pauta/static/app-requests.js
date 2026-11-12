@@ -161,7 +161,7 @@ async function viewList(query) {
         <td>${statusBadge(r)}</td></tr>`).join("")}
       </tbody></table>` : `<div class="panel empty"><span class="big">🔎</span>Nenhum pedido aqui.</div>`;
     $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", () => { location.hash = `#/pedido/${tr.dataset.id}`; }));
-    history.replaceState(null, "", `#/pedidos?f=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${client ? `&c=${client}` : ""}`);
+    keepHash(`#/pedidos?f=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${client ? `&c=${client}` : ""}`);
   };
   let typing;
   $("#q").addEventListener("input", (e) => {
