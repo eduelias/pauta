@@ -12,17 +12,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from .db import cents_per, period_results
+from .db import CAMPAIGN_DEFAULTS, cents_per, period_results
 
 FLAG_DAYS = 7  # the flags' two windows: the last 7 full days and the 7 before
 TREND_DAYS = 14  # the small line on each row, ending yesterday
-RISE_PCT = 30  # cost per result (or per click) up by this much: "custo subindo"
-DROP_PCT = 30  # results (or clicks) down by this much...
-SAME_SPEND_PCT = 15  # ...while spend stayed within this: "volume caindo"
-MIN_SPEND_CENTS = 2000  # both windows must have spent this much (R$ 20,00)
-MIN_COUNT = 5  # and the earlier one must have counted this many, or a 2 → 1 is "-50%"
-LOW_BALANCE_DAYS = 3  # what is left covers fewer days than this at the last 7 days' pace
-UNSEEN_DAYS = 2  # live campaigns and no Visto hoje for this long
+# the thresholds are the team's (Configurações → Campanhas): what each means is next to
+# db.CAMPAIGN_DEFAULTS, the values a team that never opened the panel gets
+DEFAULTS = CAMPAIGN_DEFAULTS
 
 ACT, WATCH, NOTE = 2, 1, 0  # a flag's level: the row sorts by its highest
 
@@ -128,11 +124,13 @@ def flags(
     remaining_cents: int | None = None,
     problem: str = "",
     reviews_used: bool = True,
+    rules: dict = DEFAULTS,
 ) -> list[dict]:
     """What a row has to say for itself, most urgent first: [{key, level, text}]. `c` is a
     `Store.campaign_overview` row; `problem` is why Meta's numbers aren't arriving for this
     client ("" when they are); `reviews_used` is whether the team marks Visto hoje at all
-    (a team that never did isn't told so on every row)."""
+    (a team that never did isn't told so on every row); `rules` are the team's thresholds
+    (`Store.campaign_settings`)."""
     out: list[dict] = []
     last, before = c["sums"]["last"], c["sums"]["before"]
     if problem:
@@ -143,29 +141,31 @@ def flags(
             text = f"{c['quiet']} de {c['active']} campanhas sem entrega desde ontem"
         out.append({"key": "stopped", "level": ACT, "text": text})
     left = days_left(remaining_cents, last) if c["active"] else None
-    if left is not None and left < LOW_BALANCE_DAYS:
+    if left is not None and left < rules["low_balance_days"]:
         text = f"saldo para {_plural(left, 'dia', 'dias')}" if left else "saldo acaba hoje"
         out.append({"key": "balance", "level": ACT, "text": text})
     since = flag_windows(today)[1][0]  # where the earlier window starts
-    if whole(c, since) and min(last["spend_cents"], before["spend_cents"]) >= MIN_SPEND_CENTS:
-        ch = compare(last, before, MIN_COUNT)
+    floor = rules["min_spend"] * 100
+    if whole(c, since) and min(last["spend_cents"], before["spend_cents"]) >= floor:
+        ch = compare(last, before, rules["min_count"])
         what = "resultados" if ch["kind"] == "result" else "cliques"
         unit = "resultado" if ch["kind"] == "result" else "clique"
-        steady = ch["spend_pct"] is not None and abs(ch["spend_pct"]) <= SAME_SPEND_PCT
-        if steady and ch["volume_pct"] is not None and ch["volume_pct"] <= -DROP_PCT:
+        steady = ch["spend_pct"] is not None and abs(ch["spend_pct"]) <= rules["same_spend_pct"]
+        if steady and ch["volume_pct"] is not None and ch["volume_pct"] <= -rules["drop_pct"]:
             # at the same spend this is the cost rising too: one sentence says both
             text = f"{what} caíram {-ch['volume_pct']}% com o mesmo investimento"
             out.append({"key": "volume", "level": WATCH, "text": text})
-        elif ch["cost_pct"] is not None and ch["cost_pct"] >= RISE_PCT:
+        elif ch["cost_pct"] is not None and ch["cost_pct"] >= rules["rise_pct"]:
             text = f"custo por {unit} subiu {ch['cost_pct']}% em {FLAG_DAYS} dias"
             out.append({"key": "cost", "level": WATCH, "text": text})
-    if c["active"] and reviews_used:
+    if c["active"] and reviews_used and rules["unseen_days"]:
         seen = c["last_seen"]
         ago = (date.fromisoformat(today) - date.fromisoformat(seen)).days if seen else None
         if ago is None:
             out.append({"key": "unseen", "level": NOTE, "text": "ainda sem análise"})
-        elif ago >= UNSEEN_DAYS:
-            out.append({"key": "unseen", "level": NOTE, "text": f"sem análise há {ago} dias"})
+        elif ago >= rules["unseen_days"]:
+            text = f"sem análise há {_plural(ago, 'dia', 'dias')}"
+            out.append({"key": "unseen", "level": NOTE, "text": text})
     return sorted(out, key=lambda f: -f["level"])
 
 
@@ -177,6 +177,7 @@ def rows(
     problems: dict[int, str],
     seen: dict[int, dict],
     reviews_used: bool,
+    rules: dict = DEFAULTS,
 ) -> list[dict]:
     """The screen's rows from `Store.campaign_overview`'s: each with the period's sums, how
     it moved against the period before (which starts on `previous_since`; `partial` and no
@@ -186,7 +187,7 @@ def rows(
     out = []
     for c in clients:
         left = remaining.get(c["id"])
-        marks = flags(c, today, left, problems.get(c["id"], ""), reviews_used)
+        marks = flags(c, today, left, problems.get(c["id"], ""), reviews_used, rules)
         full = whole(c, previous_since)
         change = compare(c["sums"]["period"], c["sums"]["previous"]) if full else NO_CHANGE
         out.append(

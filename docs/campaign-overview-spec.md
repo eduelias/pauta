@@ -135,9 +135,11 @@ releases that otherwise change nothing on screen.
 pure functions), `Store.campaign_overview` (one read of `insight`), and the "Visão geral"
 tab at `#/campanhas/geral`, which shares the list's period. Against the sketch:
 
-- **The thresholds are constants** at the top of `overview.py` (30%, 15%, R$ 20, 5 counted,
-  3 days of balance, 2 days unseen), not team settings yet: Piero's answers to questions 2
-  and 5 decide whether a settings block is worth its screen.
+- **The thresholds are team settings**, on Configurações → Campanhas, for admins (30%,
+  30%, 15%, R$ 20, 5 counted, 3 days of balance, 2 days unseen by default; 0 switches the
+  balance and the unseen alert off). They live in the `setting` table under `campaigns`,
+  next to Financeiro's block, and come in `GET /api/boot`. The same block now holds the
+  request kinds that put a campaign on air, which were fixed in the code until now.
 - **A guard the sketch missed.** A client whose numbers start inside the earlier window is
   not compared with it: a new campaign's first weeks otherwise read as "cliques subiram
   1000%". The row shows a dash with the reason, and the cost and volume flags stay quiet

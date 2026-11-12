@@ -7,6 +7,7 @@ from datetime import date, timedelta
 import pytest
 
 from pauta import overview
+from pauta.db import CAMPAIGN_DEFAULTS, Invalid
 from pauta.overview import ACT, NOTE, WATCH
 
 TODAY = "2026-10-20"
@@ -369,3 +370,80 @@ def test_a_live_campaign_without_impressions_since_yesterday_is_quiet(tracked):
 def test_no_tracked_campaign_no_row(store):
     store.save_client({"name": "Sem campanha"})
     assert overview_of(store) == []
+
+
+# ---- the team's settings (Configurações → Campanhas) ------------------------------------------
+
+
+def test_campaign_settings_default_then_merge_and_validate(store):
+    assert store.campaign_settings() == CAMPAIGN_DEFAULTS == overview.DEFAULTS
+    out = store.set_campaign_settings(
+        {
+            "rise_pct": "50",
+            "unseen_days": 0,
+            "tracking_kinds": [" Criar campanha ", "Criar campanha", "Impulsionar"],
+            "nope": 1,  # not a setting: ignored
+        }
+    )
+    want = {
+        **CAMPAIGN_DEFAULTS,
+        "rise_pct": 50,
+        "unseen_days": 0,
+        "tracking_kinds": ["Criar campanha", "Impulsionar"],
+    }
+    assert out == want == store.campaign_settings()
+    assert store.set_campaign_settings({"drop_pct": 40}) == {**want, "drop_pct": 40}
+    for bad in (
+        {"rise_pct": 4},
+        {"rise_pct": "muito"},
+        {"min_count": 0},
+        {"low_balance_days": 61},
+        {"tracking_kinds": "Criar campanha"},
+        {"tracking_kinds": [""]},
+        {"tracking_kinds": [3]},
+        {"tracking_kinds": ["x" * 200]},
+        {"tracking_kinds": [f"tipo {i}" for i in range(21)]},
+    ):
+        with pytest.raises(Invalid):
+            store.set_campaign_settings(bad)
+    assert store.campaign_settings() == {**want, "drop_pct": 40}
+
+
+def test_the_rules_follow_the_teams_thresholds():
+    def rules(**over):
+        return {**overview.DEFAULTS, **over}
+
+    c = client(total(3800, 40), total(3000, 40))  # the cost per click rose 27%
+    assert overview.flags(c, TODAY) == []
+    assert keys(overview.flags(c, TODAY, rules=rules(rise_pct=25))) == ["cost"]
+    assert overview.flags(c, TODAY, rules=rules(rise_pct=25, min_spend=50)) == []
+    assert overview.flags(c, TODAY, rules=rules(rise_pct=25, min_count=41)) == []
+    falling = client(total(5000, 40), total(5000, 50))  # 20% fewer clicks, 25% dearer
+    assert overview.flags(falling, TODAY) == []
+    assert keys(overview.flags(falling, TODAY, rules=rules(drop_pct=20))) == ["volume"]
+    assert keys(overview.flags(falling, TODAY, rules=rules(rise_pct=25))) == ["cost"]
+    spending = client(total(7000, 70), total(7000, 70))
+    five = rules(low_balance_days=5)
+    assert keys(overview.flags(spending, TODAY, remaining_cents=4500, rules=five)) == ["balance"]
+    off = rules(low_balance_days=0, unseen_days=0)
+    assert overview.flags(spending, TODAY, remaining_cents=0, rules=off) == []
+    assert overview.flags(client(last_seen=day(3)), TODAY, rules=off) == []
+    assert overview.flags(client(last_seen=None), TODAY, rules=off) == []
+    assert overview.flags(client(last_seen=day(3)), TODAY, rules=rules(unseen_days=4)) == []
+    # and through the rows
+    (r,) = overview.rows([c], TODAY, "2026-09-01", {}, {}, {}, True, rules(rise_pct=25))
+    assert keys(r["flags"]) == ["cost"]
+
+
+def test_the_request_kinds_that_link_a_campaign_are_the_teams(tracked):
+    store, clinic, _, _ = tracked
+    url = "https://adsmanager.facebook.com/adsmanager/manage/campaigns?selected_campaign_ids=1"
+    r = store.create_request(
+        {"client": clinic["id"], "kind": "Impulsionar", "what": "x", "campaign_url": url}, None
+    )
+    store.update_request(r["id"], {"status": "done"}, None)
+    assert store.link_requests_to_campaigns() == 0  # not one of the default kinds
+    store.set_campaign_settings({"tracking_kinds": []})
+    assert store.link_requests_to_campaigns() == 0  # switched off
+    store.set_campaign_settings({"tracking_kinds": ["Impulsionar"]})
+    assert store.link_requests_to_campaigns() == 1

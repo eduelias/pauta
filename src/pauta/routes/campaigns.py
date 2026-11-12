@@ -210,6 +210,7 @@ def install(route, store, auth, drive, meta):
             problems,
             store.seen_on(today),
             store.reviews_used(),
+            store.campaign_settings(),
         )
         return {
             "since": since,
@@ -221,6 +222,16 @@ def install(route, store, auth, drive, meta):
             "flagged": sum(1 for r in rows if r["flags"]),
             "clients": rows,
         }
+
+    @route("GET", "/api/campaigns/settings", "admin")
+    def campaign_settings(self, viewer, _body):
+        """Configurações → Campanhas: Visão geral's alert thresholds and the request kinds
+        that put a campaign on air (db.CAMPAIGN_DEFAULTS says what each is)."""
+        return store.campaign_settings()
+
+    @route("PATCH", "/api/campaigns/settings", "admin")
+    def edit_campaign_settings(self, viewer, body):
+        return store.set_campaign_settings(body, viewer["account"])
 
     def _review(self, viewer, clients: list[dict], note: str, since: str, until: str) -> int:
         """One `review` per active campaign of each client in `clients` (campaign_rows

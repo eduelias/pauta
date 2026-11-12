@@ -67,7 +67,9 @@ def test_a_member_sees_every_client_on_one_row(team, fake_meta):
     # R$ 5.000,00 of limit, R$ 1.234,56 spent: what is left, at the last 7 days' pace
     left = clinic["balance"]
     assert left["remaining_cents"] == 500000 - 123456
-    assert left["days_left"] is not None and left["days_left"] > overview.LOW_BALANCE_DAYS
+    assert (
+        left["days_left"] is not None and left["days_left"] > overview.DEFAULTS["low_balance_days"]
+    )
     assert clinic["seen_today"] is None and clinic["last_seen"] is None
 
     bakery = rows[BAKERY]
@@ -132,3 +134,40 @@ def test_nothing_tracked_is_an_empty_list_and_strangers_get_nothing(team):
     doc = get(base, nato)
     assert doc["clients"] == [] and doc["flagged"] == 0 and doc["last_sync"] is None
     assert call(f"{base}/api/campaigns/overview")[0] == 401
+
+
+def test_the_alert_settings_are_the_admins_and_the_rows_follow_them(team, fake_meta, store):
+    base, nato, piero, _ = synced(team, fake_meta)
+    url = f"{base}/api/campaigns/settings"
+    status, cfg, _ = call(url, cookie=nato)
+    assert status == 200 and cfg == overview.DEFAULTS
+    assert call(url, cookie=piero)[0] == 403
+    assert call(url, {"unseen_days": 1}, piero, method="PATCH")[0] == 403
+    # everyone's boot carries them: the request page's chooser goes by `tracking_kinds`
+    assert call(f"{base}/api/boot", cookie=piero)[1]["campaigns"] == cfg
+
+    old = (today_in_sao_paulo() - timedelta(days=1)).isoformat()
+    assert call(f"{base}/api/reviews/today", {}, piero)[0] == 200
+    with store.db() as db:
+        db.execute('UPDATE review SET "on"=?', (old,))
+
+    def unseen():
+        return [
+            f["text"]
+            for c in get(base, piero)["clients"]
+            for f in c["flags"]
+            if f["key"] == "unseen"
+        ]
+
+    assert unseen() == []  # yesterday is within the default two days
+    status, out, _ = call(
+        url, {"unseen_days": 1, "tracking_kinds": ["Criar campanha"]}, nato, method="PATCH"
+    )
+    assert status == 200
+    assert out == {**cfg, "unseen_days": 1, "tracking_kinds": ["Criar campanha"]}
+    assert unseen() == ["sem análise há 1 dia"] * 2
+    assert call(url, {"unseen_days": 0}, nato, method="PATCH")[1]["unseen_days"] == 0
+    assert unseen() == []
+    status, out, _ = call(url, {"rise_pct": 1}, nato, method="PATCH")
+    assert status == 400 and "a alta de custo" in out["error"]
+    assert call(f"{base}/api/export", cookie=nato)[1]["campaign_settings"]["unseen_days"] == 0

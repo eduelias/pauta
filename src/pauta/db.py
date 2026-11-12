@@ -190,9 +190,25 @@ CLIENT_STATES = ("Ativo", "Pausado", "Encerrado")
 # campaign tracking (decision 8): `skipped` is "Não acompanhar", never touched by the sync
 CAMPAIGN_STATES = ("active", "paused", "ended", "skipped")
 TRACKED_STATES = ("active", "paused", "ended")
-# a done request of one of these kinds is the one a Meta campaign came from (a team setting
-# in a later slice)
-TRACKING_KINDS = ("Criar campanha", "Reativar campanha")
+# Campanhas' team settings (Configurações → Campanhas; `setting` key "campaigns"). The first
+# seven are Visão geral's alert rules (overview.py reads them): how much cost per result or
+# per click must rise, or volume fall at a spend that moved no more than `same_spend_pct`,
+# over the last 7 full days against the 7 before; the floors under which nothing is said
+# (`min_spend` in whole units of the account's currency in each window, `min_count` clicks
+# or results in the earlier one); `low_balance_days` and `unseen_days` (0 switches the
+# alert off). `tracking_kinds`: a done request of one of these kinds is the one a Meta
+# campaign came from.
+CAMPAIGN_DEFAULTS = {
+    "rise_pct": 30,
+    "drop_pct": 30,
+    "same_spend_pct": 15,
+    "min_spend": 20,
+    "min_count": 5,
+    "low_balance_days": 3,
+    "unseen_days": 2,
+    "tracking_kinds": ["Criar campanha", "Reativar campanha"],
+}
+MAX_TRACKING_KINDS = 20
 # the ways an Ads Manager link carries a campaign id
 CAMPAIGN_URL_ID = (
     r"selected_campaign_ids=(\d+)",
@@ -415,7 +431,34 @@ CLIENT_FIELDS = {
     "billed": _bool,
 }
 
+
 # Configurações → Financeiro (decision 7); the defaults are in finance.DEFAULTS
+def _kinds(v, _db):
+    """Request kinds as the team names them: a short list of short, distinct names (the
+    panel offers the team's own Tipos de pedido; one renamed since simply stops matching)."""
+    if not isinstance(v, list) or len(v) > MAX_TRACKING_KINDS:
+        raise Invalid("os tipos de pedido precisam ser uma lista")
+    out: list[str] = []
+    for item in v:
+        name = item.strip() if isinstance(item, str) else ""
+        if not name or len(name) > MAX_OPTION:
+            raise Invalid("tipo de pedido inválido")
+        if name not in out:
+            out.append(name)
+    return out
+
+
+CAMPAIGN_FIELDS = {
+    "rise_pct": _int_range(5, 500, "a alta de custo"),
+    "drop_pct": _int_range(5, 100, "a queda de volume"),
+    "same_spend_pct": _int_range(0, 100, "a variação do investimento"),
+    "min_spend": _int_range(0, 100000, "o gasto mínimo"),
+    "min_count": _int_range(1, 1000, "a contagem mínima"),
+    "low_balance_days": _int_range(0, 60, "os dias de saldo"),
+    "unseen_days": _int_range(0, 60, "os dias sem análise"),
+    "tracking_kinds": _kinds,
+}
+
 FINANCE_FIELDS = {
     "enabled": _bool,
     "currency": _choice(finance.CURRENCIES),
@@ -1129,17 +1172,20 @@ class Store:
         link carries its Meta id; the request's timeline says so. Returns how many linked."""
         n = 0
         with self.db() as db:
+            kinds = self._campaign_settings(db)["tracking_kinds"]
+            if not kinds:  # the team switched the automatic link off
+                return 0
             orphans = db.execute(
                 "SELECT id, meta_id FROM campaign WHERE request IS NULL AND meta_id IS NOT NULL"
             ).fetchall()
-            marks = ",".join("?" for _ in TRACKING_KINDS)
+            marks = ",".join("?" for _ in kinds)
             for c in orphans:
                 mid = c["meta_id"]
                 candidates = db.execute(
                     "SELECT id, campaign_url FROM request WHERE status='done' "
                     f"AND kind IN ({marks}) AND campaign_url LIKE ? AND id NOT IN "
                     "(SELECT request FROM campaign WHERE request IS NOT NULL) ORDER BY id DESC",
-                    (*TRACKING_KINDS, f"%{mid}%"),
+                    (*kinds, f"%{mid}%"),
                 ).fetchall()
                 rid = next(
                     (r["id"] for r in candidates if campaign_id_in(r["campaign_url"]) == mid), None
@@ -1312,6 +1358,31 @@ class Store:
                 for d, rs in c["days"].items()
             ]
         return out
+
+    @staticmethod
+    def _campaign_settings(db) -> dict:
+        row = db.execute("SELECT value FROM setting WHERE key='campaigns'").fetchone()
+        saved = json.loads(row[0]) if row else {}
+        return {
+            **CAMPAIGN_DEFAULTS,
+            **{k: v for k, v in saved.items() if k in CAMPAIGN_DEFAULTS},
+        }
+
+    def campaign_settings(self) -> dict:
+        """Configurações → Campanhas: CAMPAIGN_DEFAULTS with what the team changed."""
+        with self.db() as db:
+            return self._campaign_settings(db)
+
+    def set_campaign_settings(self, data: dict, by: int | None = None) -> dict:
+        with self.db() as db:
+            vals = clean(CAMPAIGN_FIELDS, data, db, partial=True)
+            merged = {**self._campaign_settings(db), **vals}
+            db.execute(
+                "INSERT OR REPLACE INTO setting(key, value) VALUES ('campaigns', ?)",
+                (json.dumps(merged),),
+            )
+        obs.event("campaign_settings", account=by, changed=sorted(vals))
+        return merged
 
     def reviews_used(self) -> bool:
         """Whether anyone has ever marked Visto hoje (Visão geral only nags a team that does)."""

@@ -680,6 +680,7 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .ctabs a:hover { color: var(--ink); }
 .ctabs a.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
 /* Visão geral: one row per client, the ones that need a look first */
+#campkinds { flex-wrap: wrap; gap: 8px 20px; }
 .otools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin: 0 0 14px; }
 .otools .pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .otools .input { width: auto; padding: 6px 10px; font-size: 14px; }

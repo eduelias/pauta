@@ -33,6 +33,7 @@ async function viewSettings(query) {
       </section>
     ${ME.is_admin && BOOT.meta?.enabled ? `<section class="panel mt" id="meta"><div class="panel-head"><h2>${icon("target")}Meta</h2><span class="muted small">Números das campanhas</span></div>
       <div id="metabody">${spinner()}</div></section>` : ""}
+    ${ME.is_admin && BOOT.meta?.enabled ? campaignSettingsPanel(BOOT.campaigns, o.kind) : ""}
     ${ME.is_admin ? financeSettingsPanel(BOOT.finance) : ""}
     ${ME.is_admin ? `<section class="panel mt" id="lists"><div class="panel-head"><h2>${icon("list")}Listas</h2><span class="muted small">Um item por linha</span></div>
       <div class="grid3">${[["kind", "Tipos de pedido"], ["goal", "Objetivos"], ["segment", "Segmentos"]].map(([k, t]) => `<div class="field"><label>${t}</label>
@@ -56,6 +57,7 @@ async function viewSettings(query) {
   }));
   $("#invite")?.addEventListener("click", makeInvite);
   $$("[data-mv]").forEach((b) => b.addEventListener("click", () => makeMoveLink(b.dataset.mv, b.dataset.name, !!b.dataset.new)));
+  $("#savecamp")?.addEventListener("click", saveCampaignSettings);
   $("#savefin")?.addEventListener("click", async () => {
     const body = {};
     for (const el of $$("[data-fin]")) body[el.dataset.fin] = el.type === "checkbox" ? el.checked : el.value;

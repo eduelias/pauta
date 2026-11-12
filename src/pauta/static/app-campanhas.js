@@ -239,6 +239,40 @@ function clientTotals(c) {
 const sinceTag = (k) => k.state === "active" && k.started
   ? `<span class="ksince" title="ativa desde ${esc(fmtDate(k.started, { day: "2-digit", month: "2-digit", year: "numeric" }))}: antes disso não há números">ativa desde ${esc(shortDay(k.started))}</span>` : "";
 
+// Configurações → Campanhas (admins, with Meta on): Visão geral's alert thresholds and the
+// request kinds that put a campaign on air. `cfg` is BOOT.campaigns, `kinds` the team's Tipos
+// de pedido; a kind saved earlier and since renamed stays listed so it can be unticked.
+function campaignSettingsPanel(cfg, kinds) {
+  const num = (key, label, hint, min, max) => `<div class="field"><label>${label}</label><input class="input" data-camp="${key}" type="number" min="${min}" max="${max}" value="${cfg[key]}"><span class="hint">${hint}</span></div>`;
+  const all = [...new Set([...kinds, ...cfg.tracking_kinds])];
+  return `<section class="panel mt" id="campsettings"><div class="panel-head"><h2>${icon("chart")}Campanhas</h2><span class="muted small">Os alertas da Visão geral</span></div>
+    <div class="form-grid">
+      ${num("rise_pct", "Custo subindo: avisar a partir de (%)", "custo por resultado, ou por clique", 5, 500)}
+      ${num("drop_pct", "Volume caindo: avisar a partir de (%)", "resultados, ou cliques", 5, 100)}
+      ${num("same_spend_pct", "“Mesmo investimento” é variar até (%)", "acima disso, menos volume é só menos verba", 0, 100)}
+      ${num("min_spend", "Só avisar com este gasto por semana", "na moeda da conta; abaixo disso os números oscilam demais", 0, 100000)}
+      ${num("min_count", "…e com pelo menos estes cliques ou resultados", "na semana anterior", 1, 1000)}
+      ${num("low_balance_days", "Saldo acabando: avisar com menos de (dias)", "0 desliga o alerta", 0, 60)}
+      ${num("unseen_days", "Sem análise: avisar depois de (dias)", "sem Visto hoje; 0 desliga o alerta", 0, 60)}
+      <div class="field wide"><label>Pedidos que colocam uma campanha no ar</label>
+        <div class="row-gap" id="campkinds">${all.map((k) => `<label class="toggle small"><input type="checkbox" data-campkind="${esc(k)}" ${cfg.tracking_kinds.includes(k) ? "checked" : ""}>${esc(k)}</label>`).join("")}</div>
+        <span class="hint">Ao concluir um pedido destes tipos, a Pauta pergunta qual campanha ele criou e liga os dois.</span></div>
+    </div>
+    <p class="muted small mt">Os alertas comparam os últimos 7 dias com os 7 anteriores, sem contar hoje. Valem para todo o time.</p>
+    <div class="mt"><button class="btn" id="savecamp">${icon("check")}Salvar campanhas</button></div></section>`;
+}
+async function saveCampaignSettings() {
+  const ticked = [...document.querySelectorAll("[data-campkind]")].filter((el) => el.checked);
+  const body = { tracking_kinds: ticked.map((el) => el.dataset.campkind) };
+  for (const el of document.querySelectorAll("[data-camp]")) body[el.dataset.camp] = el.value;
+  try {
+    await api("PATCH", "/api/campaigns/settings", body);
+    track("settings_changed", { section: "campanhas" });
+    BOOT = await api("GET", "/api/boot");
+    toast("Campanhas salvo");
+  } catch (e) { toast(e.message, true); }
+}
+
 // Campanhas' two views of the same numbers: client by client, or every client on one row
 const campTabs = (st, on) => `<nav class="ctabs" aria-label="Visões de Campanhas">${[["", "Por cliente"], ["/geral", "Visão geral"]].map(([path, label]) => `<a href="#/campanhas${path}?${periodQuery(st)}" class="${path === on ? "on" : ""}"${path === on ? ` aria-current="page"` : ""}>${label}</a>`).join("")}</nav>`;
 
@@ -468,12 +502,12 @@ async function viewCampaigns(query) {
 // yet, "Nenhuma" first (the default: a done request isn't always a new campaign). Choosing
 // one sets `campaign.request` (admins; the API refuses the rest), so the campaign page says
 // "Pedido #n" and the request's timeline says which campaign. Nothing shows when there is
-// no candidate. The kinds mirror db.TRACKING_KINDS. `onLinked` runs after a link is made
-// (the request page redraws its timeline).
-const TRACKING_KINDS = ["Criar campanha", "Reativar campanha"];
+// no candidate. The kinds are the team's (Configurações → Campanhas). `onLinked` runs after
+// a link is made (the request page redraws its timeline).
+const trackingKinds = () => BOOT?.campaigns?.tracking_kinds || [];
 const LINK_DAYS_BACK = 7;
 async function offerCampaignLink(r, onLinked) {
-  if (!metaVisible() || !ME.is_admin || !TRACKING_KINDS.includes(r.kind)) return;
+  if (!metaVisible() || !ME.is_admin || !trackingKinds().includes(r.kind)) return;
   const t = todayISO(), floor = addDays(t, -LINK_DAYS_BACK);
   let doc;
   try { doc = await api("GET", `/api/campaigns?client=${r.client}&since=${floor}&until=${t}`); }

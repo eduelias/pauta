@@ -865,3 +865,47 @@ def test_visao_geral_every_client_on_one_row(synced):
     page.locator(".ctabs").get_by_role("link", name="Por cliente").click()
     expect(page).to_have_url(re.compile(r"#/campanhas\?p=last_7$"))
     expect(page.locator(".cblock")).to_have_count(2)
+
+
+def test_configuracoes_campanhas_sets_the_alerts(synced):
+    """Configurações → Campanhas: the thresholds Visão geral's alerts go by and the request
+    kinds that put a campaign on air; saved for the team, and the rows follow at once."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    t = today()
+    with store.db() as db:
+        ids = {r["client"]: r["id"] for r in db.execute("SELECT id, client FROM campaign")}
+    for c in (clinic, bakery):  # both last looked at yesterday: within the default two days
+        day = (t - timedelta(days=1)).isoformat()
+        store.add_reviews(c["id"], day, None, "", [(ids[c["id"]], {})])
+    page.goto(f"{base}/#/campanhas/geral")
+    expect(page.locator(".orow[data-client]")).to_have_count(2)
+    expect(page.locator("[data-flag=unseen]")).to_have_count(0)
+
+    page.goto(f"{base}/#/configuracoes")
+    panel = page.locator("#campsettings")
+    expect(panel.get_by_role("heading", name="Campanhas")).to_be_visible()
+    expect(panel.locator("[data-camp=rise_pct]")).to_have_value("30")
+    expect(panel.locator("[data-camp=unseen_days]")).to_have_value("2")
+    kinds = panel.locator("#campkinds label")
+    expect(kinds.filter(has_text="Criar campanha").locator("input")).to_be_checked()
+    expect(kinds.filter(has_text="Reativar campanha").locator("input")).to_be_checked()
+    panel.locator("[data-camp=unseen_days]").fill("1")
+    kinds.filter(has_text="Reativar campanha").click()
+    panel.get_by_role("button", name="Salvar campanhas").click()
+    expect(page.locator("#toast")).to_have_text("Campanhas salvo")
+    cfg = store.campaign_settings()
+    assert cfg["unseen_days"] == 1 and cfg["tracking_kinds"] == ["Criar campanha"]
+    assert cfg["rise_pct"] == 30
+
+    page.goto(f"{base}/#/campanhas/geral")
+    expect(page.locator("[data-flag=unseen]")).to_have_text(["sem análise há 1 dia"] * 2)
+
+    # a number out of range is refused with the reason, nothing saved
+    laptop.expected.add((400, "/api/campaigns/settings"))
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.locator("#campsettings [data-camp=unseen_days]")).to_have_value("1")
+    page.locator("#campsettings [data-camp=rise_pct]").fill("2")
+    page.locator("#campsettings").get_by_role("button", name="Salvar campanhas").click()
+    expect(page.locator("#toast")).to_contain_text("a alta de custo fora do intervalo")
+    assert store.campaign_settings()["rise_pct"] == 30
