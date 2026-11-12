@@ -168,6 +168,11 @@ conversation, type the message). A row now writes it:
   of each. No comparison with the period before: how to say a bad week is the person's
   call, not a template's.
 
+A balance at zero is its own case (fixed the same day, after a real account sat at R$ 0,00
+for two days under "saldo acaba hoje"): the alert reads "saldo acabou", absorbs "sem entrega
+desde ontem" when both hold, is raised even with nothing spent in the last 7 days, and the
+message says the balance ran out and the campaigns stay paused without it.
+
 Both are plain `wa.me` links to the client's registered number with the text in the
 address, so WhatsApp opens with the message in the box and nothing is sent until the person
 sends it. The greeting takes the first name of the client's contact. A client without a
