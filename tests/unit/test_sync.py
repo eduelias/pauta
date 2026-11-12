@@ -597,3 +597,34 @@ def test_quick_periods_are_the_pickers():
     # on the 1st, Últimos 30 dias is Mês passado, Hoje is Este mês, Ontem is one day: 4 reads
     first = sync.quick_periods(date(2026, 12, 1))
     assert (date(2026, 11, 1), date(2026, 11, 30)) in first and len(first) == 4
+
+
+def test_two_passes_within_one_second_are_still_told_apart(team, monkeypatch):
+    """`last_sync` is how a pass is told from the one before (the page polls after
+    Atualizar agora until it moves), and it has whole seconds: a pass that starts within
+    the second of the previous one takes the next second instead of the same stamp."""
+    store, meta, *_ = team
+    second = "2026-10-20T12:00:00Z"
+    monkeypatch.setattr(sync, "_stamp", lambda: second)
+    sync.run(store, meta, days=1, today=TODAY)
+    assert meta.last_sync == second == store.sync_state()["last_sync"]
+    sync.run(store, meta, days=1, today=TODAY)
+    assert meta.last_sync == "2026-10-20T12:00:01Z" == store.sync_state()["last_sync"]
+    # only an equal stamp is moved: once the clock is elsewhere the stamp is the clock's,
+    # and a clock set back is not pushed ahead of itself
+    for now in ("2026-10-20T12:00:30Z", "2026-10-20T11:59:00Z"):
+        monkeypatch.setattr(sync, "_stamp", lambda now=now: now)
+        sync.run(store, meta, days=1, today=TODAY)
+        assert meta.last_sync == now
+
+
+def test_a_fresh_meta_object_reads_the_previous_stamp_from_the_store(team, monkeypatch):
+    """`pauta meta sync` from the CLI, or the server right after a restart: the previous
+    pass is known from the database, not from memory."""
+    store, meta, *_ = team
+    second = "2026-10-20T12:00:00Z"
+    monkeypatch.setattr(sync, "_stamp", lambda: second)
+    sync.run(store, meta, days=1, today=TODAY)
+    meta.last_sync = None  # as a new process starts
+    sync.run(store, meta, days=1, today=TODAY)
+    assert meta.last_sync == "2026-10-20T12:00:01Z"

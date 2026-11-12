@@ -65,8 +65,25 @@ def running() -> bool:
     return _lock.locked()
 
 
+STAMP = "%Y-%m-%dT%H:%M:%SZ"
+
+
 def _stamp() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return time.strftime(STAMP, time.gmtime())
+
+
+def _pass_stamp(previous: str | None) -> str:
+    """A pass's stamp: now, to the second, or one second on when that is exactly the stamp
+    of the pass before. `last_sync` is how a pass is told from the one before (after
+    Atualizar agora the page polls until it moves; no move and nothing running reads as "the
+    pass never ended"), and two passes can start within one second: against the fake Meta
+    on a fast machine, hardly against the real one, where a pass takes seconds and holds
+    the lock meanwhile. Only an equal stamp is moved, so a clock that was set back is
+    never pushed ahead of itself."""
+    now = _stamp()
+    if now != previous:
+        return now
+    return (datetime.strptime(now, STAMP) + timedelta(seconds=1)).strftime(STAMP)
 
 
 def run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> dict:
@@ -126,7 +143,8 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         "insight_rows": 0,
         "errors": [],
     }
-    fetched = _stamp()
+    # the previous pass from the database: a new process (the CLI, a restart) has no memory
+    fetched = _pass_stamp(store.sync_state()["last_sync"])
     known = meta.orphans  # unplaced after the last pass: reported before
     accounts, placed = _linked(store, meta, conns)
     first_error = ""  # what `sync_error` says: Meta's errors, and an orphan the first time

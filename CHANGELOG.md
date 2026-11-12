@@ -7,6 +7,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Atualizar agora" não diz mais "A sincronização não terminou" sobre números novos.** A
+  tela sabe que uma sincronização acabou porque o horário da última mudou, e esse horário
+  tem segundos inteiros: uma sincronização que começasse no mesmo segundo da anterior
+  ficava com o mesmo horário e parecia não ter rodado. Com a Meta de verdade isso
+  praticamente não acontece (uma sincronização leva segundos); nos testes de navegador,
+  rápidos, acontecia cerca de uma vez em quinze e podia parar uma versão. Agora duas
+  sincronizações seguidas nunca ficam com o mesmo horário.
+
 ## [1.10.1] - 2026-11-12
 
 ### Fixed

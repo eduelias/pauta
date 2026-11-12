@@ -909,3 +909,19 @@ def test_configuracoes_campanhas_sets_the_alerts(synced):
     page.locator("#campsettings").get_by_role("button", name="Salvar campanhas").click()
     expect(page.locator("#toast")).to_contain_text("a alta de custo fora do intervalo")
     assert store.campaign_settings()["rise_pct"] == 30
+
+
+def test_sync_now_within_the_second_of_the_previous_pass(synced, monkeypatch):
+    """Atualizar agora tapped so soon that its pass starts within the second of the one
+    before (a fast machine, the fake Meta): the page tells a finished pass by a newer
+    `last_sync`, so the pass takes the next second and the page says it ended, instead of
+    "A sincronização não terminou" over fresh numbers."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    previous = store.sync_state()["last_sync"]
+    monkeypatch.setattr(sync, "_stamp", lambda: previous)  # the clock hasn't ticked
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator(".krow[data-id]")).to_have_count(3)
+    page.get_by_role("button", name="Atualizar agora").click()
+    expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
+    assert store.sync_state()["last_sync"] != previous
