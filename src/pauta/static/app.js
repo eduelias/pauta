@@ -19,6 +19,17 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 let NAV_SEQ = 0, LOADING = 0;
 class Stale extends Error {}
 
+// A screen tidying its own address (its filter, its period) with replaceState. The hash
+// changes the moment the person taps a link, but the router only hears of it a tick later
+// (hashchange is queued), and a list whose data arrives in between has no way to know it
+// is stale: NAV_SEQ hasn't moved yet. Writing its address then would put the old hash back
+// and the router would follow it, so the tap is lost. So a screen only rewrites the
+// address while the address is still its own (the same path, whatever the query).
+const hashPath = (hash) => (hash || "#/").slice(1).split("?")[0] || "/";
+function keepHash(hash) {
+  if (hashPath(location.hash) === hashPath(hash)) history.replaceState(null, "", hash);
+}
+
 async function api(method, path, body) {
   const nav = LOADING && method === "GET" ? NAV_SEQ : null;
   const opts = { method, headers: {} };

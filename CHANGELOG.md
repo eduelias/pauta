@@ -7,6 +7,16 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Um toque no menu não se perde mais quando a lista chega na mesma hora.** Ao sair de
+  Pedidos (ou de Campanhas, Clientes) no instante em que os dados da tela ainda estavam
+  chegando, a tela antiga às vezes reescrevia o endereço com o seu filtro
+  (`#/pedidos?f=open`) por cima do novo, e a pessoa continuava onde estava, como se não
+  tivesse tocado. Agora uma tela só ajusta o endereço enquanto ele ainda é o dela. Era
+  também o que fazia um teste de navegador falhar de vez em quando (a primeira tentativa
+  da versão 1.10.0 parou nele).
+
 ## [1.10.0] - 2026-11-12
 
 ### Added

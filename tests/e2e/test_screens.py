@@ -70,3 +70,33 @@ def test_gravatar_shows_over_the_initials(signed_in):
         expect(img).to_have_attribute(
             "src", re.compile(r"^https://gravatar\.com/avatar/[0-9a-f]{64}\?")
         )
+
+
+def test_a_screen_left_behind_does_not_take_the_address_back(signed_in):
+    """The hash changes at once and the router hears of it a tick later. A list whose data
+    arrived in between used to tidy its own address (`#/pedidos?f=open`) over the new one,
+    and the router then went back to it: the person tapped Clientes and stayed on Pedidos."""
+    base, open_device = signed_in
+    page = open_device().page
+    page.goto(f"{base}/#/clientes")
+    expect(page.get_by_role("heading", name="Clientes", exact=True)).to_be_visible()
+    # Pedidos' list answers only when the test says so (a slow connection on a phone)
+    page.evaluate(
+        """async () => {
+          const real = window.fetch, data = await (await real("/api/requests")).json();
+          window.held = new Promise((release) => { window.release = release; });
+          window.fetch = (url, opts) => {
+            if (url !== "/api/requests") return real(url, opts);
+            window.asked = true;
+            const answer = { ok: true, status: 200, json: () => Promise.resolve(data) };
+            return window.held.then(() => answer);
+          };
+        }"""
+    )
+    page.evaluate("location.hash = '#/pedidos'")
+    page.wait_for_function("window.asked === true")
+    # the person taps Clientes, and the list arrives before the router has heard of the tap
+    page.evaluate("() => { location.hash = '#/clientes'; window.release(); }")
+    expect(page.get_by_role("heading", name="Clientes", exact=True)).to_be_visible()
+    expect(page).to_have_url(re.compile(r"#/clientes$"))
+    expect(page.get_by_role("heading", name="Pedidos", exact=True)).to_have_count(0)

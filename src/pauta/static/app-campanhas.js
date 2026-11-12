@@ -350,7 +350,7 @@ async function viewOverview(query) {
   const doc = await api("GET", `/api/campaigns/overview?since=${since}&until=${until}`);
   savePeriod(st);
   track("period", { p: st.p });
-  history.replaceState(null, "", `#/campanhas/geral?${periodQuery(st)}`);
+  keepHash(`#/campanhas/geral?${periodQuery(st)}`);
   const segments = [...new Set(doc.clients.map((c) => c.segment).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if (!segments.includes(ovState.segment)) ovState.segment = "";
   const n = doc.clients.length;
@@ -387,7 +387,7 @@ async function viewCampaigns(query) {
   const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`);
   savePeriod(st);
   track("period", { p: st.p });  // after the call: an api_slow row sits next to the period that cost it
-  history.replaceState(null, "", `#/campanhas?${periodQuery(st)}`);
+  keepHash(`#/campanhas?${periodQuery(st)}`);
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
   // a campaign younger than the period has numbers only from its "ativa desde" on
   const late = doc.clients.some((c) => c.campaigns.some((k) => k.state !== "skipped" && k.started && k.started > since));
@@ -666,7 +666,7 @@ async function viewCampaign(query, id) {
   const k = doc.campaign;
   savePeriod(st);
   track("period", { p: st.p });
-  history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
+  keepHash(`#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();
   // the metrics are always chips; the actions Meta reports (there can be twenty) sit behind

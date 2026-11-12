@@ -47,7 +47,7 @@ async function viewSettings(query) {
   if (ME.is_admin && BOOT.meta?.enabled) loadMeta();
   const back = query?.get("meta");  // the way back from Meta's login (/api/meta/callback)
   if (back) {
-    history.replaceState(null, "", "#/configuracoes");
+    keepHash("#/configuracoes");
     if (back === "conectado") toast("Meta conectada");
     else toast(META_ERRORS[query.get("motivo")] || "Não foi possível conectar à Meta; tente de novo", true);
   }
