@@ -201,6 +201,44 @@ def test_balance_running_out_only_with_a_balance_and_a_live_campaign():
     assert overview.flags(paused, TODAY, remaining_cents=500) == []
 
 
+def test_a_balance_at_zero_ran_out_and_explains_the_missing_delivery():
+    """Nothing left is "saldo acabou", never "acaba hoje"; with the campaigns not delivering
+    it is one alert, the balance as the cause; and it is said even when the last 7 days
+    spent nothing (an account empty for a week has no pace to divide by)."""
+    spending = client(total(7000, 70), total(7000, 70))
+    assert overview.flags(spending, TODAY, remaining_cents=0) == [
+        {"key": "balance", "level": ACT, "text": "saldo acabou"}
+    ]
+    stopped = client(total(7000, 70), total(7000, 70), quiet=1)
+    assert overview.flags(stopped, TODAY, remaining_cents=0) == [
+        {"key": "balance", "level": ACT, "text": "saldo acabou: sem entrega desde ontem"}
+    ]
+    some = client(total(7000, 70), total(7000, 70), quiet=1, active=3)
+    assert overview.flags(some, TODAY, remaining_cents=0)[0]["text"] == (
+        "saldo acabou: 1 de 3 campanhas sem entrega desde ontem"
+    )
+    # a little left and no delivery stay two alerts: the balance is not the reason yet
+    assert keys(overview.flags(stopped, TODAY, remaining_cents=500)) == ["stopped", "balance"]
+    idle = client(quiet=1)  # nothing spent in the last 7 days
+    assert overview.flags(idle, TODAY, remaining_cents=0) == [
+        {"key": "balance", "level": ACT, "text": "saldo acabou: sem entrega desde ontem"}
+    ]
+    # numbers not arriving is said alone, next to the empty balance
+    marks = overview.flags(idle, TODAY, remaining_cents=0, problem=overview.NO_DATA)
+    assert [(f["key"], f["text"]) for f in marks] == [
+        ("no_data", overview.NO_DATA),
+        ("balance", "saldo acabou"),
+    ]
+    # not for a paused client, an account without a limit, or a team that switched it off
+    paused = client(active=0)
+    assert overview.flags(paused, TODAY, remaining_cents=0) == []
+    assert overview.flags(idle, TODAY, remaining_cents=None) == [
+        {"key": "stopped", "level": ACT, "text": "sem entrega desde ontem"}
+    ]
+    off = {**overview.DEFAULTS, "low_balance_days": 0}
+    assert keys(overview.flags(idle, TODAY, remaining_cents=0, rules=off)) == ["stopped"]
+
+
 def test_unseen_only_for_a_team_that_marks_visto_hoje():
     assert overview.flags(client(last_seen=day(1)), TODAY) == []
     assert overview.flags(client(last_seen=day(3)), TODAY) == [

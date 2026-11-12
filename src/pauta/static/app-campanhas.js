@@ -322,8 +322,10 @@ function delta(pct, what, upIsBad) {
 // conversation. Amounts with a plain space: Intl's no-break one shows as a box in some chats.
 const plainMoney = (cents, cur) => centsMoney(cents, cur).replace(/\u00a0/g, " ");
 const clientHello = (c) => { const who = firstName(c.contact); return `Olá${who ? `, ${who}` : ""}!`; };
-// "saldo para 2 dias", said to the one who puts the credit in
+// "saldo para 2 dias", said to the one who puts the credit in; a balance already at zero is
+// said as it is (the row says "saldo acabou"), never as "acaba hoje (restam R$ 0,00)"
 function balanceText(c) {
+  if (!c.balance.remaining_cents) return `${clientHello(c)} O saldo dos seus anúncios acabou, e sem saldo as campanhas ficam paradas. Para voltarem a rodar, é só colocar crédito. Qualquer dúvida, é só me chamar.`;
   const left = c.balance.days_left, money = plainMoney(c.balance.remaining_cents, c.currency);
   const lasts = left > 0 ? `dura mais ${left} ${left === 1 ? "dia" : "dias"} no ritmo atual (restam ${money})` : `acaba hoje (restam ${money})`;
   const when = left > 1 ? "nos próximos dias" : left === 1 ? "até amanhã" : "ainda hoje";
@@ -342,9 +344,14 @@ function clientMessages(c, doc) {
   const to = waUrl(c.whatsapp);
   const link = (kind, label, glyph, text) => `<a class="oact" data-act="${kind}" href="${esc(`${to || "https://wa.me/"}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener" title="${to ? `Abre a conversa com ${esc(c.contact || c.name)} com a mensagem escrita: você lê e envia` : "O cliente não tem WhatsApp cadastrado: o WhatsApp pergunta para quem enviar"}">${icon(glyph)}${label}</a>`;
   const out = [];
-  if (c.balance?.days_left != null && c.flags.some((f) => f.key === "balance")) out.push(link("balance", "Avisar do saldo", "wa", balanceText(c)));
+  if (c.balance && c.flags.some((f) => f.key === "balance")) out.push(link("balance", "Avisar do saldo", "wa", balanceText(c)));
   if (c.period.spend_cents > 0) out.push(link("summary", "Enviar resumo", "send", summaryText(c, doc.since, doc.until)));
   return out.length ? `<div class="oacts">${out.join("")}</div>` : "";
+}
+// under the amount: "acabou" at zero, "menos de um dia" when it won't cover one, else the days
+function balanceLasts(b) {
+  const text = !b.remaining_cents ? "acabou" : b.days_left == null ? "" : b.days_left === 0 ? "menos de um dia" : `para ${b.days_left} ${b.days_left === 1 ? "dia" : "dias"}`;
+  return text ? `<span class="ksub">${text}</span>` : "";
 }
 function overviewRow(c, doc) {
   const p = c.period, ch = c.change, byResult = ch.kind === "result";
@@ -354,7 +361,7 @@ function overviewRow(c, doc) {
     : `<b>${esc(count(p.results))}</b><span class="ksub">${esc(resultLabel(p.result_indicator))}${p.cost_per_result_cents != null ? ` · ${esc(centsMoney(p.cost_per_result_cents, c.currency))} cada` : ""}</span>`;
   const change = [delta(ch.cost_pct, byResult ? "custo por resultado" : "custo por clique", true), delta(ch.volume_pct, byResult ? "resultados" : "cliques", false)].join("") || dash(none);
   const balance = c.balance
-    ? `<b>${esc(centsMoney(c.balance.remaining_cents, c.currency))}</b>${c.balance.days_left != null ? `<span class="ksub">para ${c.balance.days_left} ${c.balance.days_left === 1 ? "dia" : "dias"}</span>` : ""}`
+    ? `<b>${esc(centsMoney(c.balance.remaining_cents, c.currency))}</b>${balanceLasts(c.balance)}`
     : dash("a Meta não informa o saldo desta conta");
   const seen = c.seen_today
     ? `<span class="oseen">${icon("check")}hoje${c.seen_today.by ? `, ${esc(firstName(c.seen_today.by))}` : ""}</span>`

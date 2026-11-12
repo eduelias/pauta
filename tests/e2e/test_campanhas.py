@@ -969,13 +969,28 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
     # the bakery has no balance to speak of: never the warning
     expect(other.locator("[data-act=balance]")).to_have_count(0)
 
+    expect(row.locator(".om-balance .ksub")).to_have_text("para 2 dias")
     c = leave(1)  # one cent: not a day's worth
     assert c["balance"]["days_left"] == 0
     expect(row.locator("[data-flag=balance]")).to_have_text("saldo acaba hoje")
+    expect(row.locator(".om-balance .ksub")).to_have_text("menos de um dia")
     _, text = message(row.locator("[data-act=balance]"))
     assert text == (
         "Olá, Carla! O saldo dos seus anúncios acaba hoje (restam R$ 0,01). Para as "
         f"campanhas não pararem, vale colocar crédito ainda hoje. {close}"
+    )
+
+    # nothing left: said as it is, on the row and in the message (never "acaba hoje (restam
+    # R$ 0,00)", which is what a client with an empty account was told)
+    c = leave(0)
+    assert c["balance"] == {"remaining_cents": 0, "days_left": 0}
+    expect(row.locator("[data-flag=balance]")).to_have_text("saldo acabou")
+    expect(row.locator(".om-balance b")).to_contain_text("0,00")
+    expect(row.locator(".om-balance .ksub")).to_have_text("acabou")
+    _, text = message(row.locator("[data-act=balance]"))
+    assert text == (
+        "Olá, Carla! O saldo dos seus anúncios acabou, e sem saldo as campanhas ficam "
+        f"paradas. Para voltarem a rodar, é só colocar crédito. {close}"
     )
 
     # the tap opens WhatsApp in its own tab; the log keeps the kind and nothing of the client

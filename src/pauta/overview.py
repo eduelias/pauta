@@ -133,15 +133,25 @@ def flags(
     (`Store.campaign_settings`)."""
     out: list[dict] = []
     last, before = c["sums"]["last"], c["sums"]["before"]
+    # nothing left at all is its own case: it is said whatever the pace was (an account
+    # empty for a week spent nothing in the last 7 days), and never as "acaba hoje"
+    empty = bool(remaining_cents == 0 and c["active"] and rules["low_balance_days"])
+    stopped = ""
+    if c["quiet"]:
+        stopped = "sem entrega desde ontem"
+        if c["quiet"] < c["active"]:
+            stopped = f"{c['quiet']} de {c['active']} campanhas sem entrega desde ontem"
     if problem:
         out.append({"key": "no_data", "level": ACT, "text": problem})
-    elif c["quiet"]:  # without numbers arriving, "no delivery" would only repeat `problem`
-        text = "sem entrega desde ontem"
-        if c["quiet"] < c["active"]:
-            text = f"{c['quiet']} de {c['active']} campanhas sem entrega desde ontem"
-        out.append({"key": "stopped", "level": ACT, "text": text})
+    elif stopped and not empty:
+        # without numbers arriving, "no delivery" would only repeat `problem`
+        out.append({"key": "stopped", "level": ACT, "text": stopped})
     left = days_left(remaining_cents, last) if c["active"] else None
-    if left is not None and left < rules["low_balance_days"]:
+    if empty:
+        # no balance and no delivery are one event, the first the cause: one alert says both
+        text = f"saldo acabou: {stopped}" if stopped and not problem else "saldo acabou"
+        out.append({"key": "balance", "level": ACT, "text": text})
+    elif left is not None and left < rules["low_balance_days"]:
         text = f"saldo para {_plural(left, 'dia', 'dias')}" if left else "saldo acaba hoje"
         out.append({"key": "balance", "level": ACT, "text": text})
     since = flag_windows(today)[1][0]  # where the earlier window starts

@@ -7,6 +7,19 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Visão geral: um saldo que já acabou não aparece mais como "saldo acaba hoje".** O
+  alerta dizia "acaba hoje" para qualquer saldo que não cobrisse um dia, inclusive zero: uma
+  conta parada havia dois dias, com R$ 0,00 na Meta, lia como se ainda houvesse tempo. Agora
+  saldo zerado é **"saldo acabou"**, e quando as campanhas também pararam de entregar o
+  alerta é um só, com a causa na frente: "saldo acabou: sem entrega desde ontem" (antes eram
+  dois alertas para o mesmo acontecimento). O alerta vale mesmo se nada foi gasto nos
+  últimos 7 dias, caso em que antes não aparecia. Na coluna Saldo, embaixo do valor:
+  "acabou", "menos de um dia" (era "para 0 dias") ou "para N dias". A mensagem de **Avisar
+  do saldo** acompanha: com saldo zerado ela diz que o saldo acabou e que sem saldo as
+  campanhas ficam paradas, em vez de "acaba hoje (restam R$ 0,00)".
+
 ## [1.11.0] - 2026-11-12
 
 ### Added
