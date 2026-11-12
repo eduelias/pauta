@@ -239,6 +239,112 @@ function clientTotals(c) {
 const sinceTag = (k) => k.state === "active" && k.started
   ? `<span class="ksince" title="ativa desde ${esc(fmtDate(k.started, { day: "2-digit", month: "2-digit", year: "numeric" }))}: antes disso não há números">ativa desde ${esc(shortDay(k.started))}</span>` : "";
 
+// Campanhas' two views of the same numbers: client by client, or every client on one row
+const campTabs = (st, on) => `<nav class="ctabs" aria-label="Visões de Campanhas">${[["", "Por cliente"], ["/geral", "Visão geral"]].map(([path, label]) => `<a href="#/campanhas${path}?${periodQuery(st)}" class="${path === on ? "on" : ""}"${path === on ? ` aria-current="page"` : ""}>${label}</a>`).join("")}</nav>`;
+
+// ---------- visão geral (docs/campaign-overview-spec.md) -------------------------------------
+// Every client on one row, the ones that need a look first. The server did the arithmetic
+// (GET /api/campaigns/overview): the flags are its rules over the last 7 full days against
+// the 7 before, whatever period the columns show.
+
+// what the small line on each row draws, one point per day of the last 14
+const TRENDS = {
+  spend: ["Valor gasto", (d) => d.spend_cents],
+  clicks: ["Cliques no link", (d) => d.link_clicks],
+  cpc: ["Custo por clique", (d) => centsPer(d.spend_cents, d.link_clicks)],
+  results: ["Resultados", (d) => d.results],
+};
+const ovState = { flagged: false, segment: "", trend: "spend" };  // for the session
+
+// a line through the days that have a value (a day without one breaks it), scaled to its own top
+function trendLine(values, label) {
+  const W = 120, H = 30, pad = 3, n = values.length;
+  const max = Math.max(0, ...values.map((v) => v ?? 0));
+  if (!max) return dash("sem números nos últimos 14 dias");
+  let line = "", area = "", from = null, last = 0;
+  const close = () => { if (from != null) area += `L${last.toFixed(1)} ${H}L${from.toFixed(1)} ${H}Z`; from = null; };
+  values.forEach((v, i) => {
+    if (v == null) { close(); return; }
+    const x = n > 1 ? i * W / (n - 1) : W / 2, y = H - pad - v / max * (H - 2 * pad);
+    const step = `${from == null ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+    line += step;
+    area += step;
+    if (from == null) from = x;
+    last = x;
+  });
+  close();
+  return `<svg class="otrend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(label)} por dia, últimos 14 dias"><path class="area" d="${area}"/><path class="line" d="${line}"/></svg>`;
+}
+// "▲ 42%" in red when that direction is bad news (cost up, volume down), green when good,
+// plain under 10%: a wobble isn't a trend
+function delta(pct, what, upIsBad) {
+  if (pct == null) return "";
+  const cls = Math.abs(pct) < 10 ? "" : (pct > 0) === upIsBad ? "bad" : "good";
+  return `<span class="odelta ${cls}">${pct > 0 ? "▲" : pct < 0 ? "▼" : "="} ${Math.abs(pct) > 999 ? "mais de 999" : Math.abs(pct)}% <span>${what}</span></span>`;
+}
+function overviewRow(c) {
+  const p = c.period, ch = c.change, byResult = ch.kind === "result";
+  const none = ch.partial ? "as campanhas começaram há pouco: ainda não há um período anterior inteiro para comparar" : "sem números no período anterior para comparar";
+  const results = p.results == null
+    ? dash(p.mixed ? "as campanhas contam coisas diferentes: os resultados não se somam" : "sem resultados no período")
+    : `<b>${esc(count(p.results))}</b><span class="ksub">${esc(resultLabel(p.result_indicator))}${p.cost_per_result_cents != null ? ` · ${esc(centsMoney(p.cost_per_result_cents, c.currency))} cada` : ""}</span>`;
+  const change = [delta(ch.cost_pct, byResult ? "custo por resultado" : "custo por clique", true), delta(ch.volume_pct, byResult ? "resultados" : "cliques", false)].join("") || dash(none);
+  const balance = c.balance
+    ? `<b>${esc(centsMoney(c.balance.remaining_cents, c.currency))}</b>${c.balance.days_left != null ? `<span class="ksub">para ${c.balance.days_left} ${c.balance.days_left === 1 ? "dia" : "dias"}</span>` : ""}`
+    : dash("a Meta não informa o saldo desta conta");
+  const seen = c.seen_today
+    ? `<span class="oseen">${icon("check")}hoje${c.seen_today.by ? `, ${esc(firstName(c.seen_today.by))}` : ""}</span>`
+    : c.last_seen ? `<span class="muted small" title="o último Visto hoje">${esc(shortDay(c.last_seen))}</span>` : dash("ainda sem Visto hoje");
+  const [trendLabel, trendOf] = TRENDS[ovState.trend];
+  return `<div class="orow${c.flags.length ? " flagged" : ""}" data-client="${c.id}">
+    <div class="oname"><a href="#/cliente/${c.id}">${avatar(c.name)}<b>${esc(c.name)}</b></a>
+      <span class="muted small">${c.active} de ${c.campaigns} ${c.campaigns === 1 ? "campanha ativa" : "campanhas ativas"}${c.segment ? ` · ${esc(c.segment)}` : ""}</span>
+      ${c.flags.length ? `<div class="oflags">${c.flags.map((f) => `<span class="oflag l${f.level}" data-flag="${esc(f.key)}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
+    <div class="om om-spend"><span class="kl">Valor gasto</span><b>${esc(centsMoney(p.spend_cents, c.currency))}</b></div>
+    <div class="om om-clicks"><span class="kl">Cliques no link</span><b>${esc(count(p.link_clicks))}</b>${p.cpl_cents != null ? `<span class="ksub">${esc(centsMoney(p.cpl_cents, c.currency))} cada</span>` : ""}</div>
+    <div class="om om-results"><span class="kl">Resultados</span>${results}</div>
+    <div class="om om-change"><span class="kl">Contra o período anterior</span>${change}</div>
+    <div class="om om-trend"><span class="kl">${esc(trendLabel)}, 14 dias</span>${trendLine(c.days.map(trendOf), trendLabel)}</div>
+    <div class="om om-balance"><span class="kl">Saldo</span>${balance}</div>
+    <div class="om om-seen"><span class="kl">Visto</span>${seen}</div>
+  </div>`;
+}
+async function viewOverview(query) {
+  if (!metaVisible()) { location.hash = "#/"; return; }
+  const st = readPeriod(query);
+  const [since, until] = periodDates(st.p, st);
+  const doc = await api("GET", `/api/campaigns/overview?since=${since}&until=${until}`);
+  savePeriod(st);
+  track("period", { p: st.p });
+  history.replaceState(null, "", `#/campanhas/geral?${periodQuery(st)}`);
+  const segments = [...new Set(doc.clients.map((c) => c.segment).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  if (!segments.includes(ovState.segment)) ovState.segment = "";
+  const n = doc.clients.length;
+  const head = `<div class="orow ohead" aria-hidden="true"><div class="oname">Cliente</div>${["Valor gasto", "Cliques no link", "Resultados", "Contra o período anterior", "Tendência, 14 dias", "Saldo", "Visto"].map((l) => `<div class="om">${l}</div>`).join("")}</div>`;
+  app.innerHTML = `<div>
+    <div class="head"><div><h1>Campanhas</h1><p id="ovsummary">${n} ${n === 1 ? "cliente" : "clientes"} com campanhas acompanhadas${doc.flagged ? `, <b>${doc.flagged} ${doc.flagged === 1 ? "pede" : "pedem"} atenção</b>` : n ? ", nenhum alerta" : ""}.</p></div></div>
+    ${campTabs(st, "/geral")}
+    ${periodPicker(st)}
+    <p class="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span><span class="muted small">Os alertas comparam os últimos 7 dias com os 7 anteriores, sem contar hoje.</span></p>
+    <div class="otools">
+      <label class="toggle small"><input type="checkbox" id="onlyflagged" ${ovState.flagged ? "checked" : ""}>só com alerta</label>
+      ${segments.length > 1 ? `<label class="pick">Segmento<select class="input" id="ovsegment"><option value="">Todos</option>${segments.map((s) => `<option${s === ovState.segment ? " selected" : ""}>${esc(s)}</option>`).join("")}</select></label>` : ""}
+      <label class="pick">Tendência<select class="input" id="ovtrend">${Object.entries(TRENDS).map(([k, [label]]) => `<option value="${k}"${k === ovState.trend ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+    </div>
+    <section class="panel" id="overview"></section>
+  </div>`;
+  const draw = () => {
+    const shown = doc.clients.filter((c) => (!ovState.flagged || c.flags.length) && (!ovState.segment || c.segment === ovState.segment));
+    $("#overview").innerHTML = shown.length ? `<div class="orows">${head}${shown.map(overviewRow).join("")}</div>`
+      : `<div class="empty"><span class="big">${n ? "✅" : "📣"}</span>${n ? "Nenhum cliente com alerta neste filtro." : "Nenhum cliente com campanha acompanhada ainda."}</div>`;
+  };
+  draw();
+  bindPeriod(st, () => viewOverview(new URLSearchParams(periodQuery(st))));
+  $("#onlyflagged").addEventListener("change", (e) => { ovState.flagged = e.target.checked; draw(); });
+  $("#ovsegment")?.addEventListener("change", (e) => { ovState.segment = e.target.value; draw(); });
+  $("#ovtrend").addEventListener("change", (e) => { ovState.trend = e.target.value; draw(); });
+}
+
 const campState = { skipped: false };  // "ver ignoradas", for the session
 async function viewCampaigns(query) {
   if (!metaVisible()) { location.hash = "#/"; return; }
@@ -289,6 +395,7 @@ async function viewCampaigns(query) {
     <div class="head"><div><h1>Campanhas</h1><p>${n} ${n === 1 ? "campanha acompanhada" : "campanhas acompanhadas"} de ${checkable.length} ${checkable.length === 1 ? "cliente" : "clientes"}.</p></div>
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
+    ${campTabs(st, "")}
     ${periodPicker(st)}
     <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${toSee.length ? `<button class="btn small" id="seenall" title="Marca visto hoje em todos os clientes com campanha ativa que ainda não foram vistos">${icon("check")}Visto hoje: todos</button>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>

@@ -15,6 +15,7 @@ const ROUTES = [
   [/^\/cliente\/(\d+)$/, viewClient],
   [/^\/financeiro$/, viewFinance],
   [/^\/campanhas$/, viewCampaigns],
+  [/^\/campanhas\/geral$/, viewOverview],
   [/^\/campanha\/(\d+)$/, viewCampaign],
   [/^\/relatorio\/(\d+)$/, viewReport],
   [/^\/configuracoes$/, viewSettings],

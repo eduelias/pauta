@@ -7,6 +7,24 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Campanhas → Visão geral: todos os clientes numa tela, quem precisa de atenção
+  primeiro.** Uma segunda aba em Campanhas (a lista de sempre vira "Por cliente") mostra
+  uma linha por cliente: valor gasto, cliques e custo por clique, resultados quando as
+  campanhas contam a mesma coisa, a variação contra o período anterior, uma linha de
+  tendência dos últimos 14 dias, o saldo com "para N dias" e o Visto. Cada linha traz seus
+  alertas em uma frase que dá para conferir no Gerenciador: "custo por clique subiu 42% em
+  7 dias", "resultados caíram 35% com o mesmo investimento", "sem entrega desde ontem",
+  "saldo para 2 dias", "sem dados novos da Meta", "sem análise há 3 dias". Os alertas
+  comparam sempre os últimos 7 dias com os 7 anteriores, sem contar hoje, e só falam acima
+  de R$ 20 gastos em cada semana; um cliente cujas campanhas começaram há pouco não é
+  comparado com um período em que ainda não existia. Filtros: só com alerta, segmento e o
+  que a tendência desenha. Pedido da equipe, para o dia em que forem 50 clientes; nada é
+  lido da Meta ao abrir (são os números diários que a Pauta já guarda). API:
+  `GET /api/campaigns/overview`. Desenho e perguntas em aberto:
+  `docs/campaign-overview-spec.md`.
+
 ## [1.9.0] - 2026-11-12
 
 ### Added

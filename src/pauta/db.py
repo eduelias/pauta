@@ -1219,6 +1219,105 @@ class Store:
             out[-1]["campaigns"].append(d)
         return out
 
+    def campaign_overview(
+        self, windows: dict[str, tuple[str, str]], trend: tuple[str, str], today: str
+    ) -> list[dict]:
+        """Per client with a tracked campaign (by name), for Visão geral: how many campaigns
+        it has (`campaigns`) and how many are live (`active`), the daily rows of each named
+        window in `windows` ({name: (since, until)}, as lists under `rows`), one summed row
+        per day of `trend` (`days`, zero-filled; `results` None on a day without a count),
+        `quiet` (live campaigns older than yesterday with no impression yesterday or today)
+        and `last_seen` (the day of its latest Visto hoje, None when never) and `first_day`
+        (its first day with numbers ever, None without any: a window that starts before it
+        is not a whole one). Money is in `currency`, the first campaign's account's."""
+        marks = ",".join("?" for _ in TRACKED_STATES)
+        yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
+        spans = [*windows.values(), trend, (yesterday, today)]
+        lo, hi = min(s for s, _ in spans), max(u for _, u in spans)
+        with self.db() as db:
+            campaigns = db.execute(
+                "SELECT k.client, c.name, c.segment, k.meta_id, k.state, k.started, a.currency "
+                "FROM campaign k JOIN client c ON c.id=k.client "
+                "LEFT JOIN meta_account a ON a.account_id=k.account_id "
+                f"WHERE k.state IN ({marks}) ORDER BY c.name COLLATE NOCASE, c.id, k.id",
+                TRACKED_STATES,
+            ).fetchall()
+            daily = db.execute(
+                "SELECT meta_id, day, spend_cents, impressions, link_clicks, results, "
+                "result_indicator FROM insight WHERE day BETWEEN ? AND ? ORDER BY day",
+                (lo, hi),
+            ).fetchall()
+            seen = db.execute(
+                'SELECT k.client, MAX(r."on") AS day FROM review r '
+                "JOIN campaign k ON k.id=r.campaign GROUP BY k.client"
+            ).fetchall()
+            first = db.execute(
+                "SELECT k.client, MIN(i.day) AS day FROM insight i "
+                f"JOIN campaign k ON k.meta_id=i.meta_id WHERE k.state IN ({marks}) "
+                "GROUP BY k.client",
+                TRACKED_STATES,
+            ).fetchall()
+        last_seen = {r["client"]: r["day"] for r in seen}
+        first_day = {r["client"]: r["day"] for r in first}
+        by_campaign: dict[str, list] = {}
+        for r in daily:
+            by_campaign.setdefault(r["meta_id"], []).append(r)
+        trend_days = [
+            (date.fromisoformat(trend[0]) + timedelta(days=i)).isoformat()
+            for i in range((date.fromisoformat(trend[1]) - date.fromisoformat(trend[0])).days + 1)
+        ]
+        out: list[dict] = []
+        for k in campaigns:
+            if not out or out[-1]["id"] != k["client"]:
+                out.append(
+                    {
+                        "id": k["client"],
+                        "name": k["name"],
+                        "segment": k["segment"],
+                        "currency": k["currency"],
+                        "campaigns": 0,
+                        "active": 0,
+                        "quiet": 0,
+                        "last_seen": last_seen.get(k["client"]),
+                        "first_day": first_day.get(k["client"]),
+                        "rows": {name: [] for name in windows},
+                        "days": {d: None for d in trend_days},
+                    }
+                )
+            c = out[-1]
+            mine = by_campaign.get(k["meta_id"], [])
+            c["campaigns"] += 1
+            if k["state"] == "active":
+                c["active"] += 1
+                recent = sum(r["impressions"] for r in mine if r["day"] >= yesterday)
+                if not recent and (k["started"] or "") < yesterday:
+                    c["quiet"] += 1
+            for r in mine:
+                for name, (since, until) in windows.items():
+                    if since <= r["day"] <= until:
+                        c["rows"][name].append(r)
+                if r["day"] in c["days"]:
+                    c["days"][r["day"]] = [*(c["days"][r["day"]] or []), r]
+        for c in out:
+            c["days"] = [
+                {
+                    "day": d,
+                    "spend_cents": sum(r["spend_cents"] for r in rs or []),
+                    "link_clicks": sum(r["link_clicks"] for r in rs or []),
+                    "impressions": sum(r["impressions"] for r in rs or []),
+                    "results": sum(r["results"] for r in rs if r["results"] is not None)
+                    if any(r["results"] is not None for r in rs or [])
+                    else None,
+                }
+                for d, rs in c["days"].items()
+            ]
+        return out
+
+    def reviews_used(self) -> bool:
+        """Whether anyone has ever marked Visto hoje (Visão geral only nags a team that does)."""
+        with self.db() as db:
+            return db.execute("SELECT 1 FROM review LIMIT 1").fetchone() is not None
+
     def campaign(self, cid: int, since: str | None = None, until: str | None = None) -> dict:
         """One campaign with its daily rows in the range (all of them when no range), and
         the client's name, contact and WhatsApp (the report's "Compartilhar com o cliente")."""
