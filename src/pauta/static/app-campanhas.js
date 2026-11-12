@@ -246,6 +246,7 @@ async function viewCampaigns(query) {
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`);
   savePeriod(st);
+  track("period", { p: st.p });  // after the call: an api_slow row sits next to the period that cost it
   history.replaceState(null, "", `#/campanhas?${periodQuery(st)}`);
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
   // a campaign younger than the period has numbers only from its "ativa desde" on
@@ -256,6 +257,8 @@ async function viewCampaigns(query) {
   const checkable = doc.clients.filter((c) => c.campaigns.length);
   const clients = [...checkable.filter((c) => !c.seen_today), ...checkable.filter((c) => c.seen_today), ...doc.clients.filter((c) => !c.campaigns.length)];
   const seen = doc.seen || { done: 0, total: checkable.length };
+  // "Visto hoje: todos" while a client with a live campaign is still to see today
+  const toSee = checkable.filter((c) => !c.seen_today && c.campaigns.some((k) => k.state === "active"));
   const seenBox = (c) => c.seen_today
     ? `<span class="seen" title="${esc(c.seen_today.at ? `às ${stamp(c.seen_today.at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "")}">${icon("check")}visto hoje${c.seen_today.by ? ` por ${esc(firstName(c.seen_today.by))}` : ""}</span>`
     : `<span class="row-gap"><button class="btn small" data-seen="${c.id}" data-name="${esc(c.name)}">${icon("check")}Visto hoje</button><button class="btn ghost small icon-only" data-seen="${c.id}" data-name="${esc(c.name)}" data-note="1" title="Visto hoje, com uma nota" aria-label="Visto hoje, com uma nota">${icon("msg")}</button></span>`;
@@ -287,7 +290,7 @@ async function viewCampaigns(query) {
       ${ME.is_admin ? `<div class="actions"><label class="toggle small"><input type="checkbox" id="showskipped" ${campState.skipped ? "checked" : ""}>ver ignoradas</label>
         <button class="btn" id="syncnow">${icon("swap")}Atualizar agora</button></div>` : ""}</div>
     ${periodPicker(st)}
-    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
+    <p class="synced" id="synced"><span class="muted small" id="syncline">${syncLine(doc.last_sync)}</span>${clients.length ? `<b id="seenline" class="${seen.done >= seen.total ? "alldone" : ""}">Hoje: ${seen.done} de ${seen.total} ${seen.total === 1 ? "cliente visto" : "clientes vistos"}</b>` : ""}${toSee.length ? `<button class="btn small" id="seenall" title="Marca visto hoje em todos os clientes com campanha ativa que ainda não foram vistos">${icon("check")}Visto hoje: todos</button>` : ""}${late ? `<span class="muted small" id="latenote">Campanha que começou depois de ${esc(shortDay(since))} só tem números a partir de "ativa desde".</span>` : ""}</p>
     <div id="cblocks">${clients.length ? clients.map(block).join("") : empty}</div>
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
@@ -316,6 +319,18 @@ async function viewCampaigns(query) {
       redraw();
     } catch (err) { toast(err.message, true); btn.disabled = false; }
   });
+  $("#seenall")?.addEventListener("click", async (e) => {
+    // every client with a live campaign not yet seen today, in one request; the per-client
+    // button and its note stay for the day someone has something to say about one client
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const out = await api("POST", "/api/reviews/today", {});
+      track("seen_today", { n: out.clients });
+      toast(out.clients ? `${out.clients} ${out.clients === 1 ? "cliente visto" : "clientes vistos"} hoje` : "Todos já estavam vistos hoje");
+      redraw();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  });
   $$("[data-seen]").forEach((b) => b.addEventListener("click", async () => {
     let note = "";
     if (b.dataset.note) {
@@ -339,6 +354,46 @@ async function viewCampaigns(query) {
     try { await api("PATCH", `/api/campaigns/${b.dataset.follow}`, { state: "active" }); toast(`${b.dataset.name} de volta à lista`); redraw(); }
     catch (err) { toast(err.message, true); }
   }));
+}
+
+// A "Criar campanha" request just marked Concluído: which campaign did it produce? The
+// chooser lists the client's campaigns that started in the last 7 days and have no request
+// yet, "Nenhuma" first (the default: a done request isn't always a new campaign). Choosing
+// one sets `campaign.request` (admins; the API refuses the rest), so the campaign page says
+// "Pedido #n" and the request's timeline says which campaign. Nothing shows when there is
+// no candidate. The kinds mirror db.TRACKING_KINDS. `onLinked` runs after a link is made
+// (the request page redraws its timeline).
+const TRACKING_KINDS = ["Criar campanha", "Reativar campanha"];
+const LINK_DAYS_BACK = 7;
+async function offerCampaignLink(r, onLinked) {
+  if (!metaVisible() || !ME.is_admin || !TRACKING_KINDS.includes(r.kind)) return;
+  const t = todayISO(), floor = addDays(t, -LINK_DAYS_BACK);
+  let doc;
+  try { doc = await api("GET", `/api/campaigns?client=${r.client}&since=${floor}&until=${t}`); }
+  catch { return; }  // Meta down, or nothing to list: the link can wait for the sync
+  const candidates = (doc.clients[0]?.campaigns || []).filter((k) => !k.request && k.state !== "skipped" && k.started && k.started >= floor);
+  if (!candidates.length) return;
+  const m = $("#modal");
+  m.innerHTML = `<form class="panel" id="linkcamp"><h2>Qual campanha o pedido #${r.id} criou?</h2>
+    <p class="muted small" style="margin:-8px 0 14px">Campanhas de <b>${esc(r.client_name || "")}</b> que começaram nos últimos ${LINK_DAYS_BACK} dias e ainda não têm pedido. A campanha passa a mostrar "Pedido #${r.id}".</p>
+    <div class="field"><label>Campanha</label><select class="input" name="campaign"><option value="">Nenhuma</option>${candidates.map((k) => `<option value="${k.id}">${esc(k.name)} · ativa desde ${esc(shortDay(k.started))}</option>`).join("")}</select></div>
+    <div class="actions"><button type="button" class="btn ghost" data-a="cancel">Agora não</button><button class="btn primary" data-a="ok">Vincular</button></div></form>`;
+  m.hidden = false;
+  const close = () => { m.hidden = true; m.innerHTML = ""; };
+  const f = $("#linkcamp");
+  f.campaign.focus();
+  m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") close(); };
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = f.campaign.value;
+    if (!id) { close(); return; }
+    try {
+      const k = await api("PATCH", `/api/campaigns/${id}`, { request: r.id });
+      close();
+      toast(`${k.name}: vinculada ao pedido #${r.id}`);
+      if (onLinked) onLinked(k);
+    } catch (err) { toast(err.message, true); }
+  });
 }
 
 // One campaign: the period's cards and daily charts for the metrics picked. `period` gives the
@@ -469,6 +524,7 @@ async function viewCampaign(query, id) {
   const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
   const k = doc.campaign;
   savePeriod(st);
+  track("period", { p: st.p });
   history.replaceState(null, "", `#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();

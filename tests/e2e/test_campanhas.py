@@ -355,6 +355,71 @@ def test_visto_hoje(synced):
     assert notes == ["", "", "subi a verba"]  # the clinic's two campaigns, then the bakery's
 
 
+def test_visto_hoje_todos(synced):
+    """One tap at the top marks every client still to see; the per-client button and the
+    note icon stay for the clients not yet seen, and the button goes once everyone is."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas?p=this_month")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 0 de 2 clientes vistos")
+    expect(page.locator(".cblock").first.locator("[data-note]")).to_be_visible()
+    page.get_by_role("button", name="Visto hoje: todos").click()
+    expect(page.locator("#toast")).to_have_text("2 clientes vistos hoje")
+    expect(page.locator("#seenline")).to_have_text("Hoje: 2 de 2 clientes vistos")
+    expect(page.locator("#seenline")).to_have_class(re.compile(r"alldone"))
+    expect(page.get_by_role("button", name="Visto hoje: todos")).to_have_count(0)
+    expect(page.get_by_role("button", name="Visto hoje", exact=True)).to_have_count(0)
+    expect(page.locator(".cblock .seen")).to_have_count(2)
+    with store.db() as db:
+        rows = [tuple(r) for r in db.execute('SELECT campaign, "on", note FROM review ORDER BY id')]
+    assert len(rows) == 3 and {r[2] for r in rows} == {""}  # the clinic's two, the bakery's one
+
+
+def test_done_criar_campanha_offers_the_campaign_it_made(synced):
+    """A "Criar campanha" request marked Concluído on its page asks which of the client's
+    campaigns started in the last 7 days it created, "Nenhuma" by default; choosing one
+    links it, and the campaign page says "Pedido #n". A request of another kind, or a
+    client whose campaigns are older, gets no chooser."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    # the clinic's first campaign started 3 days ago (the fixture's are from October)
+    recent = (today() - timedelta(days=3)).isoformat()
+    with store.db() as db:
+        db.execute("UPDATE campaign SET started=? WHERE meta_id='23850001'", (recent,))
+    r = store.create_request(
+        {"client": clinic["id"], "what": "Limpeza de pele", "kind": "Criar campanha"}, None
+    )
+    page.goto(f"{base}/#/pedido/{r['id']}")
+    page.click('[data-seg=status] [data-v="done"]')
+    chooser = page.locator("#linkcamp")
+    expect(chooser).to_contain_text(f"Qual campanha o pedido #{r['id']} criou?")
+    options = chooser.locator("select option")
+    expect(options).to_have_count(2)  # Nenhuma, and the one recent campaign
+    expect(options.nth(0)).to_have_text("Nenhuma")
+    expect(options.nth(1)).to_contain_text("Limpeza de pele")
+    expect(chooser.locator("select")).to_have_value("")
+    chooser.locator("select").select_option(index=1)
+    chooser.get_by_role("button", name="Vincular").click()
+    expect(page.locator("#toast")).to_contain_text(f"vinculada ao pedido #{r['id']}")
+    expect(page.locator("#modal")).to_be_hidden()
+    with store.db() as db:
+        linked = db.execute("SELECT request FROM campaign WHERE meta_id='23850001'").fetchone()[0]
+        kid = db.execute("SELECT id FROM campaign WHERE meta_id='23850001'").fetchone()[0]
+    assert linked == r["id"]
+    expect(page.locator("#tl")).to_contain_text("vinculou a campanha da Meta ao pedido")
+    page.goto(f"{base}/#/campanha/{kid}")
+    expect(page.locator(".head p")).to_contain_text(f"Pedido #{r['id']}")
+    # the bakery's campaign is from October: no chooser for its done request
+    r2 = store.create_request(
+        {"client": bakery["id"], "what": "Panetone", "kind": "Criar campanha"}, None
+    )
+    page.goto(f"{base}/#/pedido/{r2['id']}")
+    page.click('[data-seg=status] [data-v="done"]')
+    expect(page.locator("#toast")).to_have_text("Status: Concluído")
+    page.wait_for_timeout(400)
+    expect(page.locator("#modal")).to_be_hidden()
+
+
 def test_client_with_a_linked_account_and_no_campaigns(live, device, meta, fake_meta):
     """A client whose linked account holds no campaign (Piero's second portfolio) is on the
     list, last, saying so with the account's name and balance and without Visto hoje; the

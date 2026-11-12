@@ -21,7 +21,7 @@ async function viewClients(query) {
     const list = clients.filter((c) => (!st || c.state === st) && (!n || [c.name, c.segment, c.contact, c.instagram].join(" ").toLowerCase().includes(n)));
     $("#grid").innerHTML = list.length ? `<div class="cgrid">${list.map((c) => `<a class="ccard ${c.state === "Encerrado" ? "closed" : ""}" href="#/cliente/${c.id}">
       <div class="top">${avatar(c.name, "md")}<div style="min-width:0"><b>${esc(c.name)}</b><span>${esc(c.segment || "Sem segmento")}${c.instagram ? ` · ${esc(c.instagram)}` : ""}</span></div></div>
-      <div class="foot"><span class="state ${esc(c.state)}">${esc(c.state)}</span>
+      <div class="foot"><span class="state ${esc(c.state)}">${esc(c.state)}</span>${c.whatsapp ? "" : `<span class="nowa" title="Sem WhatsApp cadastrado: o relatório não abre a conversa">${icon("wa")}sem WhatsApp</span>`}
         ${c.open_requests ? `<span class="open">${c.open_requests} em aberto</span>` : `<span>${c.total_requests} pedido${c.total_requests === 1 ? "" : "s"}</span>`}
         ${c.last_request ? `<span style="margin-left:auto">${esc(ago(c.last_request))}</span>` : ""}</div></a>`).join("")}</div>`
       : `<div class="panel empty"><span class="big">🏢</span>${clients.length ? (st && !n ? `Nenhum cliente ${esc(st.toLowerCase())}.` : "Nenhum cliente encontrado.") : "Nenhum cliente ainda. Comece cadastrando o primeiro."}</div>`;
@@ -42,10 +42,10 @@ function clientForm(c = {}) {
   const o = BOOT.options;
   return `<div class="form-grid">
     <div class="field wide"><label>Nome</label><input class="input" name="name" data-f="name" required value="${esc(c.name || "")}" placeholder="Ex.: Clínica Bem Estar"></div>
+    <div class="field wide wa"><label>${icon("wa")}WhatsApp do cliente</label><input class="input" name="whatsapp" data-f="whatsapp" inputmode="tel" value="${esc(c.whatsapp || "")}" placeholder="(DDD) 9XXXX-XXXX"><span class="hint">para abrir a conversa do relatório daqui</span></div>
     <div class="field"><label>Segmento</label><select class="input" name="segment" data-f="segment">${selectOpts(o.segment, c.segment || "")}</select></div>
     <div class="field"><label>Cliente desde</label><input class="input" type="date" name="since" data-f="since" value="${esc(c.since || "")}"></div>
     <div class="field"><label>Contato no cliente</label><input class="input" name="contact" data-f="contact" value="${esc(c.contact || "")}" placeholder="Nome de quem fala com a gente"></div>
-    <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" data-f="whatsapp" inputmode="tel" value="${esc(c.whatsapp || "")}" placeholder="(DDD) 9XXXX-XXXX"></div>
     <div class="field"><label>Instagram / página</label><input class="input" name="instagram" data-f="instagram" value="${esc(c.instagram || "")}" placeholder="@perfil"></div>
     <div class="field"><label>ID da conta de anúncios</label><input class="input" name="ad_account" data-f="ad_account" value="${esc(c.ad_account || "")}" placeholder="1234567890"></div>
     <div class="field wide"><label>Link da página de anúncios</label><input class="input" name="ads_page" data-f="ads_page" value="${esc(c.ads_page || "")}" placeholder="https://www.facebook.com/ads/library/…"></div>

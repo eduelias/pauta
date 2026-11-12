@@ -143,16 +143,35 @@ const META_ERRORS = {
   expirou: "O pedido de conexão expirou; tente de novo",
 };
 
+// The account list answers at once from the server's last read; when that read is past
+// its ten minutes (`stale`, after a connect too) Meta is read again behind it and the
+// page asks again every few seconds until the new list lands, then redraws itself.
+const META_POLL_MS = 2500, META_POLL_MAX = 24;  // about a minute
+let metaPoll = 0;  // the poll's own number: a redraw or a new screen stops an older one
 async function loadMeta(refresh = false) {
   if (!$("#metabody")) return;
-  let html = "", error = "";
+  let html = "", error = "", stale = false;
   try {
     const [doc, clients, log] = await Promise.all([
       api("GET", `/api/meta${refresh ? "?refresh=1" : ""}`), api("GET", "/api/clients"), api("GET", "/api/meta/log")]);
     html = metaBody(doc, clients, log);  // inside the try: an odd answer must not leave the spinner
+    stale = Boolean(doc.stale && doc.connected && !doc.error && !doc.accounts_error);
   } catch (e) { error = e.message || "não foi possível mostrar a Meta"; }
   const box = $("#metabody");
   if (!box) return;  // left the page while waiting
+  const mine = ++metaPoll;
+  if (stale) {
+    (async () => {
+      for (let i = 0; i < META_POLL_MAX && mine === metaPoll && document.contains(box); i++) {
+        await new Promise((r) => setTimeout(r, META_POLL_MS));
+        if (mine !== metaPoll || !document.contains(box) || $("select[data-link]:focus")) continue;
+        let fresh;
+        try { fresh = await api("GET", "/api/meta"); } catch { return; }
+        if (mine !== metaPoll) return;
+        if (!fresh.stale || fresh.accounts_error) { loadMeta(); return; }
+      }
+    })();
+  }
   box.innerHTML = error
     ? `<p class="warnbox">${esc(error)}</p>
       <div class="row-gap mt"><button class="btn" id="metarefresh">${icon("swap")}Tentar de novo</button></div>`
@@ -236,8 +255,8 @@ function metaBody(d, clients = [], log = []) {
   const rows = accs.map((a) => `<tr${a.stale ? ' class="stale"' : ""} data-business="${esc(a.business_id || "")}"><td><b>${esc(a.name)}</b><span class="muted small">${esc(a.id)}${a.status !== 1 && a.status_label ? ` · ${esc(a.status_label)}` : ""}${a.business_name ? ` · Portfólio ${esc(a.business_name)}` : ""}</span></td>
       <td class="pick">${pick(a)}</td>
       ${a.stale ? `<td class="muted">não aparece mais na Meta</td>` : `<td class="r">${metaBalance(a)}</td>`}</tr>`).join("");
-  return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}
-    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.</span>
+  return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}${d.accounts_error && d.accounts_error !== d.error ? `<p class="warnbox">A Meta não respondeu à última leitura: ${esc(d.accounts_error)}</p>` : ""}
+    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.${d.stale && !d.error && !d.accounts_error ? ` <span id="metareading" title="A lista é da última leitura; a Meta está sendo lida de novo e a tabela se atualiza sozinha">Lendo a Meta de novo…</span>` : ""}</span>
       <button class="btn small" data-metaconnect>${icon("target")}Conectar outro portfólio</button>
       <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button></div>
     <div id="metaconns">${conns.map(block).join("")}</div>

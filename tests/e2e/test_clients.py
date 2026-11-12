@@ -128,3 +128,38 @@ def test_cancel_keeps_the_client(admin):
     page.locator("#delc").get_by_role("button", name="Cancelar").click()
     expect(page.locator("#modal")).to_be_hidden()
     assert len(store.clients()) == 1
+
+
+def test_whatsapp_is_asked_right_under_the_name_and_missing_ones_are_marked(admin):
+    """The report's "Abrir conversa" needs the client's WhatsApp; almost no client had one.
+    The form asks for it right under the name, with the hint, and the list marks the
+    clients without one. It is still optional."""
+    base, store, page = admin
+    with_wa = store.save_client({"name": "Com Zap", "whatsapp": "(11) 98888-0000"})
+    without = store.save_client({"name": "Sem Zap"})
+    page.goto(f"{base}/#/clientes")
+    cards = page.locator(".ccard")
+    expect(cards).to_have_count(2)
+    expect(cards.filter(has_text="Sem Zap").locator(".nowa")).to_have_text("sem WhatsApp")
+    expect(cards.filter(has_text="Com Zap").locator(".nowa")).to_have_count(0)
+    # the form: the WhatsApp field is the second one, right after the name, with the hint
+    page.goto(f"{base}/#/cliente/{without['id']}")
+    fields = page.locator("#f .field, .quiet-off .field")
+    expect(fields.nth(0)).to_contain_text("Nome")
+    expect(fields.nth(1)).to_contain_text("WhatsApp do cliente")
+    expect(fields.nth(1).locator(".hint")).to_have_text("para abrir a conversa do relatório daqui")
+    field = page.locator('input[data-f="whatsapp"]')
+    expect(field).not_to_have_attribute("required", re.compile(".*"))
+    field.fill("(21) 97777-1111")
+    field.blur()
+    expect(page.locator(".toast")).to_contain_text("Salvo")
+    assert store.client(without["id"])["whatsapp"] == "(21) 97777-1111"
+    assert store.client(with_wa["id"])["whatsapp"] == "(11) 98888-0000"
+    # a new client saves without a number
+    page.goto(f"{base}/#/cliente/novo")
+    expect(page.locator("#f .field").nth(1)).to_contain_text("WhatsApp do cliente")
+    page.fill("#f input[name=name]", "Novo Sem Zap")
+    page.get_by_role("button", name="Salvar cliente").click()
+    expect(page.locator(".toast")).to_contain_text("Cliente salvo")
+    novo = next(c for c in store.clients() if c["name"] == "Novo Sem Zap")
+    assert novo["whatsapp"] == ""

@@ -158,49 +158,82 @@ def install(route, store, auth, drive, meta):
             "clients": clients,
         }
 
-    @route("POST", f"/api/clients/{ID}/reviews")
-    def review_client(self, viewer, body, cid):
-        """Visto hoje: one `review` per active campaign of the client, dated today (the
-        team's day, not the server's), with this month's numbers as the snapshot (so
-        the note sits next to the numbers it was about). Returns the client's check
-        status."""
-        cid = int(cid)
-        store.client(cid)
-        note = str(body.get("note") or "").strip()[:500]
-        today = _today(self)
-        since, until = today.replace(day=1).isoformat(), today.isoformat()
-        rows = [
-            k
-            for c in store.campaign_rows(since, until, ("active",))
-            if c["id"] == cid
-            for k in c["campaigns"]
-        ]
-        if not rows:
-            raise Invalid("este cliente não tem campanha ativa para marcar")
+    def _review(self, viewer, clients: list[dict], note: str, since: str, until: str) -> int:
+        """One `review` per active campaign of each client in `clients` (campaign_rows
+        entries for this month), dated `until` (today), with this month's numbers as the
+        snapshot (so the note sits next to the numbers it was about). Returns how many
+        campaigns were marked."""
+        rows = [k for c in clients for k in c["campaigns"]]
         reach = _reach(
             self, [(k["account_id"], k["meta_id"]) for k in rows if k["meta_id"]], since, until
         )
-        snaps = [
-            (
-                k["id"],
-                {
-                    "since": since,
-                    "until": until,
-                    "spend_cents": k["spend_cents"],
-                    "link_clicks": k["link_clicks"],
-                    "cpl_cents": cents_per(k["spend_cents"], k["link_clicks"]),
-                    "results": k["results"],
-                    "result_indicator": k["result_indicator"],
-                    "cost_per_result_cents": k["cost_per_result_cents"],
-                    "reach": reach.get(k["meta_id"]),
-                    "impressions": k["impressions"],
-                },
-            )
-            for k in rows
-        ]
-        n = store.add_reviews(cid, until, viewer["account"], note, snaps)
-        obs.event("campaign_review", account=viewer["account"], client=cid, campaigns=n)
+        total = 0
+        for c in clients:
+            snaps = [
+                (
+                    k["id"],
+                    {
+                        "since": since,
+                        "until": until,
+                        "spend_cents": k["spend_cents"],
+                        "link_clicks": k["link_clicks"],
+                        "cpl_cents": cents_per(k["spend_cents"], k["link_clicks"]),
+                        "results": k["results"],
+                        "result_indicator": k["result_indicator"],
+                        "cost_per_result_cents": k["cost_per_result_cents"],
+                        "reach": reach.get(k["meta_id"]),
+                        "impressions": k["impressions"],
+                    },
+                )
+                for k in c["campaigns"]
+            ]
+            n = store.add_reviews(c["id"], until, viewer["account"], note, snaps)
+            obs.event("campaign_review", account=viewer["account"], client=c["id"], campaigns=n)
+            total += n
+        return total
+
+    def _this_month(self) -> tuple[str, str]:
+        """The 1st of the month to today, in the team's day (not the server's)."""
+        today = _today(self)
+        return today.replace(day=1).isoformat(), today.isoformat()
+
+    @route("POST", f"/api/clients/{ID}/reviews")
+    def review_client(self, viewer, body, cid):
+        """Visto hoje: one `review` per active campaign of the client, dated today (the
+        team's day, not the server's), with this month's numbers as the snapshot. Returns
+        the client's check status."""
+        cid = int(cid)
+        store.client(cid)
+        note = str(body.get("note") or "").strip()[:500]
+        since, until = _this_month(self)
+        clients = [c for c in store.campaign_rows(since, until, ("active",)) if c["id"] == cid]
+        if not clients:
+            raise Invalid("este cliente não tem campanha ativa para marcar")
+        n = _review(self, viewer, clients, note, since, until)
         return {"client": cid, "campaigns": n, "seen_today": store.seen_on(until).get(cid)}
+
+    @route("POST", "/api/reviews/today")
+    def review_all(self, viewer, body):
+        """Visto hoje: todos. One check per active campaign of every client with one that
+        nobody has seen today (Piero goes through them all and marked them one by one, seven
+        taps in thirty seconds). The optional `note` goes on every check. Answers how many
+        clients and campaigns were marked and the day's count; nothing to mark is 0, not
+        an error (a second tap is harmless)."""
+        note = str(body.get("note") or "").strip()[:500]
+        since, until = _this_month(self)
+        seen = store.seen_on(until)
+        clients = [c for c in store.campaign_rows(since, until, ("active",)) if c["id"] not in seen]
+        n = _review(self, viewer, clients, note, since, until) if clients else 0
+        done = store.seen_on(until)
+        checkable = store.campaign_rows(since, until, TRACKED_STATES)  # as GET /api/campaigns
+        return {
+            "clients": len(clients),
+            "campaigns": n,
+            "seen": {
+                "done": sum(1 for c in checkable if c["id"] in done),
+                "total": len(checkable),
+            },
+        }
 
     @route("GET", f"/api/campaigns/{ID}")
     def campaign(self, viewer, _body, cid):
@@ -336,6 +369,15 @@ def install(route, store, auth, drive, meta):
 
     @route("PATCH", f"/api/campaigns/{ID}")
     def campaign_state(self, viewer, body, cid):
+        """`state` (Não acompanhar / Acompanhar) for anyone on the team; `request` (the
+        request this campaign came from, or null) for admins: the chooser shown when a
+        "Criar campanha" request is marked done, for a campaign of the same client."""
+        if "request" in body:
+            if not viewer["is_admin"]:
+                raise Reply(403, {"error": "só para administradores"})
+            out = store.link_campaign_request(int(cid), body["request"], viewer["account"])
+            if "state" not in body:
+                return out
         return store.set_campaign_state(int(cid), body.get("state"), viewer["account"])
 
     @route("POST", "/api/meta/sync", "admin")
@@ -363,9 +405,13 @@ def install(route, store, auth, drive, meta):
     @route("GET", "/api/meta", "admin")
     def meta_status(self, viewer, _body):
         """The connections (one per portfolio, with who connected it and its last sync)
-        and every account under them. Meta failing is reported in `error`, with the
-        accounts Pauta already knew (stale), never as a failed page: the admin still
-        sees each connection's state and can act on it."""
+        and every account under them. The list answers from memory: the last read, at
+        once, while Meta is read again behind it when it is past its ten minutes (then
+        `stale` is true and the page asks again until it clears; `accounts_error` says
+        why a read behind failed). Only `?refresh=1` (Atualizar) and a server with no
+        list yet wait for Meta. Meta failing is reported in `error`, with the accounts
+        Pauta already knew, never as a failed page: the admin still sees each
+        connection's state and can act on it."""
         accounts, failed = None, ""
         if meta.connected:
             refresh = parse_qs(urlparse(self.path).query).get("refresh") == ["1"]
@@ -378,6 +424,9 @@ def install(route, store, auth, drive, meta):
         out = meta.status()
         out["connections"] = _connections(self)
         out["error"] = failed or out["error"]
+        stale = out.pop("accounts_stale")
+        # an empty kept list (the only portfolio was swapped) is still one being re-read
+        out["stale"] = accounts is not None and stale
         if accounts is not None:
             out["accounts"] = _with_clients(self, accounts)
         return out

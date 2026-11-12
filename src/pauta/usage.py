@@ -36,10 +36,13 @@ EVENTS: dict[str, tuple[str, ...]] = {
     "file_failed": ("reason",),
     "client_saved": ("new",),
     "seen_today": ("n",),
+    "period": ("p",),
     "finance_entry": ("kind",),
     "search": ("what",),
     "filter": ("what",),
-    "error_shown": ("msg", "screen", "status"),
+    # `route`, `method` and `status` are the failed call's (within 3 s of the toast); `form`
+    # is the form id or screen the toast came from when no call failed (a client-side check)
+    "error_shown": ("msg", "screen", "status", "route", "method", "form"),
     "api_slow": ("route", "ms", "status", "method"),
     "settings_changed": ("section",),
     "login": ("ok", "method"),
@@ -129,6 +132,16 @@ def _day(at: str) -> str:
     return at[:10]
 
 
+def _where(p: dict) -> str:
+    """Where an error toast came from: the call that failed ("PATCH /api/requests/{id}"),
+    else the form or screen of a client-side check ("form novo"), else ""."""
+    if p.get("route"):
+        return f"{p.get('method') or '?'} {p['route']}"
+    if p.get("form"):
+        return f"form {p['form']}"
+    return ""
+
+
 def _p95(values: list[float]):
     return obs.percentile(sorted(values), 0.95)
 
@@ -203,7 +216,9 @@ def summary(store, days: int = 7, today: date | None = None) -> dict:
             if p.get("from"):
                 paths[(p["from"], r["screen"] or "?")] += 1
         elif r["event"] == "error_shown":
-            errors[(p.get("msg", "?"), r["screen"] or "?", str(p.get("status", "")))] += 1
+            errors[
+                (p.get("msg", "?"), r["screen"] or "?", str(p.get("status", "")), _where(p))
+            ] += 1
         elif r["event"] == "api_slow":
             route = str(p.get("route", "?"))
             ms = p.get("ms")
@@ -352,8 +367,11 @@ def render(s: dict) -> str:
     )
     section("Paths (screen -> next screen)", [f"  {a} -> {b}  {n}" for (a, b), n in s["paths"]])
     section(
-        "Error toasts (class, screen, status)",
-        [f"  {m:<11} {sc:<14} {st or '-':<4} {n}" for (m, sc, st), n in s["errors"]],
+        "Error toasts (class, screen, status, the call that failed or the form)",
+        [
+            f"  {m:<11} {sc:<14} {st or '-':<4} {n:<4} {where or '-'}"
+            for (m, sc, st, where), n in s["errors"]
+        ],
     )
     slow = []
     for r in s["slow"]:

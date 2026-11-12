@@ -110,18 +110,27 @@ const routePattern = (path) => path.split("?")[0].split("/")
 // every API call's outcome: kept as an `api_slow` row only when slow (> 1.5 s) or failed
 function trackApi(method, path, status, ms) {
   const route = routePattern(path);
-  if (status === 0 || status >= 400) USAGE.lastErr = { status, route, at: Date.now() };
+  if (status === 0 || status >= 400) USAGE.lastErr = { status, route, method, at: Date.now() };
   if (ms > 1500 || status === 0 || status >= 400) track("api_slow", { route, ms: Math.round(ms), status, method });
 }
 
 // an error toast's class, from the API error just before it (within 3 s), else a client-side
-// check (an empty file, a form field): validation, network, auth, drive, server
+// check (an empty file, a form field): validation, network, auth, drive, server. With the
+// call that failed (its method, route pattern and status), or, when no call failed, the
+// form the person was on (its id, else the screen), so `pauta usage` can say which form
+// fails and not just "validation"
 function errorClass() {
   const e = USAGE.lastErr;
-  if (!e || Date.now() - e.at > 3000) return { msg: "validation" };
+  if (!e || Date.now() - e.at > 3000) return { msg: "validation", form: formHere() };
   const msg = e.status === 0 ? "network" : e.status === 401 || e.status === 403 ? "auth"
     : /\/files|\/onedrive|\/share/.test(e.route) ? "drive" : e.status >= 500 ? "server" : "validation";
-  return { msg, status: e.status };
+  return { msg, status: e.status, route: e.route, method: e.method };
+}
+// the form in use: the focused field's, else the one in the modal, else the screen's first;
+// its id (or "form" when it has none), else the screen name. Never a field's value.
+function formHere() {
+  const f = document.activeElement?.closest?.("form") || $("#modal form") || $("form", app);
+  return f ? f.id || "form" : USAGE.screen || "";
 }
 
 const ICONS = {

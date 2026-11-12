@@ -168,6 +168,11 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > label, .label { font-size: 12.5px; font-weight: 650; color: var(--muted);
   letter-spacing: .01em; }
+.field > .hint { font-size: 12.5px; color: var(--muted); }
+/* the WhatsApp number, right under the name: the report's "Abrir conversa" needs it */
+.field.wa > label { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: 13.5px; }
+.field.wa > label .i { width: 15px; height: 15px; color: #25d366; }
+.field.wa .input { border-color: color-mix(in srgb, #25d366 55%, var(--line)); }
 .input, select.input, textarea.input {
   width: 100%; min-height: 42px; padding: 9px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--surface); outline: none;
@@ -421,6 +426,9 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
   border-top: 1px solid var(--line-2); padding-top: 12px; }
 .ccard .foot .open { color: var(--accent); font-weight: 650; }
 .ccard.closed { opacity: .6; }
+/* a client without a WhatsApp number: the report's "Abrir conversa" can't open for it */
+.ccard .foot .nowa { display: inline-flex; align-items: center; gap: 4px; color: var(--s-waiting); font-weight: 600; }
+.ccard .foot .nowa .i { width: 13px; height: 13px; }
 .state { font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 99px; }
 .state.Ativo { color: var(--s-done); background: var(--s-done-bg); }
 .state.Pausado { color: var(--s-waiting); background: var(--s-waiting-bg); }
@@ -630,6 +638,7 @@ aside .kv { grid-template-columns: 88px 1fr; }
 .synced { margin: 0 0 18px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
 .synced b { font-size: 14px; }
 .synced b.alldone { color: var(--s-done); }
+.synced .btn.small { height: 30px; padding: 0 10px; font-size: 13px; align-self: center; }
 .cblock .panel-head { flex-wrap: wrap; }
 .cblock .panel-head h2 { flex-wrap: wrap; }
 .cblock .panel-head h2 a { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }

@@ -165,6 +165,48 @@ def test_skip_and_follow_again(team, fake_meta):
     assert call(f"{base}/api/campaigns/999", {"state": "skipped"}, piero, "PATCH")[0] == 404
 
 
+def test_an_admin_links_a_campaign_to_the_request_that_made_it(team, fake_meta):
+    """PATCH /api/campaigns/{id} {"request": id}: admins only, a request of the same
+    client, one campaign per request; the campaign page then says "Pedido #n" and the
+    request's timeline says which campaign. null unlinks."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    clinic, bakery = doc["clients"]
+    first, second = clinic["campaigns"]
+    mine = call(
+        f"{base}/api/requests",
+        {"client": clinic["id"], "what": "Limpeza de pele", "kind": "Criar campanha"},
+        nato,
+    )[1]
+    other = call(f"{base}/api/requests", {"client": bakery["id"], "what": "Panetone"}, nato)[1]
+    cid = first["id"]
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": mine["id"]}, piero, "PATCH")
+    assert status == 403, out
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": other["id"]}, nato, "PATCH")
+    assert status == 400 and "outro cliente" in out["error"]
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": "x"}, nato, "PATCH")
+    assert status == 400
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": 999}, nato, "PATCH")
+    assert status == 404
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": mine["id"]}, nato, "PATCH")
+    assert status == 200 and out["request"] == mine["id"], out
+    assert call(f"{base}/api/campaigns/{cid}", cookie=piero)[1]["campaign"]["request"] == mine["id"]
+    events = call(f"{base}/api/requests/{mine['id']}", cookie=piero)[1]["events"]
+    assert events[-1]["kind"] == "campaign" and events[-1]["text"] == f"meta:{first['meta_id']}"
+    assert events[-1]["account_name"] == "Renato Lima"
+    # the same request can't be two campaigns'; a second PATCH with the same id is a no-op
+    status, out, _ = call(
+        f"{base}/api/campaigns/{second['id']}", {"request": mine["id"]}, nato, "PATCH"
+    )
+    assert status == 400 and "outra campanha" in out["error"]
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": mine["id"]}, nato, "PATCH")
+    assert status == 200
+    assert len(call(f"{base}/api/requests/{mine['id']}", cookie=piero)[1]["events"]) == len(events)
+    status, out, _ = call(f"{base}/api/campaigns/{cid}", {"request": None}, nato, "PATCH")
+    assert status == 200 and out["request"] is None
+    assert call(f"{base}/api/campaigns/999", {"request": mine["id"]}, nato, "PATCH")[0] == 404
+
+
 def test_one_campaign_with_its_days(team, fake_meta):
     base, nato, piero, _ = synced(team, fake_meta)
     doc = call(f"{base}/api/campaigns", cookie=piero)[1]
@@ -374,6 +416,37 @@ def test_visto_hoje_writes_a_review_per_active_campaign(team, fake_meta):
     extra = call(f"{base}/api/clients", {"name": "Sem campanha"}, nato)[1]
     status, out, _ = call(f"{base}/api/clients/{extra['id']}/reviews", {}, piero)
     assert status == 400 and "campanha ativa" in out["error"]
+
+
+def test_visto_hoje_todos_marks_every_client_not_yet_seen(team, fake_meta):
+    """Piero marked seven clients one by one in thirty seconds: one request marks every
+    client with an active campaign that nobody has seen today, a review per campaign
+    with the same snapshot as the per-client button; the ones already seen are left
+    alone, and a second tap marks nothing (not an error)."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    clinic, bakery = doc["clients"]
+    # the clinic was seen by hand first, with a note
+    call(f"{base}/api/clients/{clinic['id']}/reviews", {"note": "subi a verba"}, piero)
+    status, out, _ = call(f"{base}/api/reviews/today", {}, piero)
+    assert status == 200, out
+    assert out == {"clients": 1, "campaigns": 1, "seen": {"done": 2, "total": 2}}
+    doc = call(f"{base}/api/campaigns", cookie=piero)[1]
+    assert doc["seen"] == {"done": 2, "total": 2}
+    assert [c["seen_today"]["by"] for c in doc["clients"]] == ["Piero", "Piero"]
+    today = today_in_sao_paulo().isoformat()
+    reviews = call(f"{base}/api/export", cookie=nato)[1]["review"]
+    assert len(reviews) == 3 and {r["on"] for r in reviews} == {today}
+    assert [r["note"] for r in reviews] == ["subi a verba", "subi a verba", ""]
+    snap = json.loads(reviews[-1]["snapshot"])
+    assert snap["since"] == today[:8] + "01" and snap["until"] == today
+    assert {"spend_cents", "results", "reach", "impressions", "cpl_cents"} <= set(snap)
+    assert bakery["id"] == [c["id"] for c in doc["clients"]][1]
+    # everyone seen: a second tap marks nothing
+    status, out, _ = call(f"{base}/api/reviews/today", {}, piero)
+    assert status == 200 and out == {"clients": 0, "campaigns": 0, "seen": {"done": 2, "total": 2}}
+    assert len(call(f"{base}/api/export", cookie=nato)[1]["review"]) == 3
+    assert call(f"{base}/api/reviews/today", {})[0] == 401
 
 
 def test_today_is_the_ad_accounts_day(team, fake_meta, monkeypatch):

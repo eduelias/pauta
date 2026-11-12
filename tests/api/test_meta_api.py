@@ -4,6 +4,7 @@ add accounts to one, disconnect one, the history), reading ad accounts, who may 
 /metrics."""
 
 import json
+import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
@@ -46,6 +47,8 @@ def test_connect_round_trip(team, fake_meta):
         "connections": [],
         "error": "",
         "accounts_at": None,
+        "accounts_error": "",
+        "stale": False,
     }
     url = start(base, nato)
     assert url.startswith(fake_meta.dialog)
@@ -53,7 +56,7 @@ def test_connect_round_trip(team, fake_meta):
     assert status == 302 and location == "/#/configuracoes?meta=conectado"
 
     doc = call(f"{base}/api/meta", cookie=nato)[1]
-    assert doc["connected"] and doc["error"] == ""
+    assert doc["connected"] and doc["error"] == "" and doc["stale"] is False
     (conn,) = doc["connections"]
     assert conn == {
         "business_id": BUSINESS,
@@ -427,3 +430,26 @@ def test_one_account_without_numbers(team, fake_meta):
     assert second["numbers"] is True and second["spend_cents"] == 0
     (acc,) = call(f"{base}/api/clients/{clinic['id']}/meta", cookie=piero)[1]["accounts"]
     assert acc["numbers"] is False and acc["reason"] == NO_NUMBERS and not acc["stale"]
+
+
+def test_swapping_the_only_portfolio_still_reads_behind_the_page(team, fake_meta):
+    """Disconnecting the only portfolio leaves an empty kept list (its accounts stay as
+    stale rows); after the next connect the page gets those rows at once and must know
+    Meta is being read behind them, or it never polls and the new portfolio's accounts
+    only show after a manual Atualizar."""
+    base, nato, _, _ = team
+    through_meta(base, start(base, nato))
+    assert len(call(f"{base}/api/meta", cookie=nato)[1]["accounts"]) == 2  # a kept list
+    assert call(f"{base}/api/meta/connections/{BUSINESS}", cookie=nato, method="DELETE")[0] == 200
+    through_meta(base, start(base, nato))
+    fake_meta.hold()
+    status, doc, _ = call(f"{base}/api/meta", cookie=nato)
+    assert status == 200 and doc["connected"] and doc["stale"] is True
+    assert [a["stale"] for a in doc["accounts"]] == [True, True]  # the rows, not Meta's list
+    fake_meta.release()
+    for _ in range(100):
+        doc = call(f"{base}/api/meta", cookie=nato)[1]
+        if not doc["stale"]:
+            break
+        time.sleep(0.02)
+    assert [a["stale"] for a in doc["accounts"]] == [False, False]

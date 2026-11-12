@@ -7,6 +7,51 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Visto hoje: todos.** Em Campanhas, um botão no alto marca de uma vez todos os clientes
+  com campanha ativa que ainda não foram vistos hoje (antes, marcava-se um por um, sete toques
+  em trinta segundos). O botão de cada cliente e o ícone da nota continuam lá, para o dia em
+  que há algo a dizer sobre um cliente. API: `POST /api/reviews/today` (nota opcional).
+- **O pedido fica ligado à campanha que ele criou.** Nenhuma das 13 campanhas tinha pedido
+  e só 1 de 16 pedidos tinha o link do Gerenciador, então a Pauta não conseguia ligar os
+  dois sozinha. Agora, quando um pedido de **Criar campanha** (ou Reativar) vai para
+  Concluído, no quadro ou na página, aparece a pergunta "Qual campanha o pedido criou?" com
+  as campanhas do cliente que começaram nos últimos 7 dias e ainda não têm pedido,
+  **Nenhuma** por padrão. Escolhendo uma, a página da campanha mostra "Pedido #n" e o
+  histórico do pedido diz qual campanha. Só administradores; nada aparece quando não há
+  campanha candidata. API: `PATCH /api/campaigns/{id}` com `{"request": id}` (ou null).
+- **Configurações → Meta abre na hora.** Logo depois de conectar (ou desconectar) um
+  portfólio, a lista de contas era descartada e a primeira visita esperava a leitura de
+  todos os portfólios de novo: de sete a dezessete segundos com nove conectados. Agora a
+  lista anterior aparece de imediato, com "Lendo a Meta de novo…", a Meta é lida por trás e
+  a tabela se atualiza sozinha quando a leitura chega (as contas do portfólio
+  desconectado saem na hora). **Atualizar** continua pedindo à Meta na hora. `GET /api/meta`
+  ganha `stale` e `accounts_error`.
+- **Campanhas abre na hora em qualquer período rápido.** A sincronização de hora em hora
+  só deixava pronto o alcance de "Últimos 30 dias"; quem tinha "Este mês" ou "Últimos 7
+  dias" guardado no navegador esperava a Meta a cada visita (seis segundos). Agora os seis
+  períodos do seletor são lidos a cada hora; só "Personalizado" ainda lê na tela.
+- **O espaço do OneDrive em Configurações → Arquivos** vale uma hora em vez de cinco
+  minutos (um envio ou uma remoção zera): a leitura, às vezes com a renovação do token
+  antes, era o que `GET /api/onedrive` esperava a cada visita.
+
+### Changed
+
+- **O WhatsApp do cliente ficou em destaque no cadastro.** Só 1 de 12 clientes tinha o
+  número, e sem ele o **Abrir conversa** do relatório fica desligado. No formulário do
+  cliente o campo vem logo abaixo do nome, com a dica "para abrir a conversa do relatório
+  daqui"; na lista de clientes, quem não tem número mostra "sem WhatsApp". Continua
+  opcional: há cliente que não tem mesmo.
+- **O registro de uso anota o período de cada abertura de Campanhas.** Uma espera de 6,6 s
+  em Campanhas no dia 11 não dizia qual período custou isso; agora cada abertura de
+  Campanhas ou de uma campanha registra o período escolhido (`period`, decisão 11).
+- **O registro de uso diz em que chamada ou formulário o erro apareceu.** Cada aviso de
+  erro ficava registrado só como "validation". Agora leva o método, a rota e o status da
+  chamada que falhou logo antes (até 3 s) ou, quando nenhuma falhou (uma checagem na
+  própria tela), o formulário ou a tela de onde veio; `pauta usage` mostra isso na seção
+  dos erros. Nada do conteúdo dos campos é registrado. Decisão 11 atualizada.
+
 ## [1.8.4] - 2026-11-06
 
 ### Changed
