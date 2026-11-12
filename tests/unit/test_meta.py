@@ -370,6 +370,23 @@ def test_status_says_when_the_list_was_read(linked, monkeypatch):
     assert linked.status()["accounts_stale"]
 
 
+def test_the_page_hears_stale_with_the_list_it_gets(linked, fake_meta):
+    """The flag travels with the list: `status()` read a moment later can already say
+    "fresh" (the read behind lands in milliseconds on a fast Meta), and a page told that
+    about an old list never asks again."""
+    first, stale = linked.accounts_served()
+    assert first and stale is False
+    fake_meta.hold()
+    with linked._lock:
+        linked._age_list()
+    kept, stale = linked.accounts_served()
+    assert kept == first and stale is True
+    fake_meta.release()
+    _settles(linked, meta_mod.time.time() - meta_mod.CACHE_SECONDS)
+    assert linked.accounts_served() == (first, False)
+    assert linked.accounts_served(stale=False)[1] is False  # a waiting read is fresh
+
+
 def test_a_connect_or_disconnect_keeps_the_list_aged_instead_of_dropping_it(
     linked, fake_meta, monkeypatch
 ):

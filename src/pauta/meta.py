@@ -755,23 +755,30 @@ class Meta:
         that failed as a whole is raised again, without asking Meta, for a minute
         (`refresh` asks anyway), unless there is a list to answer with. Readers arriving
         while one read is under way wait for it and get the same list."""
+        return self.accounts_served(refresh, stale)[0]
+
+    def accounts_served(self, refresh: bool = False, stale: bool = True) -> tuple[list[dict], bool]:
+        """`accounts()` plus whether the list is the kept one past its ten minutes, with
+        Meta being read again behind it. Decided by the path taken here, not by `status()`
+        afterwards: the read behind can land in between, and a page that then hears
+        "fresh" about an old list never asks again."""
         fresh = self._fresh(refresh)
         if fresh is not None:
-            return fresh
+            return fresh, False
         if stale and not refresh:
             kept = self._stale()
             if kept is not None:
                 self._refresh_soon()
-                return kept
+                return kept, True
         if not refresh:
             self._raise_recent_failure()
         with self._reading:
             fresh = self._fresh(refresh)  # someone else may just have read it
             if fresh is not None:
-                return fresh
+                return fresh, False
             if not refresh:
                 self._raise_recent_failure()
-            return self._read_into_cache()
+            return self._read_into_cache(), False
 
     def _fresh(self, refresh: bool) -> list[dict] | None:
         """The cached list while it counts as fresh."""
