@@ -42,6 +42,8 @@ def client(last=None, before=None, **over):
         "id": 1,
         "name": "Clínica Bem Estar",
         "segment": "Saúde",
+        "contact": "Carla Mendes",
+        "whatsapp": "(11) 98888-7777",
         "currency": "BRL",
         "campaigns": 1,
         "active": 1,
@@ -263,6 +265,8 @@ def test_rows_put_the_ones_that_need_a_look_first():
     assert big["period"]["spend_cents"] == 90_000 and big["flags"] == []
     assert rows[3]["seen_today"] == {"by": "Piero", "at": "2026-10-20 12:00:00"}
     assert rows[3]["balance"] is None and rows[0]["seen_today"] is None
+    # whom the screen writes to (Avisar o cliente): the client's own contact and number
+    assert (big["contact"], big["whatsapp"]) == ("Carla Mendes", "(11) 98888-7777")
 
 
 # ---- the Store's read ------------------------------------------------------------------------
@@ -274,7 +278,14 @@ LIVE = {"objective": "OUTCOME_LEADS", "effective_status": "ACTIVE", "started": "
 def tracked(store):
     """Two clients: the clinic with a live and a paused campaign, the bakery with one that
     started today; a third campaign of the clinic is ignored (Não acompanhar)."""
-    clinic = store.save_client({"name": "Clínica Bem Estar", "segment": "Saúde"})
+    clinic = store.save_client(
+        {
+            "name": "Clínica Bem Estar",
+            "segment": "Saúde",
+            "contact": "Carla Mendes",
+            "whatsapp": "(11) 98888-7777",
+        }
+    )
     bakery = store.save_client({"name": "Padaria Trigo de Ouro"})
     store.sync_meta_accounts([{"id": "111", "name": "Clínica"}, {"id": "222", "name": "Pad"}])
     store.link_meta_account("111", clinic["id"])
@@ -328,6 +339,8 @@ def test_the_store_reads_every_window_in_one_pass(tracked):
         "Saúde",
         "BRL",
     )
+    assert (c["contact"], c["whatsapp"]) == ("Carla Mendes", "(11) 98888-7777")
+    assert (b["contact"], b["whatsapp"]) == ("", "")
     assert (c["campaigns"], c["active"], c["quiet"], c["last_seen"]) == (2, 1, 0, day(3))
     assert c["first_day"] == day(40) and b["first_day"] is None  # the ignored one's don't count
     assert overview.sums(c["rows"]["last"])["spend_cents"] == 1300

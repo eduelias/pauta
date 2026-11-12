@@ -195,6 +195,8 @@ def rows(
                 "id": c["id"],
                 "name": c["name"],
                 "segment": c["segment"],
+                "contact": c["contact"],
+                "whatsapp": c["whatsapp"],
                 "currency": c["currency"],
                 "campaigns": c["campaigns"],
                 "active": c["active"],

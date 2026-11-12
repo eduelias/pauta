@@ -316,7 +316,37 @@ function delta(pct, what, upIsBad) {
   const cls = Math.abs(pct) < 10 ? "" : (pct > 0) === upIsBad ? "bad" : "good";
   return `<span class="odelta ${cls}">${pct > 0 ? "▲" : pct < 0 ? "▼" : "="} ${Math.abs(pct) > 999 ? "mais de 999" : Math.abs(pct)}% <span>${what}</span></span>`;
 }
-function overviewRow(c) {
+// Avisar o cliente: the messages a row writes for the client's WhatsApp, as drafts. The link
+// opens the conversation with the text in the box; the person reads it, changes what they
+// want and sends it themselves. Without a number on the client WhatsApp asks which
+// conversation. Amounts with a plain space: Intl's no-break one shows as a box in some chats.
+const plainMoney = (cents, cur) => centsMoney(cents, cur).replace(/\u00a0/g, " ");
+const clientHello = (c) => { const who = firstName(c.contact); return `Olá${who ? `, ${who}` : ""}!`; };
+// "saldo para 2 dias", said to the one who puts the credit in
+function balanceText(c) {
+  const left = c.balance.days_left, money = plainMoney(c.balance.remaining_cents, c.currency);
+  const lasts = left > 0 ? `dura mais ${left} ${left === 1 ? "dia" : "dias"} no ritmo atual (restam ${money})` : `acaba hoje (restam ${money})`;
+  const when = left > 1 ? "nos próximos dias" : left === 1 ? "até amanhã" : "ainda hoje";
+  return `${clientHello(c)} O saldo dos seus anúncios ${lasts}. Para as campanhas não pararem, vale colocar crédito ${when}. Qualquer dúvida, é só me chamar.`;
+}
+// the period's numbers as the row shows them: what was invested, the clicks, and the
+// results when the campaigns count the same thing (clicks counted as the result say it once)
+function summaryText(c, since, until) {
+  const p = c.period;
+  const lines = [`• Investimento: ${plainMoney(p.spend_cents, c.currency)}`];
+  if (p.link_clicks) lines.push(`• Cliques no link: ${count(p.link_clicks)}`);
+  if (p.results && p.result_indicator !== "link_click") lines.push(`• ${resultLabel(p.result_indicator)}: ${count(p.results)}${p.cost_per_result_cents != null ? ` (${plainMoney(p.cost_per_result_cents, c.currency)} cada)` : ""}`);
+  return `${clientHello(c)} Resumo ${c.campaigns === 1 ? "da sua campanha" : "das suas campanhas"} (${since === until ? shortDay(since) : periodLabel(since, until)}):\n${lines.join("\n")}\nQualquer dúvida, é só me chamar.`;
+}
+function clientMessages(c, doc) {
+  const to = waUrl(c.whatsapp);
+  const link = (kind, label, glyph, text) => `<a class="oact" data-act="${kind}" href="${esc(`${to || "https://wa.me/"}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener" title="${to ? `Abre a conversa com ${esc(c.contact || c.name)} com a mensagem escrita: você lê e envia` : "O cliente não tem WhatsApp cadastrado: o WhatsApp pergunta para quem enviar"}">${icon(glyph)}${label}</a>`;
+  const out = [];
+  if (c.balance?.days_left != null && c.flags.some((f) => f.key === "balance")) out.push(link("balance", "Avisar do saldo", "wa", balanceText(c)));
+  if (c.period.spend_cents > 0) out.push(link("summary", "Enviar resumo", "send", summaryText(c, doc.since, doc.until)));
+  return out.length ? `<div class="oacts">${out.join("")}</div>` : "";
+}
+function overviewRow(c, doc) {
   const p = c.period, ch = c.change, byResult = ch.kind === "result";
   const none = ch.partial ? "as campanhas começaram há pouco: ainda não há um período anterior inteiro para comparar" : "sem números no período anterior para comparar";
   const results = p.results == null
@@ -333,7 +363,8 @@ function overviewRow(c) {
   return `<div class="orow${c.flags.length ? " flagged" : ""}" data-client="${c.id}">
     <div class="oname"><a href="#/cliente/${c.id}">${avatar(c.name)}<b>${esc(c.name)}</b></a>
       <span class="muted small">${c.active} de ${c.campaigns} ${c.campaigns === 1 ? "campanha ativa" : "campanhas ativas"}${c.segment ? ` · ${esc(c.segment)}` : ""}</span>
-      ${c.flags.length ? `<div class="oflags">${c.flags.map((f) => `<span class="oflag l${f.level}" data-flag="${esc(f.key)}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
+      ${c.flags.length ? `<div class="oflags">${c.flags.map((f) => `<span class="oflag l${f.level}" data-flag="${esc(f.key)}">${esc(f.text)}</span>`).join("")}</div>` : ""}
+      ${clientMessages(c, doc)}</div>
     <div class="om om-spend"><span class="kl">Valor gasto</span><b>${esc(centsMoney(p.spend_cents, c.currency))}</b></div>
     <div class="om om-clicks"><span class="kl">Cliques no link</span><b>${esc(count(p.link_clicks))}</b>${p.cpl_cents != null ? `<span class="ksub">${esc(centsMoney(p.cpl_cents, c.currency))} cada</span>` : ""}</div>
     <div class="om om-results"><span class="kl">Resultados</span>${results}</div>
@@ -369,11 +400,13 @@ async function viewOverview(query) {
   </div>`;
   const draw = () => {
     const shown = doc.clients.filter((c) => (!ovState.flagged || c.flags.length) && (!ovState.segment || c.segment === ovState.segment));
-    $("#overview").innerHTML = shown.length ? `<div class="orows">${head}${shown.map(overviewRow).join("")}</div>`
+    $("#overview").innerHTML = shown.length ? `<div class="orows">${head}${shown.map((c) => overviewRow(c, doc)).join("")}</div>`
       : `<div class="empty"><span class="big">${n ? "✅" : "📣"}</span>${n ? "Nenhum cliente com alerta neste filtro." : "Nenhum cliente com campanha acompanhada ainda."}</div>`;
   };
   draw();
   bindPeriod(st, () => viewOverview(new URLSearchParams(periodQuery(st))));
+  // the drafts are plain links; the log counts which kind was opened, never to whom
+  $("#overview").addEventListener("click", (e) => { const a = e.target.closest("a[data-act]"); if (a) track("client_message", { kind: a.dataset.act }); });
   $("#onlyflagged").addEventListener("change", (e) => { ovState.flagged = e.target.checked; draw(); });
   $("#ovsegment")?.addEventListener("change", (e) => { ovState.segment = e.target.value; draw(); });
   $("#ovtrend").addEventListener("change", (e) => { ovState.trend = e.target.value; draw(); });

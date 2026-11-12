@@ -1275,15 +1275,16 @@ class Store:
         `quiet` (live campaigns older than yesterday with no impression yesterday or today)
         and `last_seen` (the day of its latest Visto hoje, None when never) and `first_day`
         (its first day with numbers ever, None without any: a window that starts before it
-        is not a whole one). Money is in `currency`, the first campaign's account's."""
+        is not a whole one). Money is in `currency`, the first campaign's account's.
+        `contact` and `whatsapp` are the client's, for the messages the screen writes."""
         marks = ",".join("?" for _ in TRACKED_STATES)
         yesterday = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
         spans = [*windows.values(), trend, (yesterday, today)]
         lo, hi = min(s for s, _ in spans), max(u for _, u in spans)
         with self.db() as db:
             campaigns = db.execute(
-                "SELECT k.client, c.name, c.segment, k.meta_id, k.state, k.started, a.currency "
-                "FROM campaign k JOIN client c ON c.id=k.client "
+                "SELECT k.client, c.name, c.segment, c.contact, c.whatsapp, k.meta_id, k.state, "
+                "k.started, a.currency FROM campaign k JOIN client c ON c.id=k.client "
                 "LEFT JOIN meta_account a ON a.account_id=k.account_id "
                 f"WHERE k.state IN ({marks}) ORDER BY c.name COLLATE NOCASE, c.id, k.id",
                 TRACKED_STATES,
@@ -1320,6 +1321,8 @@ class Store:
                         "id": k["client"],
                         "name": k["name"],
                         "segment": k["segment"],
+                        "contact": k["contact"],
+                        "whatsapp": k["whatsapp"],
                         "currency": k["currency"],
                         "campaigns": 0,
                         "active": 0,

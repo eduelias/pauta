@@ -154,3 +154,25 @@ tab at `#/campanhas/geral`, which shares the list's period. Against the sketch:
   Meta gives; an account without a limit shows a dash and never the flag.
 - **Filters:** "só com alerta", segment, and what the trend line draws. No portfolio
   filter yet. The row opens the client's page, where its campaigns are.
+
+### Avisar o cliente (added the same day)
+
+The screen says who needs attention; the next step was still by hand (find the client's
+conversation, type the message). A row now writes it:
+
+- **Avisar do saldo**, only next to the "saldo para N dias" alert: how long the balance
+  lasts at the last seven days' pace, what is left, and when to put credit in. It is the
+  one alert whose fix is the client's to make.
+- **Enviar resumo**, on any row with spend in the period: the period's investment, link
+  clicks and, when the client's campaigns count the same thing, the results with the cost
+  of each. No comparison with the period before: how to say a bad week is the person's
+  call, not a template's.
+
+Both are plain `wa.me` links to the client's registered number with the text in the
+address, so WhatsApp opens with the message in the box and nothing is sent until the person
+sends it. The greeting takes the first name of the client's contact. A client without a
+number gets `wa.me/?text=…`, where WhatsApp asks for the conversation. The other alerts
+(cost, volume, delivery, no data, unseen) are the team's own work and get no message. The
+texts are fixed in `app-campanhas.js` (`balanceText`, `summaryText`); a team's own wording
+on Configurações is the next step if Piero wants it. A report link in the summary is not
+there because links are per campaign (decision 12) and a client may have several.

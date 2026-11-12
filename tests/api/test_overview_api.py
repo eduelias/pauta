@@ -71,6 +71,13 @@ def test_a_member_sees_every_client_on_one_row(team, fake_meta):
         left["days_left"] is not None and left["days_left"] > overview.DEFAULTS["low_balance_days"]
     )
     assert clinic["seen_today"] is None and clinic["last_seen"] is None
+    # whom Avisar o cliente writes to: the client's contact and number, as saved
+    assert (clinic["contact"], clinic["whatsapp"]) == ("", "")
+    cid = clinic["id"]
+    saved = {"contact": "Carla Mendes", "whatsapp": "(11) 98888-7777"}
+    assert call(f"{base}/api/clients/{cid}", saved, nato, method="PATCH")[0] == 200
+    again = by_name(get(base, piero))[CLINIC]
+    assert (again["contact"], again["whatsapp"]) == ("Carla Mendes", "(11) 98888-7777")
 
     bakery = rows[BAKERY]
     assert bakery["balance"] is None  # no limit on the account: Meta gives nothing to divide
