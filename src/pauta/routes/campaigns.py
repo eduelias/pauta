@@ -425,7 +425,8 @@ def install(route, store, auth, drive, meta):
         out["connections"] = _connections(self)
         out["error"] = failed or out["error"]
         stale = out.pop("accounts_stale")
-        out["stale"] = bool(accounts) and stale
+        # an empty kept list (the only portfolio was swapped) is still one being re-read
+        out["stale"] = accounts is not None and stale
         if accounts is not None:
             out["accounts"] = _with_clients(self, accounts)
         return out

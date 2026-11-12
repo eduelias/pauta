@@ -841,11 +841,12 @@ class Meta:
             except MetaError as e:
                 self._failed = (time.time(), e)
                 raise
-            if gen == self._gen:
-                break
+            with self._lock:  # kept only if nothing changed while Meta answered
+                if gen == self._gen:
+                    self._cache, self._failed = (time.time(), out), None
+                    break
         else:
             return out
-        self._cache, self._failed = (time.time(), out), None
         obs.event("meta_read", accounts=len(out))
         if self.on_read:
             self.on_read(out)

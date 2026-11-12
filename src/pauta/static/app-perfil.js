@@ -256,7 +256,7 @@ function metaBody(d, clients = [], log = []) {
       <td class="pick">${pick(a)}</td>
       ${a.stale ? `<td class="muted">não aparece mais na Meta</td>` : `<td class="r">${metaBalance(a)}</td>`}</tr>`).join("");
   return `${d.error ? `<p class="warnbox">${esc(d.error)}</p>` : ""}${d.accounts_error && d.accounts_error !== d.error ? `<p class="warnbox">A Meta não respondeu à última leitura: ${esc(d.accounts_error)}</p>` : ""}
-    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.${d.stale && !d.accounts_error ? ` <span id="metareading" title="A lista é da última leitura; a Meta está sendo lida de novo e a tabela se atualiza sozinha">Lendo a Meta de novo…</span>` : ""}</span>
+    <div class="row-gap"><span class="muted small grow">As contas de anúncios de cada portfólio conectado e de quem é cada uma. Os números das campanhas ficam em <a href="#/campanhas">Campanhas</a>.${d.stale && !d.error && !d.accounts_error ? ` <span id="metareading" title="A lista é da última leitura; a Meta está sendo lida de novo e a tabela se atualiza sozinha">Lendo a Meta de novo…</span>` : ""}</span>
       <button class="btn small" data-metaconnect>${icon("target")}Conectar outro portfólio</button>
       <button class="btn small" id="metarefresh">${icon("swap")}Atualizar</button></div>
     <div id="metaconns">${conns.map(block).join("")}</div>
