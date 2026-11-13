@@ -127,6 +127,12 @@ Facebook password again when switching identities. Meta showed a cookie consent 
 sharing screens ("optional cookies are required to sign in to apps with Facebook and
 Instagram").
 
+**The first real post (2026-11-13, 08:45 UTC).** A 1080 × 1350 picture, chosen as PNG and
+turned into a 0,2 MB JPEG by the form, saved as a draft and then published from acceptance
+to @du7dev. Instagram fetched `/api/media/<token>.jpg` once (a GET, 2 ms), and the whole
+publish call took 9,9 seconds: the wait is Instagram preparing the container. The permalink
+came back and opens. The scheduler has not published a real post yet.
+
 ## What it would take for other people's profiles
 
 Publishing to a profile the app's own people do not manage needs **Advanced Access** for
