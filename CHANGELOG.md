@@ -7,6 +7,19 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Painel: o card "Saldo acabando".** A primeira tela agora lista os clientes com o saldo
+  de anúncios zerado ou que acaba dentro do prazo do time (o mesmo alerta de Campanhas →
+  Visão geral: 3 dias por padrão, ajustável em Configurações → Campanhas, 0 desliga), para
+  avisar o cliente antes de a campanha parar. Vem primeiro quem tem menos tempo: saldo que
+  já acabou, depois "acaba hoje", depois os dias contados. Cada linha traz o cliente (o nome
+  abre a página dele), quanto resta, o alerta ("saldo acabou", "saldo para 2 dias") e
+  **Avisar do saldo**, que abre o WhatsApp do cliente com a mensagem escrita, a mesma da
+  Visão geral. "Ver visão geral" leva para lá. Sem nenhum cliente em alerta o card não
+  aparece, e ele só existe onde a Meta está ligada. O Painel não ficou mais lento: abre como
+  antes e o card entra quando os saldos chegam.
+
 ## [1.11.1] - 2026-11-12
 
 ### Fixed

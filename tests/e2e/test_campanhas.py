@@ -88,7 +88,11 @@ def test_tab_only_with_meta_enabled(live, device, meta):
     meta.secret_file.unlink()  # no app secret on the server: Meta is off
     token, _ = auth.create_invite(admin=True)
     page = device().page
+    asked = []
+    page.on("request", lambda r: asked.append(r.url))
     join(page, base, token, "Renato Lima")
+    expect(page.locator(".stats .stat")).to_have_count(5)  # the Painel, without the balances
+    assert not [url for url in asked if "/api/campaigns" in url]
     expect(page.locator("#nav a[data-nav='#/campanhas']")).to_have_count(0)
     expect(page.locator("#tabbar a[data-nav='#/campanhas']")).to_have_count(0)
     expect(page.locator("#tabbar a")).to_have_count(5)  # the slot stays Financeiro's/Quadro's
@@ -1009,6 +1013,131 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
             break
         time.sleep(0.05)
     assert sent == ['{"kind":"balance"}']
+
+
+def test_painel_lists_the_clients_running_out_of_balance(synced, meta, monkeypatch):
+    """Painel → Saldo acabando: the clients with Visão geral's balance alert, the one with
+    the least time first, each with what is left, the alert's words, a link to the client
+    and "Avisar do saldo" (the row's own draft, not a second text). Nobody flagged, or the
+    alert switched off: no card. The Painel is drawn without waiting for the balances, and
+    an answer that comes after the person left draws nothing."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    store.save_client({"whatsapp": "0 (11) 98888-7777", "contact": "Carla Mendes"}, clinic["id"])
+    card = page.locator("#lowbalance")
+    names = card.locator(".lowrow .lowname b")
+    count = card.locator(".panel-head > span")
+
+    def painel() -> dict:
+        """The Painel opened again, its balances read and drawn: the overview's clients."""
+        page.goto(f"{base}/#/pedidos")
+        with page.expect_response("**/api/campaigns/overview"):
+            page.goto(f"{base}/#/")
+        expect(page.locator(".stats .stat")).to_have_count(5)
+        doc = page.evaluate("fetch('/api/campaigns/overview').then((r) => r.json())")
+        return {c["name"]: c for c in doc["clients"]}
+
+    def leave(account: str, cents: int):
+        """`cents` left on the ad account, of a limit of R$ 5.000."""
+        left = {**fakemeta.BALANCE["111"], "amount_spent": str(500000 - cents)}
+        monkeypatch.setitem(fakemeta.BALANCE, account, left)
+        meta.accounts(refresh=True)
+
+    # plenty on the clinic's account, no limit on the bakery's: nothing to warn about
+    rows = painel()
+    assert not [f for c in rows.values() for f in c["flags"] if f["key"] == "balance"]
+    expect(card).to_have_count(0)
+
+    # the clinic's balance covers two days at the last seven days' pace
+    week = sum(d["spend_cents"] for d in rows["Clínica Bem Estar"]["days"][-7:])
+    assert week > 0
+    left = -(-2 * week // 7) + 1
+    leave("111", left)
+    assert painel()["Clínica Bem Estar"]["balance"] == {"remaining_cents": left, "days_left": 2}
+    expect(count).to_have_text("1")
+    expect(card.get_by_role("heading", name="Saldo acabando")).to_be_visible()
+    expect(names).to_have_text(["Clínica Bem Estar"])
+    row = card.locator(f".lowrow[data-client='{clinic['id']}']")
+    expect(row.locator(".lowleft")).to_contain_text(brl(left))
+    expect(row.locator("[data-flag=balance]")).to_have_text("saldo para 2 dias")
+    expect(row.locator(".oact")).to_have_text("Avisar do saldo")
+    expect(row.locator(".oact")).to_have_attribute("target", "_blank")
+    draft = row.locator("[data-act=balance]").get_attribute("href")
+    to, text = draft.split("?text=")
+    assert to == "https://wa.me/5511988887777"
+    assert unquote(text).startswith(
+        "Olá, Carla! O saldo dos seus anúncios dura mais 2 dias no ritmo atual "
+        f"(restam R$ {brl(left)})."
+    )
+
+    # the bakery's account is empty: it comes first, and the card counts both
+    leave("222", 0)
+    painel()
+    expect(count).to_have_text("2")
+    expect(names).to_have_text(["Padaria Trigo de Ouro", "Clínica Bem Estar"])
+    empty = card.locator(f".lowrow[data-client='{bakery['id']}']")
+    expect(empty.locator(".lowleft")).to_contain_text("0,00")
+    expect(empty.locator("[data-flag=balance]")).to_have_text(re.compile(r"^saldo acabou"))
+    assert unquote(empty.locator("[data-act=balance]").get_attribute("href")).startswith(
+        "https://wa.me/?text=Olá! O saldo dos seus anúncios acabou"
+    )
+
+    # the Painel doesn't wait for the balances: it is there while the answer is still out
+    held = []
+    page.route("**/api/campaigns/overview", lambda route: held.append(route))
+    page.goto(f"{base}/#/pedidos")
+    page.goto(f"{base}/#/")
+    expect(page.locator(".stats .stat")).to_have_count(5)
+    expect(page.locator(".dash .panel")).to_have_count(3)
+    expect(card).to_have_count(0)
+    held.pop().continue_()
+    expect(names).to_have_count(2)
+    # an answer that comes after the person moved on is dropped
+    page.goto(f"{base}/#/pedidos")
+    page.goto(f"{base}/#/")
+    expect(page.locator(".stats .stat")).to_have_count(5)
+    page.goto(f"{base}/#/pedidos")
+    expect(page.get_by_role("heading", name="Pedidos", level=1)).to_be_visible()
+    with page.expect_response("**/api/campaigns/overview"):
+        held.pop().continue_()
+    page.unroute("**/api/campaigns/overview")
+    page.evaluate("fetch('/api/me').then((r) => r.json())")  # the answer has been handled
+    expect(card).to_have_count(0)
+    expect(page.get_by_role("heading", name="Pedidos", level=1)).to_be_visible()
+
+    # the card leads to the client and to Visão geral, whose row offers the same draft
+    painel()
+    row.locator(".lowname").click()
+    expect(page).to_have_url(re.compile(rf"#/cliente/{clinic['id']}$"))
+    painel()
+    card.get_by_role("link", name="Ver visão geral").click()
+    expect(page).to_have_url(re.compile(r"#/campanhas/geral"))
+    there = page.locator(f".orow[data-client='{clinic['id']}'] [data-act=balance]")
+    expect(there).to_have_attribute("href", draft)
+
+    # the tap opens WhatsApp in its own tab; the log keeps the kind and the screen
+    painel()
+    laptop.context.route("https://wa.me/**", lambda r: r.fulfill(body="ok"))
+    with page.expect_popup() as tab:
+        row.locator("[data-act=balance]").click()
+    assert tab.value.url == draft
+    tab.value.close()
+
+    # "Saldo acabando" set to 0 days switches the alert off, and the card with it
+    store.set_campaign_settings({"low_balance_days": 0})
+    painel()
+    expect(card).to_have_count(0)
+
+    page.goto("about:blank")  # pagehide: the batch leaves as a beacon
+    sent = []
+    for _ in range(100):
+        with store.db() as db:
+            found = db.execute("SELECT screen, props FROM usage WHERE event='client_message'")
+            sent = [(r["screen"], r["props"]) for r in found]
+        if sent:
+            break
+        time.sleep(0.05)
+    assert sent == [("painel", '{"kind":"balance"}')]
 
 
 def test_configuracoes_campanhas_sets_the_alerts(synced):
