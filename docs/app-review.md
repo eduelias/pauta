@@ -68,6 +68,30 @@ account is issued on request as an invitation link that creates a passkey in the
 browser. **That promise is live**: if Meta writes to the app's contact address asking for
 access, the invitation has to go out, or the review fails on "could not access the app".
 
+### The reviewer invitation, ready to send
+
+Made on 2026-11-13 and waiting in 1Password, **Du7 Tech → "Pauta acc reviewer invite"**. It
+is an **admin** invitation, 2 uses, valid until **2027-02-11**, for `https://acc.pauta.cc/`.
+Send it only if Meta asks for access, and only to the address they write from.
+
+- **Why admin.** Connecting and disconnecting a client's Instagram profile is an admin-only
+  route, and that is exactly what the reviewer has to exercise. A member account would let
+  them see Publicações but not reach the permission under review.
+- **Why that is safe.** Acceptance carries demo data only, runs as its own user with
+  `ProtectHome=yes`, and cannot reach production's database. The only real things in it are
+  the owner's own two Instagram profiles, `@du7dev` and `@pautacc`, both connected, with one
+  published post each and a live permalink. A reviewer therefore lands on a module that
+  already works rather than an empty screen.
+- **What they still cannot do.** They cannot run the connect flow against a profile of their
+  own, because while the app is unpublished only accounts with a role on it can pass Facebook
+  Login for Business. They can press the button and see the dialog. The screencast is what
+  shows the rest.
+- **To revoke.** Delete the unused row from the `invite` table in
+  `/var/lib/pauta-acc/pauta.db` on du7, or let it expire.
+
+One older unused admin invitation for acceptance is still in that table and expires on
+2026-11-15. It will lapse on its own; nothing to do unless you want it gone sooner.
+
 ### The five data-handling questions
 
 Meta's own warning on the page: "If you are unsure of how to answer any question, we
