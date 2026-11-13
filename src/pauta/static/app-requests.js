@@ -5,6 +5,9 @@
 // ---------- dashboard -----------------------------------------------------------------------
 
 async function viewDash() {
+  // asked for alongside the rest and never awaited here: see showLowBalance
+  const balances = metaVisible() ? api("GET", "/api/campaigns/overview") : null;
+  balances?.catch(() => {});  // its own failure isn't the Painel's
   const [reqs, clients] = await Promise.all([loadReqs(), api("GET", "/api/clients")]);
   const open = reqs.filter(isOpen);
   const late = open.filter(isLate);
@@ -51,6 +54,7 @@ async function viewDash() {
       </div>
     </div>
   </div>`;
+  if (balances) showLowBalance(balances, app.firstElementChild);
 }
 
 // ---------- board ---------------------------------------------------------------------------

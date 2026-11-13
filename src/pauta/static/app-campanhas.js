@@ -340,13 +340,46 @@ function summaryText(c, since, until) {
   if (p.results && p.result_indicator !== "link_click") lines.push(`• ${resultLabel(p.result_indicator)}: ${count(p.results)}${p.cost_per_result_cents != null ? ` (${plainMoney(p.cost_per_result_cents, c.currency)} cada)` : ""}`);
   return `${clientHello(c)} Resumo ${c.campaigns === 1 ? "da sua campanha" : "das suas campanhas"} (${since === until ? shortDay(since) : periodLabel(since, until)}):\n${lines.join("\n")}\nQualquer dúvida, é só me chamar.`;
 }
-function clientMessages(c, doc) {
+// one draft as a link; `kind` is what the usage log counts
+function messageLink(c, kind, label, glyph, text) {
   const to = waUrl(c.whatsapp);
-  const link = (kind, label, glyph, text) => `<a class="oact" data-act="${kind}" href="${esc(`${to || "https://wa.me/"}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener" title="${to ? `Abre a conversa com ${esc(c.contact || c.name)} com a mensagem escrita: você lê e envia` : "O cliente não tem WhatsApp cadastrado: o WhatsApp pergunta para quem enviar"}">${icon(glyph)}${label}</a>`;
-  const out = [];
-  if (c.balance && c.flags.some((f) => f.key === "balance")) out.push(link("balance", "Avisar do saldo", "wa", balanceText(c)));
-  if (c.period.spend_cents > 0) out.push(link("summary", "Enviar resumo", "send", summaryText(c, doc.since, doc.until)));
-  return out.length ? `<div class="oacts">${out.join("")}</div>` : "";
+  return `<a class="oact" data-act="${kind}" href="${esc(`${to || "https://wa.me/"}?text=${encodeURIComponent(text)}`)}" target="_blank" rel="noopener" title="${to ? `Abre a conversa com ${esc(c.contact || c.name)} com a mensagem escrita: você lê e envia` : "O cliente não tem WhatsApp cadastrado: o WhatsApp pergunta para quem enviar"}">${icon(glyph)}${label}</a>`;
+}
+const balanceFlag = (c) => c.balance ? c.flags.find((f) => f.key === "balance") : undefined;
+// "Avisar do saldo": only with the balance alert, on Visão geral's row and the Painel's card
+const balanceMessage = (c) => balanceFlag(c) ? messageLink(c, "balance", "Avisar do saldo", "wa", balanceText(c)) : "";
+function clientMessages(c, doc) {
+  const out = [balanceMessage(c)];
+  if (c.period.spend_cents > 0) out.push(messageLink(c, "summary", "Enviar resumo", "send", summaryText(c, doc.since, doc.until)));
+  return out.some(Boolean) ? `<div class="oacts">${out.join("")}</div>` : "";
+}
+// The Painel's card "Saldo acabando": the clients Visão geral flags for their balance (at
+// zero, or lasting less than the team's days in Configurações → Campanhas), the ones with
+// the least time first, each with the draft that warns the client. From the same overview
+// document, so the card and the row never disagree. Nobody flagged: no card.
+function lowBalanceCard(doc) {
+  const low = doc.clients.filter(balanceFlag).sort((a, b) => (a.balance.remaining_cents > 0) - (b.balance.remaining_cents > 0)
+    || (a.balance.days_left ?? 0) - (b.balance.days_left ?? 0)
+    || a.balance.remaining_cents - b.balance.remaining_cents || a.name.localeCompare(b.name, "pt-BR"));
+  if (!low.length) return "";
+  return `<section class="panel lowbal" id="lowbalance">
+    <div class="panel-head"><h2>Saldo acabando</h2><span class="muted small" title="${low.length === 1 ? "1 cliente" : `${low.length} clientes`}">${low.length}</span><a class="btn ghost small" href="#/campanhas/geral">Ver visão geral</a></div>
+    ${low.map((c) => `<div class="lowrow" data-client="${c.id}">
+      <a class="lowname" href="#/cliente/${c.id}">${avatar(c.name)}<b>${esc(c.name)}</b></a>
+      <b class="lowleft">${esc(centsMoney(c.balance.remaining_cents, c.currency))}</b>
+      <span class="oflag l${balanceFlag(c).level}" data-flag="balance">${esc(balanceFlag(c).text)}</span>
+      ${balanceMessage(c)}</div>`).join("")}
+  </section>`;
+}
+// Put under the Painel's counters when the overview answers, if that Painel is still the
+// one on screen: it never waits for the balances. A failed read leaves the Painel as it was.
+function showLowBalance(pending, root) {
+  pending.then((doc) => {
+    const html = root.isConnected ? lowBalanceCard(doc) : "";
+    if (!html) return;
+    $(".stats", root).insertAdjacentHTML("afterend", html);
+    $("#lowbalance", root).addEventListener("click", (e) => { const a = e.target.closest("a[data-act]"); if (a) track("client_message", { kind: a.dataset.act }); });
+  }).catch(() => {});
 }
 // under the amount: "acabou" at zero, "menos de um dia" when it won't cover one, else the days
 function balanceLasts(b) {

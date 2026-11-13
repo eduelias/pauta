@@ -181,3 +181,21 @@ number gets `wa.me/?text=…`, where WhatsApp asks for the conversation. The oth
 texts are fixed in `app-campanhas.js` (`balanceText`, `summaryText`); a team's own wording
 on Configurações is the next step if Piero wants it. A report link in the summary is not
 there because links are per campaign (decision 12) and a client may have several.
+
+### Saldo acabando on the Painel (added 2026-11-13)
+
+Piero asked for the balance alert on the first screen he opens, "pra gente se antecipar e
+informar ao cliente"; Renato had not found the alerts at all, being on "Por cliente". The
+Painel now has a card, **Saldo acabando**, under the counters: the clients whose row here
+carries the balance alert (at zero, or lasting less than the team's "Saldo acabando" days),
+the one with the least time first, each with what is left, the alert's words, a link to the
+client and the same **Avisar do saldo** draft. It links to this screen.
+
+- **The same document, no second rule.** The card reads `GET /api/campaigns/overview` and
+  keeps the rows with a `balance` flag, so it can't disagree with this screen, and the
+  threshold (and switching it off with 0) is the one on Configurações → Campanhas.
+- **Only the balance.** The other alerts stay here: a card that listed all of them would be
+  this screen again, and the balance is the one with a day on it.
+- **No card when nobody is flagged**, and none where Meta is off (the Painel doesn't ask).
+- **The Painel doesn't wait for it.** The read starts with the Painel's own and the card is
+  put in when it answers; a failed or late answer leaves the Painel as it was.

@@ -171,7 +171,7 @@ The 15 events for the first release (name, props):
 | 14 | `settings_changed` | `section` (equipe, financeiro, acompanhamento, meta, perfil) | Which settings get touched |
 | 15 | `login` | `ok`, `method` (passkey, autofill, link) | Sign-in friction on phones |
 | 16 | `period` | `p` (the picker key: last_30, this_month, custom…) | Which period each Campanhas draw used, next to the `api_slow` row it may have cost (added 2026-11-12: a 6.6 s Campanhas read could not be tied to a period) |
-| 17 | `client_message` | `kind` (balance, summary) | Whether the message drafts on Visão geral get opened, and which (added 2026-11-12 with "Avisar o cliente"). Never the client, the number or the text |
+| 17 | `client_message` | `kind` (balance, summary) | Whether the message drafts on Visão geral get opened, and which (added 2026-11-12 with "Avisar o cliente"); the Painel's card Saldo acabando sends the same event, told apart by the row's screen (`painel`). Never the client, the number or the text |
 
 ### Option B in detail (the site)
 
