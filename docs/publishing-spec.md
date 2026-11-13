@@ -109,9 +109,23 @@ app secret" (Du7 Tech). `PAUTA_ORIGIN` is already there. Then
 `sudo systemctl restart pauta-acc`; the journal says `publisher_started` and the Publicações
 tab appears.
 
-Not known until tried: Unified Login is written for a client's portfolio apart from the
-app's own. Whether a profile that sits in the app's own portfolio, or in none, connects is
-the first thing the trial answers.
+**What the first connection showed (2026-11-13).** @du7dev sits in the app's own portfolio
+(Du7 Technology Services), the case Meta's docs do not promise. Two attempts:
+
+- Signing in **with Instagram** as @du7dev (an Instagram Tester of the app): the sharing
+  screens came up, and after "Opslaan" Meta spun for half a minute and answered "Could not
+  connect Pauta Publicações (acc)". Nothing reached Pauta.
+- Signing in **with Facebook** as the app's admin, who also administers that portfolio: the
+  same screens, and the callback arrived. `/me/assigned_instagram_accounts` returned the
+  one profile, and the token has no expiry.
+
+So the same-portfolio case works, through the Facebook identity. Why the Instagram identity
+failed is not known (the tester role, or the portfolio rule); it matters for clients, who
+will mostly sign in with Instagram, and is the first thing to test with a profile outside
+Du7's portfolio. Because the dialog is opened with `prompt=login`, Meta also asks for the
+Facebook password again when switching identities. Meta showed a cookie consent before the
+sharing screens ("optional cookies are required to sign in to apps with Facebook and
+Instagram").
 
 ## What it would take for other people's profiles
 
