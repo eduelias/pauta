@@ -39,6 +39,45 @@ Review) and opened a submission that already lists what will be reviewed:
 4. **Submit**, then wait. Meta may come back with questions.
 5. **Publish the app** once the review passes.
 
+## The submission, as it stands
+
+Meta opened a submission (`submission_id` 29402866305976840) with five sections. Verification
+and App settings are green. **Allowed usage** now has both written descriptions saved (the
+texts below). What is left inside it, per permission:
+
+| | `instagram_content_publish` | `instagram_basic` | `public_profile` |
+|---|---|---|---|
+| Description | done | done | not asked |
+| Screencast | **to record** | **to record** | not asked |
+| API test calls | 0 of 1 shown; the calls were made today, and Meta says they can take 24 h to appear | same | not asked |
+| Agree to allowed usage | **owner** | **owner** | **owner** |
+
+### The five data-handling questions
+
+Meta's own warning on the page: "If you are unsure of how to answer any question, we
+recommend that you consult with the appropriate legal and data security colleagues in your
+organization. Providing incomplete or vague answers may result in loss of platform access."
+These are declarations about Du7, so the owner answers them.
+
+1. **Do you have data processors or service providers that will have access to the Platform
+   Data?** Evidence for "No": `app.pauta.cc` and `acc.pauta.cc` resolve through a CNAME to
+   `du7.sytes.net` → a KPN address, the house connection. Cloudflare holds the DNS records
+   with `proxied = false`, so it never sees the traffic, and TLS is a Let's Encrypt
+   certificate terminated by Caddy on the Pi. The Instagram id, username and token sit in
+   files next to the database on that machine and nowhere else. The answer changes the day a
+   backup leaves the house to someone else's computer.
+2. **Who is the person or entity responsible for all Platform Data?** The registered legal
+   entity, not a product name.
+3. **The country where that entity is located.**
+4. **Have you given personal data to public authorities under national security requests in
+   the past 12 months?**
+5. **Which policies do you have for requests from public authorities?** The choices are:
+   review of the legality of the request; provisions for challenging unlawful requests; a
+   data-minimisation policy; documentation of the requests and the reasoning; none of the
+   above; prohibited from answering. Ticking a policy that does not exist in writing is a
+   false statement to Meta. "None of the above" is an allowed answer and is the honest one
+   for a company that has not written these procedures down.
+
 ## Ready to paste
 
 Meta reviews in English. These describe what the code actually does; keep them true if the
