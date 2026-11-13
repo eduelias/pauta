@@ -4,8 +4,9 @@
   it can be used, so every client's Instagram profile has to be invited as an **Instagram
   Tester** and accept that invitation. That is fine for the owner's own profiles and
   unacceptable for Piero's clients. The way out is App Review and Advanced Access.
-- **Status, 2026-11-13:** the app's required settings are complete (Meta's Publish page now
-  says so). Nothing has been submitted, and the one irreversible step has not been taken.
+- **Status, 2026-11-13:** app settings complete, app icon set, and the app is now declared a
+  **Tech Provider** (the owner's call; Meta says it cannot be reversed). Business
+  verification already shows complete. Nothing has been submitted for review yet.
 - **The app:** Pauta Publicações (acc), App ID `29400025989594205`, in the Du7 Technology
   Services portfolio. Permissions `instagram_basic` and `instagram_content_publish`, both at
   "Ready for testing" (Standard Access).
@@ -19,19 +20,23 @@
 | User data deletion | Instructions URL, the same privacy page (it carries the LGPD rights section and the deletion/retention promise) |
 | Category | Business and pages |
 | Contact e-mail | the owner's |
+| App icon | the brand mark on its gradient, 1024 square |
+| Tech Provider | declared, 2026-11-13 |
+| Business verification | complete (Du7 Technology Services) |
 
 ## What is left, in order
 
-1. **Become a Tech Provider.** Meta's dialog: "This option is for businesses that need to
-   access business data owned by other business portfolios". **It cannot be reversed.** It
-   is the gate to submitting App Review at all, and it brings two obligations: business
-   verification of the entity, and the full data-usage questionnaire. This is the owner's
-   decision to make, not a setting to flip.
-2. **Business verification.** Du7 Technology Services already shows "Business verification
-   complete" on the app-creation screen, so this may be satisfied; confirm after step 1.
-3. **Request Advanced Access** for `instagram_basic` and `instagram_content_publish`, from
-   the use case's Permissions and features table.
-4. **Answer the data questions** (usage, handling, protection) and submit, with a screencast.
+The declaration added a **Review** section to the dashboard (Testing, Verification, App
+Review) and opened a submission that already lists what will be reviewed:
+`instagram_content_publish`, `instagram_basic` and `public_profile`, each "In 1 use case".
+
+1. **Review → Testing.** Complete the testing requirements Meta lists for the use case.
+2. **App Review → Next.** The data-usage, data-handling and data-protection questionnaire.
+   These are statements about how Du7 stores and protects client data: the owner answers
+   them, not a guess from the code.
+3. **The screencast.** One unbroken recording per the script below. It has to be made by
+   hand on a real account; nothing automates it.
+4. **Submit**, then wait. Meta may come back with questions.
 5. **Publish the app** once the review passes.
 
 ## Ready to paste
