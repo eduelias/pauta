@@ -1,13 +1,16 @@
-"""A fake Instagram on localhost for the Publicações tests (docs/publishing-spec.md): the
-login dialog, the code exchange, the 60-day token and its refresh, /me, and the three
-publishing calls. Like the real one it fetches the image itself from the address it is
-given, so a test fails when that address isn't public at that moment.
+"""A fake Meta on localhost for the Publicações tests (docs/publishing-spec.md): Unified
+Login's dialog (Facebook Login for Business with an Instagram configuration), the code
+exchange for a system-user token, the Instagram accounts that token was given, and the
+three publishing calls. Like the real one it fetches the image itself from the address it
+is given, so a test fails when that address isn't public at that moment, and it checks the
+app secret's proof on every call.
 
-  dialog   <base>/oauth/authorize      (www.instagram.com)
-  api      <base>                      (api.instagram.com: POST /oauth/access_token)
-  graph    <base>/graph                (graph.instagram.com: /access_token, /v27.0/...)
+  dialog   <base>/dialog/oauth         (www.facebook.com)
+  graph    <base>/graph                (graph.facebook.com: /v27.0/oauth/access_token, ...)
 """
 
+import hashlib
+import hmac
 import json
 import struct
 import threading
@@ -19,11 +22,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 IG_APP_ID = "990011223344"
+IG_CONFIG_ID = "1692300000000950"
 IG_SECRET = "ig-app-secret-for-tests"
-IG_ID = "17841400000000001"  # the professional account's id: what later paths take
-SCOPED_ID = "9988776655"  # the app-scoped one the code exchange also returns
-USERNAME = "du7.dev"
-EXPIRES_IN = 5183944  # about 60 days
+IG_ID = "17841400000000001"  # the professional account's id: what the paths take
+USERNAME = "du7dev"
 
 
 def ig_secret(db_path) -> Path:
@@ -66,19 +68,21 @@ def graph_error(code: int, subcode: int | None = None, message: str = "refused")
 class FakeInstagram:
     def __init__(self):
         self.codes: dict[str, str] = {}  # code -> the redirect_uri it was issued for
-        self.tokens: set[str] = set()  # the long-lived tokens that work
+        self.tokens: set[str] = set()  # the system-user tokens that work
         self.deny = False  # the person cancels in the dialog
-        self.flat = False  # answer the exchange and /me unwrapped, as the API also has
-        self.account_type = "Business"
+        self.expires_in: int | None = None  # a "never" configuration: no expiry in the answer
         self.username = USERNAME
         self.ig_id = IG_ID
+        # the Instagram accounts the person shared in the login (None: this one profile)
+        self.accounts: list[dict] | None = None
+        self.not_professional = False  # the container call answers (#10)
+        self.bad_proof = 0  # calls that came without the app secret's proof
         self.revoked = False  # every token answers 190
         self.fail_fetch = False  # the container step can't download the image
         self.at_limit = False  # media_publish answers "max posts reached"
         self.not_ready = 0  # how many status reads say IN_PROGRESS first
         self.container_error = False  # the container ends in ERROR
         self.down = False
-        self.refreshes = 0
         self.fetched: list[dict] = []  # each image fetch: url, status, content type, magic
         self.containers: dict[str, dict] = {}
         self.published: list[dict] = []  # what went out: ig_id, caption, alt_text, image
@@ -111,8 +115,7 @@ class FakeInstagram:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.httpd.serve_forever, args=(0.02,), daemon=True).start()
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        self.dialog = f"{self.base}/oauth/authorize"
-        self.api = self.base
+        self.dialog = f"{self.base}/dialog/oauth"
         self.graph = f"{self.base}/graph"
 
     def close(self):
@@ -133,98 +136,61 @@ class FakeInstagram:
         self.calls.append(f"{method} {path}")
         if self.down:
             return h._send(500, graph_error(2, message="down"))
-        if path == "/oauth/authorize":
+        if path == "/dialog/oauth":
             return self._authorize(h, q)
-        if path == "/oauth/access_token" and method == "POST":
-            return self._exchange(h, form)
-        if path == "/graph/access_token":
-            return self._long(h, q)
-        if path == "/graph/refresh_access_token":
-            return self._refresh(h, q)
         parts = path.removeprefix("/graph/").split("/")
         if not path.startswith("/graph/v") or len(parts) < 2:
             return h._send(404, graph_error(100, message="unknown path"))
-        token = (h.headers.get("Authorization") or "").removeprefix("Bearer ") or q.get(
-            "access_token", form.get("access_token", "")
-        )
+        if parts[1:] == ["oauth", "access_token"]:
+            return self._exchange(h, q)
+        token = (h.headers.get("Authorization") or "").removeprefix("Bearer ")
         if self.revoked or token not in self.tokens:
             return h._send(400, graph_error(190, message="Invalid OAuth 2.0 Access Token"))
+        proof = hmac.new(IG_SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()
+        if q.get("appsecret_proof", form.get("appsecret_proof")) != proof:
+            self.bad_proof += 1
+            return h._send(400, graph_error(100, message="Invalid appsecret_proof"))
         return self._graph(h, method, parts[1:], q, form)
 
     def _authorize(self, h, q):
-        assert q["client_id"] == IG_APP_ID and q["response_type"] == "code", q
-        assert q["scope"] == "instagram_business_basic,instagram_business_content_publish", q
+        assert q["client_id"] == IG_APP_ID and q["config_id"] == IG_CONFIG_ID, q
+        assert q["response_type"] == "code" and "scope" not in q, q
+        assert q["override_default_response_type"] == "true", q
         back = q["redirect_uri"]
         if self.deny:
             why = {
                 "error": "access_denied",
                 "error_reason": "user_denied",
-                "error_description": "The user denied your request",
+                "error_description": "Permissions error",
                 "state": q["state"],
             }
             return h._send(302, location=f"{back}?{urlencode(why)}")
         code = self._next("code-")
         self.codes[code] = back
-        # the real one appends "#_" after the code
-        return h._send(302, location=f"{back}?{urlencode({'code': code, 'state': q['state']})}#_")
+        # Facebook's dialog appends "#_=_" after the query
+        return h._send(302, location=f"{back}?{urlencode({'code': code, 'state': q['state']})}#_=_")
 
-    def _exchange(self, h, form):
+    def _exchange(self, h, q):
         good = (
-            form.get("client_id") == IG_APP_ID
-            and form.get("client_secret") == IG_SECRET
-            and form.get("grant_type") == "authorization_code"
-            and self.codes.pop(form.get("code", ""), None) == form.get("redirect_uri")
-        )
-        if not good:
-            return h._send(
-                400,
-                {
-                    "error_type": "OAuthException",
-                    "code": 400,
-                    "error_message": "Matching code was not found or was already used",
-                },
-            )
-        short = self._next("short-")
-        self._short = short
-        doc = {"access_token": short, "user_id": SCOPED_ID, "permissions": "a,b"}
-        return h._send(200, doc if self.flat else {"data": [doc]})
-
-    def _long(self, h, q):
-        good = (
-            q.get("grant_type") == "ig_exchange_token"
+            q.get("client_id") == IG_APP_ID
             and q.get("client_secret") == IG_SECRET
-            and q.get("access_token") == getattr(self, "_short", None)
+            and self.codes.pop(q.get("code", ""), None) == q.get("redirect_uri")
         )
         if not good:
-            return h._send(400, graph_error(190))
-        token = self._next("long-")
+            return h._send(400, graph_error(100, 36009, "This authorization code has been used."))
+        token = self._next("suat-")
         self.tokens.add(token)
-        return h._send(
-            200, {"access_token": token, "token_type": "bearer", "expires_in": EXPIRES_IN}
-        )
-
-    def _refresh(self, h, q):
-        old = q.get("access_token")
-        if q.get("grant_type") != "ig_refresh_token" or old not in self.tokens or self.revoked:
-            return h._send(400, graph_error(190))
-        self.refreshes += 1
-        token = self._next("long-")
-        self.tokens.discard(old)
-        self.tokens.add(token)
-        return h._send(
-            200, {"access_token": token, "token_type": "bearer", "expires_in": EXPIRES_IN}
-        )
+        doc = {"access_token": token, "token_type": "bearer"}
+        if self.expires_in:
+            doc["expires_in"] = self.expires_in
+        return h._send(200, doc)
 
     def _graph(self, h, method, parts, q, form):
-        if parts == ["me"]:
-            me = {
-                "id": SCOPED_ID,
-                "user_id": self.ig_id,
-                "username": self.username,
-                "name": "Du7",
-                "account_type": self.account_type,
-            }
-            return h._send(200, me if self.flat else {"data": [me]})
+        if parts == ["me", "assigned_instagram_accounts"]:
+            rows = self.accounts
+            if rows is None:
+                rows = [{"id": self.ig_id, "username": self.username}]
+            return h._send(200, {"data": rows, "paging": {"cursors": {}}})
         if method == "POST" and parts == [self.ig_id, "media"]:
             return self._container(h, form)
         if method == "POST" and parts == [self.ig_id, "media_publish"]:
@@ -257,6 +223,9 @@ class FakeInstagram:
         except OSError:
             pass
         self.fetched.append(seen)
+        if self.not_professional:
+            message = "(#10) Access is denied because the instagram account type is not business"
+            return h._send(400, graph_error(10, message=message))
         if self.fail_fetch or seen["status"] != 200 or seen["magic"] != b"\xff\xd8\xff":
             return h._send(400, graph_error(9004, 2207052, "could not fetch"))
         cid = self._next("1790")

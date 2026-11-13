@@ -43,7 +43,6 @@ EDITABLE = ("draft", "scheduled", "failed")  # what a person may still change or
 TICK_SECONDS = 20
 STUCK_SECONDS = 10 * 60  # a `publishing` older than this died mid-way
 ORPHAN_SECONDS = 24 * 3600  # an uploaded image no post took
-REFRESH_BELOW = timedelta(days=45)  # a 60-day token is renewed once it has less than this left
 
 UNSURE = "não sabemos se esta publicação saiu: confira no Instagram antes de publicar de novo"
 NO_PROFILE = "conecte o Instagram deste cliente primeiro"
@@ -427,7 +426,7 @@ def publish(posts: Posts, ig: Instagram, pid: int, origin: str) -> dict:
 
 class Publisher:
     """The scheduled posts on a daemon thread: every tick publishes what is due, marks what
-    died mid-way, renews the tokens that are running out and clears forgotten images.
+    died mid-way, notices a lapsed connection and clears forgotten images.
     Nothing it meets can kill it."""
 
     def __init__(self, posts: Posts, ig: Instagram, origin: str, clock=lambda: datetime.now(UTC)):
@@ -466,8 +465,8 @@ class Publisher:
         return out
 
     def chores(self) -> None:
-        """Renew tokens with less than REFRESH_BELOW left; say so on the profile when one is
-        gone; clear images no post took."""
+        """Say so on the profile when its token is gone or lapsed (a system-user token of a
+        "never" configuration doesn't lapse); clear images no post took."""
         self.posts.sweep_media()
         for p in self.posts.profiles():
             if p["state"] != "ok":
@@ -475,13 +474,3 @@ class Publisher:
             left = self.ig.expires_in(p["ig_id"], self.clock())
             if left is None or left <= timedelta(0):
                 self.posts.set_profile(p["client"], state="expired", error="a conexão venceu")
-                continue
-            if left >= REFRESH_BELOW:
-                continue
-            try:
-                expires = self.ig.refresh(p["ig_id"])
-                self.posts.set_profile(p["client"], expires=expires)
-            except InstagramError as e:
-                if e.revoked:
-                    self.posts.set_profile(p["client"], state="revoked", error=str(e))
-                obs.event("ig_refresh_failed", logging.WARNING, code=e.code)

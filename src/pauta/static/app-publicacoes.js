@@ -19,7 +19,7 @@ const POST_STATUS = {
 const IG_WHY = {
   cancelado: "A conexão foi cancelada no Instagram.",
   vencido: "O pedido de conexão venceu. Comece de novo.",
-  perfil: "Este perfil não pôde ser ligado: ele precisa ser profissional e não estar em outro cliente.",
+  perfil: "Este perfil não pôde ser ligado: o login precisa trazer um só perfil, profissional, que não esteja em outro cliente.",
   instagram: "O Instagram não completou a conexão. Tente de novo.",
 };
 
@@ -65,7 +65,7 @@ function profilesPanel(doc, clients) {
   const free = clients.filter((c) => !taken.has(c.id));
   const rows = doc.profiles.map((p) => {
     const ok = p.state === "ok";
-    const line = ok ? `conectado${p.expires ? `, renova sozinho até ${stamp(p.expires).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}` : ""}`
+    const line = ok ? `conectado${p.expires ? ` até ${stamp(p.expires).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}` : ""}`
       : `${p.state === "expired" ? "a conexão venceu" : "o Instagram não aceita mais a conexão"}: conecte de novo`;
     return `<div class="member" data-profile="${p.client}">${avatar(p.client_name)}<div class="who"><b>${esc(p.client_name)}</b>
       <span class="muted small">@${esc(p.username)} · <span class="${ok ? "" : "pbad"}">${esc(line)}</span></span></div>
@@ -73,7 +73,7 @@ function profilesPanel(doc, clients) {
   }).join("");
   const add = ME.is_admin
     ? free.length ? `<div class="row-gap pconnect"><select class="input" id="igclient" aria-label="Cliente">${free.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><button class="btn" id="igconnect">${icon("plus")}Conectar Instagram</button></div>
-      <p class="muted small">Abre o login do Instagram. Entre lá com o perfil do cliente: ele precisa ser profissional (Empresa ou Criador de conteúdo).</p>`
+      <p class="muted small">Abre o login da Meta. Escolha entrar com o Instagram e use o perfil do cliente: ele precisa ser profissional (Empresa ou Criador de conteúdo). Compartilhe só esse perfil.</p>`
       : `<p class="muted small">Todos os clientes já têm um perfil conectado.</p>`
     : doc.profiles.length ? "" : `<p class="muted small">Um administrador conecta o Instagram de cada cliente.</p>`;
   return `<section class="panel" id="igprofiles"><div class="panel-head"><h2>${icon("user")}Perfis do Instagram</h2></div>

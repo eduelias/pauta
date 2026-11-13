@@ -62,7 +62,7 @@ def test_connect_publish_schedule_edit_delete(live, device, ig, fake_ig):
     expect(page).to_have_url(re.compile(r"/#/publicacoes$"))
     row = page.locator(f"#igprofiles [data-profile='{client['id']}']")
     expect(row).to_contain_text(f"@{USERNAME}")
-    expect(row).to_contain_text("conectado, renova sozinho até")
+    expect(row).to_contain_text(f"@{USERNAME} · conectado")
     expect(page.locator("#igclient option")).to_have_text(["Padaria Trigo de Ouro"])
 
     # a new post: a shape Instagram refuses is told at once; a PNG becomes a JPEG

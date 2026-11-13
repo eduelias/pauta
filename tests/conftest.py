@@ -4,7 +4,7 @@ import pytest
 
 from appserver import serve
 from fakegraph import CLIENT, FakeGraph
-from fakeinstagram import IG_APP_ID, FakeInstagram, ig_secret
+from fakeinstagram import IG_APP_ID, IG_CONFIG_ID, FakeInstagram, ig_secret
 from fakemeta import APP_ID, CONFIG_ID, FakeMeta, secret
 from pauta.auth import Auth
 from pauta.db import Store
@@ -91,7 +91,11 @@ def ig_on(store, fake_ig):
     The server fixture gives it the address the app answers on."""
     ig_secret(store.path)
     on = Instagram(
-        store.path, app_id=IG_APP_ID, dialog=fake_ig.dialog, api=fake_ig.api, graph=fake_ig.graph
+        store.path,
+        app_id=IG_APP_ID,
+        config_id=IG_CONFIG_ID,
+        dialog=fake_ig.dialog,
+        graph=fake_ig.graph,
     )
     on.sleep = lambda _s: None  # a container that isn't ready is asked again at once
     return on

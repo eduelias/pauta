@@ -1,7 +1,7 @@
 # Publicações: posts for a client's Instagram (beta, acceptance only)
 
 - **Status:** a first cut built on 2026-11-12 to be tried on acceptance with the owner's own
-  profile (@du7.dev) as the client. Off everywhere the Instagram app is not configured, so
+  profile (@du7dev) as the client. Off everywhere the Instagram app is not configured, so
   production does not show it. Not a decision record yet: it becomes one (and amends
   decision 8's "Pauta only reads") if the trial says the module is worth keeping.
 - **Where it came from:** the owner asked what KingHost does for "daily posting" and whether
@@ -31,12 +31,24 @@ writes. Publishing writes to a client's public profile. They share nothing:
 
 | | Campanhas (`meta.py`) | Publicações (`instagram.py`) |
 |---|---|---|
-| Login | Facebook Login for Business, a system user per portfolio | Instagram API with Instagram Login, one login per profile |
-| Ids and secret | `PAUTA_META_APP_ID`, `PAUTA_META_CONFIG_ID`, `<db>.meta-secret` | `PAUTA_IG_APP_ID` (the *Instagram* app id), `<db>.ig-secret` |
-| Tokens | `<db>.meta-token.<business>`, never expire | `<db>.ig-tokens`, 60 days, renewed by the publisher while valid |
-| Permissions | `ads_read` | `instagram_business_basic`, `instagram_business_content_publish` |
+| Meta app | **Pauta** (production), **Pauta (acc)** (its test version) | Its own: **Pauta Publicações (acc)** on acceptance |
+| Login | Facebook Login for Business, a system user per ads portfolio | The same dialog with another configuration ("Unified Login"): the asset is an Instagram account, and the person may sign in with Instagram itself |
+| Ids and secret | `PAUTA_META_APP_ID`, `PAUTA_META_CONFIG_ID`, `<db>.meta-secret` | `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID`, `<db>.ig-secret` |
+| Tokens | `<db>.meta-token.<business>`, never expire | `<db>.ig-tokens`, one per profile, never expire (the configuration says so) |
+| Permissions | `ads_read` | `instagram_basic`, `instagram_content_publish`, nothing else |
 | Belongs to | The team (a portfolio) | A client (a profile) |
 | A Facebook Page | Not involved | Not needed |
+
+**Why not "Instagram Login", as first built.** The first cut used the Instagram API with
+Instagram Login (its own Instagram app id, `graph.instagram.com`, 60-day tokens). Creating
+the app on 2026-11-13 showed that Meta no longer offers it: "API setup with Instagram login
+is not available for newer apps. Your app uses API setup with Unified login instead."
+Existing apps keep it with no end date announced; a new one cannot have it. Two more things
+the dashboard taught: a test version of the ads app (**Pauta (acc)**) offers no other
+product, so publishing needed an app of its own anyway; and Meta's template configuration
+for Unified Login asks for `ads_management`, `ads_read`, messages and comments too. Pauta's
+configuration was made by hand with the two publishing permissions only, and the dashboard
+accepts it ("Instagram Login Compatible").
 
 A policy action against one cannot take the other down, and either can be switched off by
 removing its two settings.
@@ -74,26 +86,37 @@ novo": whether it went out is not known, and a blind retry could post it twice.
 
 ## Setting it up (acceptance)
 
-Meta's side, once, in the test app **Pauta (acc)** (App ID `1438754228470933`):
+Done on 2026-11-13, in Meta's dashboard, as the owner:
 
-1. Add the **Instagram** product; in *API setup with Instagram login* → *Set up Instagram
-   business login* → *Business login settings*, add the redirect URI
-   `https://acc.pauta.cc/api/instagram/callback` and note the **Instagram app id** and
-   **Instagram app secret** (they are not the Facebook ones).
-2. In *Generate access tokens*, add the profile. It must be professional and public. The app
-   stays in development mode: a profile of a person with a role on the app, added there,
-   needs no App Review.
+1. A new app, **Pauta Publicações (acc)** (App ID `29400025989594205`), use case *Manage
+   messaging & content on Instagram*, in the Du7 Technology Services portfolio.
+2. *Use cases → Customize → Permissions and features*: `instagram_basic` and
+   `instagram_content_publish` added (both "Ready for testing").
+3. *Facebook Login for Business → Configurations*: **Pauta publicar no Instagram**
+   (`1692317655580950`): General, system-user token, never expires, asset *Instagram
+   accounts* (required), those two permissions.
+4. *API setup with Unified login*: that configuration selected, redirect URL
+   `https://acc.pauta.cc/api/instagram/callback`.
+5. *App roles → Roles*: @du7dev as **Instagram Tester**, accepted on Instagram under
+   Settings → Apps and websites → Tester Invites. The app is unpublished: only people and
+   profiles with a role on it can log in.
 
 du7's side: a drop-in `pauta-acc.service.d/instagram.conf` with
-`Environment=PAUTA_IG_APP_ID=…`, and `/var/lib/pauta-acc/pauta.db.ig-secret` (owner
-`pauta-acc`, mode 600) rendered from the 1Password item "pauta-acc instagram app secret"
-(Du7 Tech). `PAUTA_ORIGIN` is already there. Then `sudo systemctl restart pauta-acc`; the
-journal says `publisher_started` and the Publicações tab appears.
+`Environment=PAUTA_IG_APP_ID=…` and `Environment=PAUTA_IG_CONFIG_ID=…`, and
+`/var/lib/pauta-acc/pauta.db.ig-secret` (owner `pauta-acc`, mode 600) holding the new app's
+**App secret** (App settings → Basic), rendered from the 1Password item "pauta-acc instagram
+app secret" (Du7 Tech). `PAUTA_ORIGIN` is already there. Then
+`sudo systemctl restart pauta-acc`; the journal says `publisher_started` and the Publicações
+tab appears.
+
+Not known until tried: Unified Login is written for a client's portfolio apart from the
+app's own. Whether a profile that sits in the app's own portfolio, or in none, connects is
+the first thing the trial answers.
 
 ## What it would take for other people's profiles
 
 Publishing to a profile the app's own people do not manage needs **Advanced Access** for
-`instagram_business_content_publish`: App Review with a screencast, and Business
+`instagram_content_publish` and `instagram_basic`: App Review with a screencast, and Business
 Verification. That is the gate between this beta and a client of Piero's. Until then every
 profile is one added by hand to the app's roles.
 

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from fakeinstagram import EXPIRES_IN, IG_ID, USERNAME, jpeg
+from fakeinstagram import IG_ID, USERNAME, jpeg
 from pauta import instagram, publishing
 from pauta.db import Invalid, NotFound
 from pauta.instagram import InstagramError
@@ -44,9 +44,9 @@ def connect(ig, fake_ig, posts, client, by=None):
     except urllib.error.HTTPError as e:
         back = e.headers["Location"]
     q = urllib.parse.parse_qs(urllib.parse.urlparse(back).query)
-    assert q["state"] == [state] and back.endswith("#_")
+    assert q["state"] == [state] and back.endswith("#_=_")
     assert ig.take_state(state) == (client, by)
-    who, expires = ig.finish(q["code"][0] + "#_")
+    who, expires = ig.finish(q["code"][0])
     return posts.save_profile(client, who, expires, by)
 
 
@@ -102,9 +102,10 @@ def test_a_moment_is_kept_in_utc():
 # ---- the Instagram client ----------------------------------------------------------------------
 
 
-def test_off_without_the_app_id_or_the_secret(store, ig_on):
+def test_off_without_the_app_id_the_configuration_or_the_secret(store, ig_on):
     assert ig_on.enabled
     assert not instagram.Instagram(store.path).enabled  # no app id
+    assert not instagram.Instagram(store.path, app_id="1").enabled  # no configuration
     ig_on.secret_file.unlink()
     assert not ig_on.enabled
 
@@ -113,18 +114,17 @@ def test_connecting_keeps_the_token_out_of_the_database(store, ig_on, fake_ig, p
     ig_on.at(ORIGIN)
     profile = connect(ig_on, fake_ig, posts, client)
     assert (profile["ig_id"], profile["username"], profile["state"]) == (IG_ID, USERNAME, "ok")
-    assert profile["account_type"] == "Business" and profile["client_name"] == "Du7"
-    left = ig_on.expires_in(IG_ID)
-    assert timedelta(days=59) < left <= timedelta(seconds=EXPIRES_IN)
+    assert profile["client_name"] == "Du7"
+    # a system-user token of a "never" configuration: no date to show, nothing to renew
+    assert profile["expires"] is None and ig_on.expires_in(IG_ID) == timedelta.max
     kept = json.loads(ig_on.tokens_file.read_text())
     assert set(kept) == {IG_ID} and kept[IG_ID]["token"] in fake_ig.tokens
+    assert kept[IG_ID]["expires"] is None
     assert stat.S_IMODE(ig_on.tokens_file.stat().st_mode) == 0o600
     with store.db() as db:  # nothing of the token in the database
         dump = "\n".join(db.iterdump())
     assert kept[IG_ID]["token"] not in dump
-    # the flat answers the API has also given
-    fake_ig.flat = True
-    assert connect(ig_on, fake_ig, posts, client)["username"] == USERNAME
+    assert fake_ig.bad_proof == 0  # every call carried the app secret's proof
     ig_on.forget(IG_ID)
     assert ig_on.expires_in(IG_ID) is None
 
@@ -139,12 +139,17 @@ def test_a_state_is_used_once_and_a_code_too(ig_on, fake_ig, posts, client):
     assert e.value.step == "code" and e.value.status == 400
 
 
-def test_a_personal_profile_is_refused(ig_on, fake_ig, posts, client):
+def test_the_login_must_bring_exactly_one_profile(ig_on, fake_ig, posts, client):
     ig_on.at(ORIGIN)
-    fake_ig.account_type = "Personal"
-    with pytest.raises(InstagramError, match="profissional"):
+    fake_ig.accounts = []  # the person shared no Instagram account
+    with pytest.raises(InstagramError, match="nenhum perfil do Instagram") as e:
         connect(ig_on, fake_ig, posts, client)
-    assert posts.profile(client) is None and ig_on.expires_in(IG_ID) is None
+    assert e.value.step == "me" and posts.profile(client) is None
+    fake_ig.accounts = [{"id": "1", "username": "a"}, {"id": "2", "username": "b"}]
+    with pytest.raises(InstagramError, match="mais de um perfil"):
+        connect(ig_on, fake_ig, posts, client)
+    assert posts.profile(client) is None and json.loads("{}") == {}
+    assert not ig_on.tokens_file.exists()  # no token was kept for a login that didn't count
 
 
 def test_one_profile_serves_one_client(store, ig_on, fake_ig, posts, client):
@@ -163,6 +168,10 @@ def test_refusals_become_reasons_a_person_can_act_on(ig_on, fake_ig, posts, clie
     fake_ig.fail_fetch = True
     with pytest.raises(InstagramError, match="não conseguiu baixar a imagem"):
         ig_on.create_container(IG_ID, "http://127.0.0.1:9/x.jpg", "oi")
+    fake_ig.fail_fetch, fake_ig.not_professional = False, True
+    with pytest.raises(InstagramError, match="precisa ser profissional"):
+        ig_on.create_container(IG_ID, "http://127.0.0.1:9/x.jpg", "oi")
+    fake_ig.not_professional = False
     fake_ig.revoked = True
     with pytest.raises(InstagramError, match="conecte o perfil de novo") as e:
         ig_on.create_container(IG_ID, "http://127.0.0.1:9/x.jpg", "oi")
@@ -256,20 +265,19 @@ def test_publish_refuses_before_sending_what_a_person_can_fix(ig_on, fake_ig, po
     assert posts.post(p["id"])["status"] == "draft" and fake_ig.calls == []
 
 
-def test_the_publisher_renews_tokens_and_says_when_one_is_gone(ig_on, fake_ig, posts, client):
+def test_the_publisher_says_when_a_connection_lapsed(ig_on, fake_ig, posts, client):
+    """A token that doesn't expire is left alone; one that does (a 60-day configuration) is
+    said to have lapsed once it has, and one that is gone from the file too."""
     ig_on.at(ORIGIN)
     connect(ig_on, fake_ig, posts, client)
     clock = {"now": datetime.now(UTC)}
     pub = Publisher(posts, ig_on, ORIGIN, clock=lambda: clock["now"])
+    clock["now"] += timedelta(days=400)
     pub.tick()
-    assert fake_ig.refreshes == 0  # sixty days left: nothing to renew
-    clock["now"] += timedelta(days=20)  # under 45 left, and six hours since the last chores
-    pub.tick()
-    assert fake_ig.refreshes == 1
-    assert ig_on.expires_in(IG_ID) > timedelta(days=59)
-    assert posts.profile(client)["state"] == "ok"
-    fake_ig.revoked = True
-    clock["now"] += timedelta(days=80)  # the renewed token, long gone
+    assert posts.profile(client)["state"] == "ok"  # never expires
+    fake_ig.expires_in = 3600
+    assert connect(ig_on, fake_ig, posts, client)["expires"] is not None
+    clock["now"] += timedelta(hours=7)  # past the hour it had, and due for the chores again
     pub.tick()
     p = posts.profile(client)
     assert p["state"] == "expired" and p["error"] == "a conexão venceu"

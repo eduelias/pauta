@@ -1,29 +1,34 @@
-"""A client's Instagram profile, through the Instagram API with Instagram Login
+"""A client's Instagram profile, through the Instagram API with Unified Login
 (docs/publishing-spec.md). A second integration, apart from meta.py on purpose: that one
 reads ad accounts with `ads_read` and never writes; this one publishes to a profile, with
-its own app id, its own secret and its own tokens.
+its own Meta app, its own secret and its own tokens.
 
-An admin clicks "Conectar Instagram" on a client. Pauta sends them to Instagram's login with
-the app's Instagram id; whoever is signed in to Instagram there approves, and Instagram sends
-the browser back to `/api/instagram/callback` with a one-time code. Pauta exchanges it (with
-the Instagram app secret) for a short token, that one for a 60-day token, and asks who it
-is. The publisher renews the token while it is valid; once it lapses the profile says
-"conecte de novo".
+Meta closed "Instagram Login" to apps created from late 2026 on: a new app gets Unified
+Login, which is Facebook Login for Business with a configuration whose asset is an Instagram
+account. An admin clicks "Conectar Instagram" on a client. Pauta sends them to Meta's login
+with the app id and that configuration; they sign in (with Facebook or with Instagram),
+pick the profile, and Meta sends the browser back to `/api/instagram/callback` with a
+one-time code. Pauta exchanges it, with the app secret, for a system-user token and asks
+which Instagram account it was given. The token does not expire (the configuration says
+so); a revoked one marks the profile "conecte de novo".
 
 Files, next to the database (never in it, so an export or a backup of the DB has no token):
-  <db>.ig-secret   the Instagram app secret, one line, mode 600 (put there by the operator)
-  <db>.ig-tokens   {ig_id: {"token", "expires" (epoch seconds), "obtained"}}, mode 600
+  <db>.ig-secret   the Meta app secret of the publishing app, one line, mode 600
+  <db>.ig-tokens   {ig_id: {"token", "expires" (epoch seconds or null), "obtained"}}, mode 600
 
-Configuration (the unit's environment; publishing is off without both):
-  PAUTA_IG_APP_ID  the Instagram app id (App Dashboard → Instagram → API setup with
-                   Instagram login); not the Facebook app id
-  PAUTA_ORIGIN     the app's address: the callback and the images' public addresses use it
+Configuration (the unit's environment; publishing is off without all three):
+  PAUTA_IG_APP_ID     the publishing app's Meta app id (its own app, not the ads one)
+  PAUTA_IG_CONFIG_ID  its Facebook Login for Business configuration: Instagram account as
+                      the asset, `instagram_basic` and `instagram_content_publish`
+  PAUTA_ORIGIN        the app's address: the callback and the images' public addresses
 
-Nothing here logs a URL, a token or Instagram's message text.
+Nothing here logs a URL, a token or Meta's message text.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import http.client
 import json
 import logging
@@ -40,10 +45,8 @@ from pathlib import Path
 from . import obs
 
 VERSION = "v27.0"
-DIALOG = "https://www.instagram.com/oauth/authorize"
-API = "https://api.instagram.com"  # the code exchange only
-GRAPH = "https://graph.instagram.com"  # everything else
-SCOPES = "instagram_business_basic,instagram_business_content_publish"
+DIALOG = "https://www.facebook.com/dialog/oauth"
+GRAPH = "https://graph.facebook.com"
 DEV_ORIGIN = "http://localhost:8088"
 
 TIMEOUT = 20
@@ -61,6 +64,8 @@ NOT_READY = "o Instagram demorou para preparar a imagem; tente de novo"
 BAD_STATE = "este pedido de conexão venceu; comece de novo"
 DENIED = "a conexão foi cancelada no Instagram"
 NOT_PROFESSIONAL = "o perfil precisa ser profissional (Empresa ou Criador de conteúdo)"
+NO_ACCOUNT = "nenhum perfil do Instagram veio com o login: escolha o perfil do cliente"
+MANY_ACCOUNTS = "o login trouxe mais de um perfil: escolha só o perfil deste cliente"
 
 RESTRICTED = "o Instagram restringiu este perfil; veja o aviso no aplicativo do Instagram"
 BAD_CAPTION = "o Instagram recusou a legenda"
@@ -90,18 +95,18 @@ class Instagram:
         self,
         db_path: Path,
         app_id: str = "",
+        config_id: str = "",
         origin: str = "",
         dialog: str = DIALOG,
-        api: str = API,
         graph: str = GRAPH,
         version: str = VERSION,
     ):
         self.app_id = (app_id or "").strip()
+        self.config_id = (config_id or "").strip()
         self.origin = (origin or DEV_ORIGIN).rstrip("/")
         self.redirect_uri = f"{self.origin}/api/instagram/callback"
-        self.dialog, self.api = dialog.rstrip("/"), api.rstrip("/")
+        self.dialog = dialog.rstrip("/")
         self.graph = f"{graph.rstrip('/')}/{version}" if version else graph.rstrip("/")
-        self.root = graph.rstrip("/")  # the token endpoints carry no version
         self.secret_file = Path(f"{db_path}.ig-secret")
         self.tokens_file = Path(f"{db_path}.ig-tokens")
         self._lock = threading.Lock()
@@ -121,6 +126,7 @@ class Instagram:
         return cls(
             db_path,
             app_id=os.environ.get("PAUTA_IG_APP_ID", ""),
+            config_id=os.environ.get("PAUTA_IG_CONFIG_ID", ""),
             origin=origins[0] if origins else "",
         )
 
@@ -134,7 +140,7 @@ class Instagram:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.app_id and self._secret())
+        return bool(self.app_id and self.config_id and self._secret())
 
     def _tokens(self) -> dict:
         try:
@@ -157,17 +163,19 @@ class Instagram:
             raise InstagramError(REVOKED, step="token", revoked=True, status=409)
         return token
 
-    def _keep(self, ig_id: str, token: str, expires_in) -> str:
-        """Store a token; returns when it expires, as the database writes moments."""
+    def _keep(self, ig_id: str, token: str, expires_in) -> str | None:
+        """Store a token; returns when it expires as the database writes moments, or None
+        for one that doesn't (a system-user token of a "never" configuration)."""
         try:
-            seconds = int(expires_in)
+            until = time.time() + int(expires_in) if expires_in else None
         except (TypeError, ValueError):
-            seconds = 60 * 24 * 3600
-        until = time.time() + seconds
+            until = None
         with self._lock:
             doc = self._tokens()
             doc[str(ig_id)] = {"token": token, "expires": until, "obtained": time.time()}
             self._write_tokens(doc)
+        if until is None:
+            return None
         return datetime.fromtimestamp(until, UTC).strftime("%Y-%m-%d %H:%M:%S")
 
     def forget(self, ig_id: str) -> None:
@@ -177,10 +185,13 @@ class Instagram:
                 self._write_tokens(doc)
 
     def expires_in(self, ig_id: str, now: datetime | None = None) -> timedelta | None:
-        """How long the profile's token still has; None when there is none."""
+        """How long the profile's token still has: None when there is no token, and
+        `timedelta.max` for one that doesn't expire."""
         entry = self._tokens().get(str(ig_id)) or {}
-        if not entry.get("token") or not entry.get("expires"):
+        if not entry.get("token"):
             return None
+        if not entry.get("expires"):
+            return timedelta.max
         at = (now or datetime.now(UTC)).timestamp()
         return timedelta(seconds=float(entry["expires"]) - at)
 
@@ -203,11 +214,17 @@ class Instagram:
             doc = {}
         return status, doc if isinstance(doc, dict) else {}
 
+    def _proof(self, token: str) -> str:
+        """Proves the call comes from the app's server ("Require app secret" in Meta)."""
+        return hmac.new(self._secret().encode(), token.encode(), hashlib.sha256).hexdigest()
+
     def _get(self, url: str, params: dict, token: str = "") -> tuple[int, dict]:
         headers = {"Accept": "application/json"}
+        query = dict(params)
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        full = f"{url}?{urllib.parse.urlencode(params)}" if params else url
+            query["appsecret_proof"] = self._proof(token)
+        full = f"{url}?{urllib.parse.urlencode(query)}" if query else url
         return self._send(urllib.request.Request(full, headers=headers))
 
     def _post(self, url: str, form: dict, token: str = "") -> tuple[int, dict]:
@@ -215,9 +232,11 @@ class Instagram:
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
         }
+        fields = dict(form)
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        body = urllib.parse.urlencode(form).encode()
+            fields["appsecret_proof"] = self._proof(token)
+        body = urllib.parse.urlencode(fields).encode()
         return self._send(urllib.request.Request(url, body, headers))
 
     @staticmethod
@@ -229,8 +248,10 @@ class Instagram:
         obs.event("ig_error", logging.WARNING, status=status, code=code, subcode=sub, step=step)
         if code == 190:
             return InstagramError(REVOKED, code=code, step=step, revoked=True, status=409)
-        if step == "code":  # {"error_type", "code": 400, "error_message"}: used or expired
+        if step == "code":  # a code already used, expired, or for another address
             return InstagramError(BAD_CODE, code=code, step=step, status=400)
+        if code == 10:  # "(#10) ... the instagram account type is not business or creator"
+            return InstagramError(NOT_PROFESSIONAL, code=code, step=step, status=400)
         if sub in LIMIT_SUBCODES:
             return InstagramError(DAILY_LIMIT, code=code, step=step, status=429)
         if sub in RESTRICTED_SUBCODES:
@@ -261,12 +282,16 @@ class Instagram:
             while len(self._states) >= MAX_PENDING:
                 self._states.pop(min(self._states, key=lambda s: self._states[s][2]))
             self._states[state] = (client, account, now + STATE_SECONDS)
+        # as the dashboard's own "Login URL" has it: no scope (the configuration carries the
+        # permissions), and prompt=login so the person can sign in with Instagram itself
         query = {
             "client_id": self.app_id,
+            "config_id": self.config_id,
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
-            "scope": SCOPES,
+            "override_default_response_type": "true",
             "state": state,
+            "prompt": "login",
         }
         return f"{self.dialog}?{urllib.parse.urlencode(query)}"
 
@@ -279,68 +304,43 @@ class Instagram:
             raise InstagramError(BAD_STATE, step="state", status=400)
         return entry[0], entry[1]
 
-    def finish(self, code: str) -> tuple[dict, str]:
+    def finish(self, code: str) -> tuple[dict, str | None]:
         """Exchange the callback's code. Returns (who: {ig_id, username, name, account_type},
-        when the token expires); the token is kept under the profile's id."""
-        code = (code or "").split("#")[0]  # Instagram appends "#_" to the code
-        status, doc = self._post(
-            f"{self.api}/oauth/access_token",
+        when the token expires or None); the token is kept under the profile's id."""
+        code = (code or "").split("#")[0]
+        status, doc = self._get(
+            f"{self.graph}/oauth/access_token",
             {
                 "client_id": self.app_id,
                 "client_secret": self._secret(),
-                "grant_type": "authorization_code",
                 "redirect_uri": self.redirect_uri,
                 "code": code,
             },
         )
-        first = doc["data"][0] if isinstance(doc.get("data"), list) and doc["data"] else doc
-        short = first.get("access_token") if isinstance(first, dict) else None
-        if status != 200 or not short:
+        token = doc.get("access_token") if status == 200 else None
+        if not isinstance(token, str) or not token:
             raise self._fail(status, doc, "code")
+        expires_in = doc.get("expires_in")  # absent for a token that doesn't expire
+        # the token is a system user's: the Instagram accounts it was given are listed apart
         status, doc = self._get(
-            f"{self.root}/access_token",
-            {
-                "grant_type": "ig_exchange_token",
-                "client_secret": self._secret(),
-                "access_token": short,
-            },
+            f"{self.graph}/me/assigned_instagram_accounts", {"fields": "id,username"}, token
         )
-        token = doc.get("access_token")
-        if status != 200 or not token:
-            raise self._fail(status, doc, "exchange")
-        expires_in = doc.get("expires_in")
-        status, me = self._get(
-            f"{self.graph}/me", {"fields": "user_id,username,name,account_type"}, token
-        )
-        rows = me.get("data")  # the docs show it wrapped; the API has answered flat too
-        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
-            me = rows[0]
-        # `user_id` is the professional account's id, the one later paths take
-        ig_id = str(me.get("user_id") or "")
-        if status != 200 or not ig_id:
-            raise self._fail(status, me, "me")
-        kind = str(me.get("account_type") or "")
-        if kind and kind.upper() not in ("BUSINESS", "MEDIA_CREATOR", "CREATOR"):
-            raise InstagramError(NOT_PROFESSIONAL, step="me", status=400)
+        if status != 200:
+            raise self._fail(status, doc, "me")
+        rows = [r for r in doc.get("data") or [] if isinstance(r, dict) and r.get("id")]
+        if not rows:
+            raise InstagramError(NO_ACCOUNT, step="me", status=400)
+        if len(rows) > 1:
+            raise InstagramError(MANY_ACCOUNTS, step="me", status=400)
+        ig_id = str(rows[0]["id"])
         expires = self._keep(ig_id, token, expires_in)
         who = {
             "ig_id": ig_id,
-            "username": str(me.get("username") or ""),
-            "name": str(me.get("name") or ""),
-            "account_type": kind,
+            "username": str(rows[0].get("username") or ""),
+            "name": "",
+            "account_type": "",
         }
         return who, expires
-
-    def refresh(self, ig_id: str) -> str:
-        """Renew a valid token for another 60 days; returns the new expiry."""
-        status, doc = self._get(
-            f"{self.root}/refresh_access_token",
-            {"grant_type": "ig_refresh_token", "access_token": self._token(ig_id)},
-        )
-        token = doc.get("access_token")
-        if status != 200 or not token:
-            raise self._fail(status, doc, "refresh")
-        return self._keep(ig_id, token, doc.get("expires_in"))
 
     # ---- publishing -----------------------------------------------------------------------
 

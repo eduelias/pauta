@@ -17,8 +17,11 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   na hora (o Instagram não agenda pela API). A imagem escolhida vira JPEG no navegador, na
   largura que o Instagram aceita, e uma proporção fora de 4:5 a 1,91:1 é recusada antes de
   enviar. Uma recusa do Instagram fica na própria publicação, com o motivo, e ela continua
-  ali para sair de novo. Sem `PAUTA_IG_APP_ID` e o arquivo `<db>.ig-secret` nada disso
-  aparece: produção não muda. Esquema v15 (`ig_profile`, `post`). API: `GET
+  ali para sair de novo. Sem `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo
+  `<db>.ig-secret` nada disso
+  aparece: produção não muda. A conexão usa o "Unified Login" da Meta (o login do
+  Instagram deixou de existir para apps novos), com só as duas permissões de publicar.
+  Esquema v15 (`ig_profile`, `post`). API: `GET
   /api/publishing`, `POST`/`DELETE /api/clients/{id}/instagram`, `/api/posts…`. Desenho,
   limites e o que falta: `docs/publishing-spec.md`.
 
