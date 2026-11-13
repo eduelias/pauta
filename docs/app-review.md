@@ -224,15 +224,21 @@ in and saved:
 | Platform | Website, site URL `https://app.pauta.cc/` |
 | Contact e-mail | already set |
 
-Its Publish page now reads "All required app settings are complete." **The button has not
-been pressed** — that is the owner's call, as it was for the acceptance app.
+**Published on 2026-11-13**, on the owner's say-so. It is now in live mode, like the
+acceptance app.
+
+Checked straight afterwards that nothing broke: the production campaigns page loaded, and a
+forced "Atualizar agora" ran a live sync at 14:14:56 across **9 connections and 9 accounts
+with `errors: 0`** and 21 insight rows. Existing tokens and connections are untouched by the
+mode switch, as expected.
 
 Two things to decide before or after pressing it:
 
-1. **Tech Provider.** This app has not been declared one. Without it, no App Review and so
-   no Advanced Access for `ads_read` against other businesses' ad accounts. Publishing
-   alone leaves it at Standard Access, which covers only Du7's own business. The
-   declaration cannot be reversed, which is why it is not made here.
+1. **Tech Provider.** This app has still not been declared one, and publishing did not
+   change that. Without it, no App Review and so no Advanced Access for `ads_read` against
+   other businesses' ad accounts: live mode on its own leaves Standard Access, which covers
+   only Du7's own business. The declaration cannot be reversed, which is why it is left to
+   the owner.
 2. **There is still no production publishing app.** "Pauta Publicações (acc)" is the
    acceptance one, and its redirect points at `acc.pauta.cc`. When publishing goes to
    production it needs either its own app or a second redirect on that one. A client
