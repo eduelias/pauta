@@ -4,9 +4,10 @@
   it can be used, so every client's Instagram profile has to be invited as an **Instagram
   Tester** and accept that invitation. That is fine for the owner's own profiles and
   unacceptable for Piero's clients. The way out is App Review and Advanced Access.
-- **Status, 2026-11-13:** app settings complete, app icon set, and the app is now declared a
-  **Tech Provider** (the owner's call; Meta says it cannot be reversed). Business
-  verification already shows complete. Nothing has been submitted for review yet.
+- **Status, 2026-11-13:** four of the submission's five sections are green — Verification,
+  App settings, Data handling and Reviewer instructions. Only **Allowed usage** is open, and
+  everything left in it is the owner's to do or Meta's to catch up on. Nothing has been
+  submitted yet.
 - **The app:** Pauta Publicações (acc), App ID `29400025989594205`, in the Du7 Technology
   Services portfolio. Permissions `instagram_basic` and `instagram_content_publish`, both at
   "Ready for testing" (Standard Access).
@@ -30,13 +31,14 @@ The declaration added a **Review** section to the dashboard (Testing, Verificati
 Review) and opened a submission that already lists what will be reviewed:
 `instagram_content_publish`, `instagram_basic` and `public_profile`, each "In 1 use case".
 
-1. **Review → Testing.** Complete the testing requirements Meta lists for the use case.
-2. **App Review → Next.** The data-usage, data-handling and data-protection questionnaire.
-   These are statements about how Du7 stores and protects client data: the owner answers
-   them, not a guess from the code.
-3. **The screencast.** One unbroken recording per the script below. It has to be made by
-   hand on a real account; nothing automates it.
-4. **Submit**, then wait. Meta may come back with questions.
+1. **The screencasts.** One unbroken recording per the script below, uploaded under each of
+   `instagram_content_publish` and `instagram_basic`. It has to be made by hand on a real
+   account; nothing automates it.
+2. **The three "agree to allowed usage" checkboxes**, one per permission. They are legal
+   undertakings about how Du7 will use the data, so the owner ticks them.
+3. **The API test calls** to register themselves, which is Meta's side (see below).
+4. **Submit**, then wait. Meta may come back with questions, and may ask for access — see
+   the note on reviewer access below.
 5. **Publish the app** once the review passes.
 
 ## The submission, as it stands
@@ -49,8 +51,22 @@ texts below). What is left inside it, per permission:
 |---|---|---|---|
 | Description | done | done | not asked |
 | Screencast | **to record** | **to record** | not asked |
-| API test calls | 0 of 1 shown; the calls were made today, and Meta says they can take 24 h to appear | same | not asked |
+| API test calls | 0 of 1 | 0 of 1 | 0, none required |
 | Agree to allowed usage | **owner** | **owner** | **owner** |
+
+On the API test calls: the acceptance unit on du7 runs with
+`PAUTA_IG_APP_ID=29400025989594205`, which is this app, so today's real connect and the two
+real publishes were made against the app under review and will be attributed to it. Review →
+Testing repeats that the data takes up to 24 h to appear, and that each test stays valid for
+30 days. Nothing to do but wait; if it is still zero tomorrow, make one fresh call from the
+Graph API Explorer with the app's own token.
+
+Reviewer instructions, saved today, tell Meta three things: that Facebook Login for Business
+is used only to connect a client's Instagram account and never to sign anyone in to Pauta,
+that the test site is `https://acc.pauta.cc/`, and that Pauta has no passwords — a reviewer
+account is issued on request as an invitation link that creates a passkey in their own
+browser. **That promise is live**: if Meta writes to the app's contact address asking for
+access, the invitation has to go out, or the review fails on "could not access the app".
 
 ### The five data-handling questions
 
@@ -124,8 +140,6 @@ Record one pass, no cuts, showing a real account:
 - Publishing the app and Advanced Access are different things. Publishing alone leaves
   Standard Access, which covers only the app's own business; Piero's clients are other
   businesses and need Advanced.
-- The app icon is still empty. Meta's Publish page does not require it, but a review with a
-  blank icon looks unfinished; the brand avatar at `1080×1080` is the right file.
 - App domains is empty on purpose. The Business Login redirect is registered separately and
   works; filling it in without checking could break the live connection on acceptance.
 - Once Advanced Access is granted, clients connect through their **own** portfolio and their
