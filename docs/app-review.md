@@ -170,3 +170,71 @@ Record one pass, no cuts, showing a real account:
   own Instagram account. The current arrangement, where both profiles sit inside Du7's
   portfolio, suits the owner's own accounts and should not be the pattern for clients:
   revoking access should stay in the client's hands.
+
+## Live mode, 2026-11-13
+
+The owner pressed **Publish** on Pauta Publicações (acc), and Meta's developer alert
+confirms it: the app switched to live mode. What that changed, and what it did not:
+
+- **Changed.** In development mode only accounts holding a role on the app could get
+  through Facebook Login at all, which is why every profile had to accept an Instagram
+  Tester invitation. Live mode lifts that.
+- **Not changed.** All three permissions still read **"Ready for testing"** on the
+  permissions page, which is Standard Access, and all three still show 0 API calls.
+  Standard Access only returns data for assets inside the app's own business portfolio, so
+  a client's Instagram still has to be in the Du7 Technology Services portfolio. Advanced
+  Access is what removes that, and it comes only from App Review.
+- **Not changed either.** The submission is untouched: Allowed usage is still the one open
+  section and Submit is still greyed out. Publishing and submitting are different buttons.
+- **Now in force.** The privacy policy, the terms and the deletion instructions on pauta.cc
+  are publicly binding, the app appears in people's Business integrations settings, and
+  Meta's annual data use checkup starts applying.
+
+### The switch broke nothing
+
+Proved rather than assumed, straight after the switch. A post was composed in Pauta on
+acceptance for Du7 Tech (`@du7dev`), scheduled for 14:08 local, and left alone:
+
+| | |
+|---|---|
+| Due | 13:08:00 UTC (14:08 CET, as the browser sent it) |
+| Picked up | 13:08:08 UTC, 8 s later |
+| Published | 13:08:19 UTC, 11 s end to end |
+| Permalink | `https://www.instagram.com/p/Dfrs91AFH4k/` |
+
+Worth noting for anyone reading the `post` table: `due` and `published_at` are stored in
+**UTC** while the form takes local time, so a 14:08 post reads as 13:08 in the database in
+winter. That is correct, not a bug.
+
+## The production ads app, prepared for publishing
+
+A second, separate app exists: **Pauta**, App ID `1767206382079558`, in the same portfolio.
+It is the **ads** app behind the campaigns integration (use case: measure ad performance
+data with Marketing API), it serves `app.pauta.cc`, and it was still unpublished with an
+empty settings page. Everything Meta requires before its Publish button works is now filled
+in and saved:
+
+| | |
+|---|---|
+| Privacy policy URL | `https://www.pauta.cc/privacidade.html` |
+| Terms of Service URL | `https://www.pauta.cc/termos.html` |
+| User data deletion | Data deletion instructions URL, the same privacy page |
+| Category | Business and pages |
+| App icon | the brand mark on its gradient, 1024 square |
+| Platform | Website, site URL `https://app.pauta.cc/` |
+| Contact e-mail | already set |
+
+Its Publish page now reads "All required app settings are complete." **The button has not
+been pressed** — that is the owner's call, as it was for the acceptance app.
+
+Two things to decide before or after pressing it:
+
+1. **Tech Provider.** This app has not been declared one. Without it, no App Review and so
+   no Advanced Access for `ads_read` against other businesses' ad accounts. Publishing
+   alone leaves it at Standard Access, which covers only Du7's own business. The
+   declaration cannot be reversed, which is why it is not made here.
+2. **There is still no production publishing app.** "Pauta Publicações (acc)" is the
+   acceptance one, and its redirect points at `acc.pauta.cc`. When publishing goes to
+   production it needs either its own app or a second redirect on that one. A client
+   approving the connection reads the app's display name on Meta's consent screen, and
+   "Pauta Publicações (acc)" is not what they should see.
