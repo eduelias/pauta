@@ -145,6 +145,9 @@ came back and opens. The scheduler has not published a real post yet.
 
 ## What it would take for other people's profiles
 
+`app-review.md` holds the live checklist: what is already set on the app, the irreversible
+Tech Provider step, the paste-ready justifications and the screencast script.
+
 Publishing to a profile the app's own people do not manage needs **Advanced Access** for
 `instagram_content_publish` and `instagram_basic`: App Review with a screencast, and Business
 Verification. That is the gate between this beta and a client of Piero's. Until then every
