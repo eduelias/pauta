@@ -70,7 +70,11 @@ def install(route, store, auth, ig):
                 why = "cancelado"
             else:
                 client, account = ig.take_state(state)
-                who, expires = ig.finish(code)
+                # the client's own @ picks its profile out of everything the portfolio shares
+                want = ""
+                with contextlib.suppress(NotFound):
+                    want = store.client(client).get("instagram") or ""
+                who, expires = ig.finish(code, want)
                 try:
                     posts.save_profile(client, who, expires, account)
                 except (Invalid, NotFound):

@@ -35,7 +35,7 @@ def follow(url, cookie=None):
         return e.code, e.headers.get("Location") or ""
 
 
-def connect(base, admin, client):
+def connect(base, admin, client):  # noqa: D401
     """The admin's way through Instagram's login, as the browser walks it."""
     status, doc, _ = call(f"{base}/api/clients/{client}/instagram", {}, admin)
     assert status == 200, doc
@@ -229,6 +229,34 @@ def test_a_refusal_is_the_posts_state_and_it_can_go_again(linked, fake_ig, store
     assert call(f"{base}/api/publishing", cookie=nato)[1]["profiles"][0]["state"] == "ok"
     out = call(f"{base}/api/posts/{post['id']}/publish", {}, piero)[1]
     assert out["status"] == "published"
+
+
+def test_the_clients_at_picks_its_profile_when_the_portfolio_shares_several(team, fake_ig):
+    """A second client in the same portfolio: Meta's token carries both profiles, and each
+    client's own @ decides which one it gets."""
+    base, nato, piero, _ = team
+    du7 = call(f"{base}/api/clients", {"name": "Du7 Tech", "instagram": "@du7dev"}, nato)[1]
+    pauta = call(f"{base}/api/clients", {"name": "Pauta", "instagram": "@pautacc"}, nato)[1]
+    fake_ig.accounts = [
+        {"id": "17841000000000001", "username": "du7dev"},
+        {"id": "17841000000000002", "username": "pautacc"},
+    ]
+    assert connect(base, nato, du7["id"]) == (302, "/#/publicacoes?ig=ok")
+    assert connect(base, nato, pauta["id"]) == (302, "/#/publicacoes?ig=ok")
+    doc = call(f"{base}/api/publishing", cookie=piero)[1]
+    assert {p["client_name"]: p["username"] for p in doc["profiles"]} == {
+        "Du7 Tech": "du7dev",
+        "Pauta": "pautacc",
+    }
+    assert {p["ig_id"] for p in doc["profiles"]} == {
+        "17841000000000001",
+        "17841000000000002",
+    }
+
+    # a client whose @ nobody shared is told so, and connects nothing
+    other = call(f"{base}/api/clients", {"name": "Outro", "instagram": "@outro"}, nato)[1]
+    assert connect(base, nato, other["id"]) == (302, "/#/publicacoes?ig=erro&motivo=perfil")
+    assert len(call(f"{base}/api/publishing", cookie=nato)[1]["profiles"]) == 2
 
 
 def test_a_scheduled_post_leaves_at_its_time(linked, fake_ig, store, ig):

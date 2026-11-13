@@ -18,7 +18,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   largura que o Instagram aceita, e uma proporção fora de 4:5 a 1,91:1 é recusada antes de
   enviar. Uma recusa do Instagram fica na própria publicação, com o motivo, e ela continua
   ali para sair de novo. Sem `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo
-  `<db>.ig-secret` nada disso
+  o `@` do cliente (no cadastro dele) é o que diz qual perfil é dele, porque o token da
+  Meta carrega todos os perfis que o portfólio já compartilhou com o app. Sem
+  `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo `<db>.ig-secret` nada disso
   aparece: produção não muda. A conexão usa o "Unified Login" da Meta (o login do
   Instagram deixou de existir para apps novos), com só as duas permissões de publicar.
   Esquema v15 (`ig_profile`, `post`). API: `GET

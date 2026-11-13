@@ -17,7 +17,7 @@
 
 | | |
 |---|---|
-| Connect | An admin picks a client and clicks **Conectar Instagram**. Instagram's login opens; whoever is signed in there approves; the profile (professional, public) is now that client's. One profile serves one client |
+| Connect | An admin picks a client and clicks **Conectar Instagram**. Meta's login opens; the profile shared there becomes that client's. One profile serves one client, and the client's own `@` (its record) says which profile is which |
 | Compose | **Nova publicação**: the client, one image, the caption (2.200 characters, 30 hashtags, 20 mentions, Instagram's limits), an optional description of the image, an optional moment |
 | The image | Any picture the browser can open. The form turns it into a JPEG at most 1440 px wide and refuses a proportion outside 4:5 to 1,91:1 before anything is sent. The server checks again (JPEG, 8 MB, proportion, 320 px) by reading the file's own header |
 | Publish | **Publicar agora** waits for Instagram (a few seconds) and says how it ended. **Agendar** keeps the post; a background thread publishes what is due, every 20 seconds |
@@ -108,6 +108,16 @@ du7's side: a drop-in `pauta-acc.service.d/instagram.conf` with
 app secret" (Du7 Tech). `PAUTA_ORIGIN` is already there. Then
 `sudo systemctl restart pauta-acc`; the journal says `publisher_started` and the Publicações
 tab appears.
+
+**Which profile a login is for.** The token is the portfolio's system user, so it carries
+**every** Instagram account the team has ever shared with the app, not only the one ticked
+on Meta's last screen. The first client hid this (one account, one profile); the second
+exposed it at once. So `finish()` takes the client's own `@` from its record and picks that
+account out of the list. Without an `@`: a single account still connects, several are
+refused with "escreva o @ deste cliente". With an `@` that nobody shared: refused too, since
+connecting the only account on offer would quietly publish one client's posts on another's
+profile. For an agency with ten clients in one portfolio, the `@` on the client record is
+therefore not decoration: it is what keeps the posts apart.
 
 **What the first connection showed (2026-11-13).** @du7dev sits in the app's own portfolio
 (Du7 Technology Services), the case Meta's docs do not promise. Two attempts:

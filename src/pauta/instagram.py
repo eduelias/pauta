@@ -33,6 +33,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -65,7 +66,14 @@ BAD_STATE = "este pedido de conexão venceu; comece de novo"
 DENIED = "a conexão foi cancelada no Instagram"
 NOT_PROFESSIONAL = "o perfil precisa ser profissional (Empresa ou Criador de conteúdo)"
 NO_ACCOUNT = "nenhum perfil do Instagram veio com o login: escolha o perfil do cliente"
-MANY_ACCOUNTS = "o login trouxe mais de um perfil: escolha só o perfil deste cliente"
+# several profiles and nothing to tell them apart: the client's @ is what decides
+MANY_ACCOUNTS = (
+    "o login trouxe mais de um perfil: escreva o @ deste cliente no cadastro dele e conecte de novo"
+)
+NOT_SHARED = (
+    "o perfil {want} não veio neste login: marque só ele na tela da Meta, ou confira o @ "
+    "no cadastro do cliente"
+)
 
 RESTRICTED = "o Instagram restringiu este perfil; veja o aviso no aplicativo do Instagram"
 BAD_CAPTION = "o Instagram recusou a legenda"
@@ -79,6 +87,15 @@ IMAGE_SUBCODES = {2207004, 2207005, 2207009}  # over 8 MiB; format; aspect ratio
 CAPTION_SUBCODES = {2207010}
 NOT_READY_SUBCODES = {2207027, 2207008}  # not ready yet; container missing or expired
 RESTRICTED_SUBCODES = {2207050, 2207051}  # account restricted; spam restriction
+
+
+def handle(value) -> str:
+    """An Instagram @ as the person wrote it, down to the bare username: "@pauta.cc",
+    "instagram.com/pautacc/", "Pautacc " all become comparable."""
+    text = str(value or "").strip().lower()
+    text = re.sub(r"^https?://(www\.)?instagram\.com/", "", text)
+    text = text.split("?")[0].strip("/").lstrip("@")
+    return text if re.fullmatch(r"[a-z0-9._]{1,30}", text) else ""
 
 
 class InstagramError(Exception):
@@ -304,9 +321,15 @@ class Instagram:
             raise InstagramError(BAD_STATE, step="state", status=400)
         return entry[0], entry[1]
 
-    def finish(self, code: str) -> tuple[dict, str | None]:
+    def finish(self, code: str, want: str = "") -> tuple[dict, str | None]:
         """Exchange the callback's code. Returns (who: {ig_id, username, name, account_type},
-        when the token expires or None); the token is kept under the profile's id."""
+        when the token expires or None); the token is kept under the profile's id.
+
+        The token is the portfolio's system user, so it carries every Instagram account the
+        team has shared with the app, not only the one picked on Meta's last screen: an
+        agency with ten clients in one portfolio gets ten. `want` is this client's @ (from
+        its own record) and decides which of them this connection is for. Without it, a
+        single account still connects; several ask for the @."""
         code = (code or "").split("#")[0]
         status, doc = self._get(
             f"{self.graph}/oauth/access_token",
@@ -330,13 +353,25 @@ class Instagram:
         rows = [r for r in doc.get("data") or [] if isinstance(r, dict) and r.get("id")]
         if not rows:
             raise InstagramError(NO_ACCOUNT, step="me", status=400)
-        if len(rows) > 1:
-            raise InstagramError(MANY_ACCOUNTS, step="me", status=400)
-        ig_id = str(rows[0]["id"])
+        wanted = handle(want)
+        row = (
+            next((r for r in rows if handle(r.get("username")) == wanted), None) if wanted else None
+        )
+        if row is None:
+            if wanted and len(rows) > 1:
+                raise InstagramError(NOT_SHARED.format(want=f"@{wanted}"), step="me", status=400)
+            if len(rows) > 1:
+                raise InstagramError(MANY_ACCOUNTS, step="me", status=400)
+            row = rows[0]
+            if wanted and handle(row.get("username")) != wanted:
+                # one account, and it isn't the one the client's record names: connecting it
+                # would quietly publish a client's posts on somebody else's profile
+                raise InstagramError(NOT_SHARED.format(want=f"@{wanted}"), step="me", status=400)
+        ig_id = str(row["id"])
         expires = self._keep(ig_id, token, expires_in)
         who = {
             "ig_id": ig_id,
-            "username": str(rows[0].get("username") or ""),
+            "username": str(row.get("username") or ""),
             "name": "",
             "account_type": "",
         }

@@ -11,7 +11,7 @@ import pytest
 from fakeinstagram import IG_ID, USERNAME, jpeg
 from pauta import instagram, publishing
 from pauta.db import Invalid, NotFound
-from pauta.instagram import InstagramError
+from pauta.instagram import InstagramError, handle
 from pauta.publishing import Posts, Publisher, publish
 
 ORIGIN = "http://127.0.0.1:9"  # nothing listens: only tests that never fetch use it
@@ -27,7 +27,7 @@ def client(store):
     return store.save_client({"name": "Du7"})["id"]
 
 
-def connect(ig, fake_ig, posts, client, by=None):
+def connect(ig, fake_ig, posts, client, by=None, want=""):
     """What the callback does: the dialog's code, exchanged, saved for the client."""
     import urllib.parse
     import urllib.request
@@ -46,7 +46,7 @@ def connect(ig, fake_ig, posts, client, by=None):
     q = urllib.parse.parse_qs(urllib.parse.urlparse(back).query)
     assert q["state"] == [state] and back.endswith("#_=_")
     assert ig.take_state(state) == (client, by)
-    who, expires = ig.finish(q["code"][0])
+    who, expires = ig.finish(q["code"][0], want)
     return posts.save_profile(client, who, expires, by)
 
 
@@ -139,17 +139,48 @@ def test_a_state_is_used_once_and_a_code_too(ig_on, fake_ig, posts, client):
     assert e.value.step == "code" and e.value.status == 400
 
 
-def test_the_login_must_bring_exactly_one_profile(ig_on, fake_ig, posts, client):
+def test_an_empty_login_brings_no_profile(ig_on, fake_ig, posts, client):
     ig_on.at(ORIGIN)
     fake_ig.accounts = []  # the person shared no Instagram account
     with pytest.raises(InstagramError, match="nenhum perfil do Instagram") as e:
         connect(ig_on, fake_ig, posts, client)
     assert e.value.step == "me" and posts.profile(client) is None
-    fake_ig.accounts = [{"id": "1", "username": "a"}, {"id": "2", "username": "b"}]
-    with pytest.raises(InstagramError, match="mais de um perfil"):
+    assert not ig_on.tokens_file.exists()  # no token kept for a login that didn't count
+
+
+def test_an_at_is_read_however_it_was_written():
+    assert handle("@pautacc") == handle("pautacc") == "pautacc"
+    assert handle("https://www.instagram.com/pautacc/") == "pautacc"
+    assert handle(" Pauta.CC ") == "pauta.cc"
+    assert handle("") == handle(None) == handle("not a handle!") == ""
+
+
+def test_the_clients_at_picks_its_profile_out_of_the_portfolios(ig_on, fake_ig, posts, client):
+    """The token is the portfolio's system user, so it carries every profile the team ever
+    shared with the app, not only the one ticked on Meta's last screen. The client's own @
+    says which one this connection is for."""
+    ig_on.at(ORIGIN)
+    fake_ig.accounts = [
+        {"id": "17841000000000001", "username": "du7dev"},
+        {"id": "17841000000000002", "username": "pautacc"},
+        {"id": "17841000000000003", "username": "clinicabemestar"},
+    ]
+    p = connect(ig_on, fake_ig, posts, client, want="@pautacc")
+    assert (p["ig_id"], p["username"]) == ("17841000000000002", "pautacc")
+    assert set(json.loads(ig_on.tokens_file.read_text())) == {"17841000000000002"}
+
+    # a @ nobody shared: never guess, and never connect the wrong profile
+    with pytest.raises(InstagramError, match="@outro não veio neste login"):
+        connect(ig_on, fake_ig, posts, client, want="@outro")
+    # several profiles and no @ on the client: ask for one instead of choosing
+    with pytest.raises(InstagramError, match="escreva o @ deste cliente"):
         connect(ig_on, fake_ig, posts, client)
-    assert posts.profile(client) is None and json.loads("{}") == {}
-    assert not ig_on.tokens_file.exists()  # no token was kept for a login that didn't count
+    # one profile and no @: that is unambiguous
+    fake_ig.accounts = [{"id": "17841000000000009", "username": "sozinho"}]
+    assert connect(ig_on, fake_ig, posts, client)["username"] == "sozinho"
+    # one profile, but not the one the client names: refuse rather than publish elsewhere
+    with pytest.raises(InstagramError, match="@pautacc não veio neste login"):
+        connect(ig_on, fake_ig, posts, client, want="pautacc")
 
 
 def test_one_profile_serves_one_client(store, ig_on, fake_ig, posts, client):
