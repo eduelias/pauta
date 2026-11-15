@@ -4,28 +4,112 @@
 
 // ---------- clients -------------------------------------------------------------------------
 
+// What the clients can be ordered by, in the order of the list's columns: the label, the
+// direction it starts in (the one people want first: A to Z, the most requests in the open,
+// the latest request), the value, and how each direction reads on the button that turns it.
+const CLIENT_SORTS = {
+  name: ["Nome", 1, (c) => c.name, ["A → Z", "Z → A"]],
+  segment: ["Segmento", 1, (c) => c.segment || "", ["A → Z", "Z → A"]],
+  state: ["Situação", 1, (c) => BOOT.options.state.indexOf(c.state), ["Ativos primeiro", "Encerrados primeiro"]],
+  open: ["Em aberto", -1, (c) => c.open_requests, ["Menos primeiro", "Mais primeiro"]],
+  total: ["Pedidos", -1, (c) => c.total_requests, ["Menos primeiro", "Mais primeiro"]],
+  last: ["Último pedido", -1, (c) => c.last_request || "", ["Mais antigo primeiro", "Mais recente primeiro"]],
+  since: ["Cliente desde", 1, (c) => c.since || "", ["Mais antigo primeiro", "Mais novo primeiro"]],
+};
+// "Ótica" next to "Oficina", "Cliente 2" before "Cliente 10"
+const ptCompare = (a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base", numeric: true });
+
+// A closed client stays at the end whatever the order (unless the order is the state itself),
+// one with nothing to order by (no segment, no request yet) comes after the ones that have
+// it, in either direction, and the name settles a tie.
+function sortClients(list, key, dir) {
+  const value = CLIENT_SORTS[key][2];
+  return [...list].sort((a, b) => {
+    const closed = key === "state" ? 0 : (a.state === "Encerrado") - (b.state === "Encerrado");
+    if (closed) return closed;
+    const x = value(a), y = value(b);
+    if (x !== y && (x === "" || y === "")) return x === "" ? 1 : -1;
+    const d = typeof x === "number" ? x - y : ptCompare(x, y);
+    return d * dir || ptCompare(a.name, b.name);
+  });
+}
+
+// Cards or a list, and the order: each person's own choice, kept in this browser.
+function clientPrefs() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem("pauta.clients") || "{}") || {}; } catch { saved = {}; }
+  const sort = Object.hasOwn(CLIENT_SORTS, saved.sort) ? saved.sort : "name";
+  return { view: saved.view === "list" ? "list" : "cards", sort, dir: [1, -1].includes(saved.dir) ? saved.dir : CLIENT_SORTS[sort][1] };
+}
+
+const NOWA = () => `<span class="nowa" title="Sem WhatsApp cadastrado: o relatório não abre a conversa">${icon("wa")}sem WhatsApp</span>`;
+
+function clientCards(list) {
+  return `<div class="cgrid">${list.map((c) => `<a class="ccard ${c.state === "Encerrado" ? "closed" : ""}" href="#/cliente/${c.id}">
+      <div class="top">${avatar(c.name, "md")}<div style="min-width:0"><b>${esc(c.name)}</b><span>${esc(c.segment || "Sem segmento")}${c.instagram ? ` · ${esc(c.instagram)}` : ""}</span></div></div>
+      <div class="foot"><span class="state ${esc(c.state)}">${esc(c.state)}</span>${c.whatsapp ? "" : NOWA()}
+        ${c.open_requests ? `<span class="open">${c.open_requests} em aberto</span>` : `<span>${c.total_requests} pedido${c.total_requests === 1 ? "" : "s"}</span>`}
+        ${c.last_request ? `<span style="margin-left:auto">${esc(ago(c.last_request))}</span>` : ""}</div></a>`).join("")}</div>`;
+}
+
+// The list: a line per client, a column per thing to order by; a heading orders by its
+// column, and again turns the order round. The name takes the width the others leave and is
+// cut short before the list is wider than the screen; a narrow screen drops the two columns
+// that say least. On the phone the headings are gone ("Ordenar por" above does it) and a
+// line keeps the name, the state, the segment, what is open and the last request.
+function clientTable(list, pref) {
+  const none = '<span class="faint">—</span>';
+  const cell = {
+    name: (c) => `<div class="who"><a class="cl" href="#/cliente/${c.id}">${avatar(c.name)}<b>${esc(c.name)}</b></a>${c.whatsapp ? "" : NOWA()}</div>`,
+    segment: (c) => esc(c.segment) || none,
+    state: (c) => `<span class="state ${esc(c.state)}">${esc(c.state)}</span>`,
+    open: (c) => c.open_requests ? `<b>${c.open_requests}</b><span class="unit"> em aberto</span>` : '<span class="faint">0</span>',
+    total: (c) => c.total_requests || '<span class="faint">0</span>',
+    last: (c) => c.last_request ? esc(ago(c.last_request)) : none,
+    since: (c) => c.since ? esc(fmtDate(c.since, { month: "short", year: "numeric" })) : none,
+  };
+  const head = ([k, [label]]) => {
+    const on = k === pref.sort;
+    return `<th class="c-${k}" aria-sort="${on ? (pref.dir > 0 ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}">${label}${on ? icon(pref.dir > 0 ? "up" : "down") : ""}</button></th>`;
+  };
+  return `<table class="table ctable"><thead><tr>${Object.entries(CLIENT_SORTS).map(head).join("")}</tr></thead><tbody>
+    ${list.map((c) => `<tr data-id="${c.id}" class="${c.state === "Encerrado" ? "closed" : ""}${c.open_requests ? "" : " idle"}">${Object.keys(CLIENT_SORTS).map((k) => `<td class="c-${k}">${cell[k](c)}</td>`).join("")}</tr>`).join("")}
+    </tbody></table>`;
+}
+
 async function viewClients(query) {
   const clients = await api("GET", "/api/clients");
   let q = query.get("q") || "";
   const states = BOOT.options.state;
   let st = states.includes(query.get("s")) ? query.get("s") : "";
+  const pref = clientPrefs();
   const count = (s) => clients.filter((c) => !s || c.state === s).length;
   app.innerHTML = `<div>
     <div class="head"><div><h1>Clientes</h1><p>${clients.filter((c) => c.state === "Ativo").length} ativos de ${clients.length}.</p></div>
       <div class="actions"><a class="btn primary" href="#/cliente/novo">${icon("plus")}Novo cliente</a></div></div>
     <div class="toolbar"><div class="search">${icon("search")}<input class="input" id="q" placeholder="Buscar cliente…" value="${esc(q)}"></div>
-      <div class="seg" id="states">${["", ...states].map((s) => `<button type="button" data-v="${esc(s)}" class="${s === st ? "on" : ""}">${esc(s || "Todos")} <span class="n">${count(s)}</span></button>`).join("")}</div></div>
+      <div class="seg" id="states">${["", ...states].map((s) => `<button type="button" data-v="${esc(s)}" class="${s === st ? "on" : ""}">${esc(s || "Todos")} <span class="n">${count(s)}</span></button>`).join("")}</div>
+      <div class="ctools"><label class="pick">Ordenar por<select class="input" id="sort">${Object.entries(CLIENT_SORTS).map(([k, [label]]) => `<option value="${k}">${label}</option>`).join("")}</select></label>
+        <button type="button" class="btn" id="dir" title="Inverter a ordem"></button>
+        <div class="seg views" id="view" role="group" aria-label="Como mostrar os clientes">${[["cards", "grid", "Cartões"], ["list", "list", "Lista"]].map(([v, i, t]) => `<button type="button" data-v="${v}" aria-label="${t}" title="${t}">${icon(i)}</button>`).join("")}</div></div></div>
     <div id="grid"></div></div>`;
   const draw = () => {
     const n = q.trim().toLowerCase();
-    const list = clients.filter((c) => (!st || c.state === st) && (!n || [c.name, c.segment, c.contact, c.instagram].join(" ").toLowerCase().includes(n)));
-    $("#grid").innerHTML = list.length ? `<div class="cgrid">${list.map((c) => `<a class="ccard ${c.state === "Encerrado" ? "closed" : ""}" href="#/cliente/${c.id}">
-      <div class="top">${avatar(c.name, "md")}<div style="min-width:0"><b>${esc(c.name)}</b><span>${esc(c.segment || "Sem segmento")}${c.instagram ? ` · ${esc(c.instagram)}` : ""}</span></div></div>
-      <div class="foot"><span class="state ${esc(c.state)}">${esc(c.state)}</span>${c.whatsapp ? "" : `<span class="nowa" title="Sem WhatsApp cadastrado: o relatório não abre a conversa">${icon("wa")}sem WhatsApp</span>`}
-        ${c.open_requests ? `<span class="open">${c.open_requests} em aberto</span>` : `<span>${c.total_requests} pedido${c.total_requests === 1 ? "" : "s"}</span>`}
-        ${c.last_request ? `<span style="margin-left:auto">${esc(ago(c.last_request))}</span>` : ""}</div></a>`).join("")}</div>`
+    const list = sortClients(clients.filter((c) => (!st || c.state === st) && (!n || [c.name, c.segment, c.contact, c.instagram].join(" ").toLowerCase().includes(n))), pref.sort, pref.dir);
+    $("#sort").value = pref.sort;
+    $("#dir").textContent = CLIENT_SORTS[pref.sort][3][pref.dir > 0 ? 0 : 1];
+    $$("#view button").forEach((b) => { b.classList.toggle("on", b.dataset.v === pref.view); b.setAttribute("aria-pressed", b.dataset.v === pref.view); });
+    $("#grid").innerHTML = list.length ? (pref.view === "list" ? clientTable(list, pref) : clientCards(list))
       : `<div class="panel empty"><span class="big">🏢</span>${clients.length ? (st && !n ? `Nenhum cliente ${esc(st.toLowerCase())}.` : "Nenhum cliente encontrado.") : "Nenhum cliente ainda. Comece cadastrando o primeiro."}</div>`;
   };
+  const choose = (change, what) => {
+    change();
+    try { localStorage.setItem("pauta.clients", JSON.stringify(pref)); } catch { /* private mode: not remembered */ }
+    track("filter", { what });
+    draw();
+  };
+  // a column starts in its own direction; asking for the same one again turns it round
+  const order = (key) => choose(() => { pref.dir = key === pref.sort ? -pref.dir : CLIENT_SORTS[key][1]; pref.sort = key; }, "sort");
   $("#q").addEventListener("input", (e) => { q = e.target.value; draw(); });
   $("#states").addEventListener("click", (e) => {
     const b = e.target.closest("button");
@@ -34,6 +118,18 @@ async function viewClients(query) {
     $$("#states button").forEach((x) => x.classList.toggle("on", x === b));
     keepHash(st ? `#/clientes?s=${encodeURIComponent(st)}` : "#/clientes");
     draw();
+  });
+  $("#sort").addEventListener("change", (e) => choose(() => { pref.sort = e.target.value; pref.dir = CLIENT_SORTS[pref.sort][1]; }, "sort"));
+  $("#dir").addEventListener("click", () => order(pref.sort));
+  $("#view").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b && b.dataset.v !== pref.view) choose(() => { pref.view = b.dataset.v; }, "view");
+  });
+  $("#grid").addEventListener("click", (e) => {
+    const th = e.target.closest("[data-sort]");
+    if (th) return order(th.dataset.sort);
+    const tr = e.target.closest("tr[data-id]");  // the whole line opens the client, as the card does
+    if (tr && !e.target.closest("a")) location.hash = `#/cliente/${tr.dataset.id}`;
   });
   draw();
 }

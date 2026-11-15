@@ -7,6 +7,21 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Clientes: em cartões ou em lista, na ordem que você escolher.** Ao lado da busca há
+  agora dois controles. O primeiro troca os cartões por uma lista, uma linha por cliente,
+  com colunas para segmento, situação, pedidos em aberto, total de pedidos, último pedido e
+  cliente desde. O segundo é o "Ordenar por", com esses mesmos campos e o nome; o botão ao
+  lado inverte a ordem e diz como ela está ("A → Z", "Mais primeiro", "Mais recente
+  primeiro"). Na lista, clicar no título de uma coluna ordena por ela, e clicar de novo
+  inverte. Cada ordem começa do jeito mais útil: quem tem mais pedidos em aberto, o pedido
+  mais recente, o cliente mais antigo. Clientes encerrados continuam no fim em qualquer
+  ordem (menos na ordem por situação), e quem não tem o dado (sem segmento, sem pedido)
+  vem depois de quem tem. A ordem por nome agora respeita os acentos: "Ótica" fica junto
+  do "O", não depois do "Z". A escolha fica guardada no navegador de cada pessoa. No
+  celular a lista vira linhas compactas, sem os títulos das colunas.
+
 ## [1.12.1] - 2026-11-15
 
 ### Changed
