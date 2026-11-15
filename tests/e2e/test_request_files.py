@@ -79,3 +79,59 @@ def test_connect_upload_share_and_remove(live, device, fake):
     expect(page.locator("#toast")).to_contain_text("OneDrive desconectado")
     page.goto(f"{base}/#/pedido/1")
     expect(page.locator(".panel", has_text="Arquivos")).to_contain_text("Conecte o OneDrive")
+
+
+def test_a_batch_goes_up_three_at_a_time(live, device, fake, drive):
+    base, auth, store = live
+    drive.start_connect()  # the OneDrive is connected already: this is about the batch
+    fake.approved = True
+    assert drive.poll() == "connected"
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    page.goto(f"{base}/#/entrar/{token}")
+    page.fill("#join input[name=name]", "Piero Sales")
+    page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(page.locator("#mechip")).to_contain_text("Piero Sales")
+    c = store.save_client({"name": "Clínica Bem Estar"})
+    store.create_request({"client": c["id"], "what": "Fotos da campanha"}, None)
+    page.goto(f"{base}/#/pedido/1")
+    expect(page.locator("#filelist")).to_contain_text("Nenhum arquivo ainda")
+
+    fake.upload_delay = 0.4  # OneDrive takes its time with each, whatever the size
+    names = [f"foto {n}.png" for n in range(1, 8)]
+    page.set_input_files(
+        "#pick", files=[{"name": n, "mimeType": "image/png", "buffer": PNG} for n in names]
+    )
+    expect(page.locator("#uploads .upl")).to_have_count(7)  # the whole queue shows at once
+    expect(page.locator("#filelist .file")).to_have_count(7, timeout=20_000)
+    expect(page.locator("#toast")).to_have_text("7 arquivos enviados")
+    expect(page.locator("#uploads .upl")).to_have_count(0)
+    for n in names:  # none lost to a response that arrived late
+        expect(page.locator("#filelist")).to_contain_text(n)
+    expect(page.locator("#filelist img")).to_have_count(7)
+    # the first alone (it makes the folder), then never more than three together
+    assert fake.together[0] == 1 and fake.together[1] == 1
+    assert max(fake.together) == 3 and len(fake.together) == 7
+    # the page stays as it is after a reload: what it showed is what was kept
+    page.reload()
+    expect(page.locator("#filelist .file")).to_have_count(7)
+
+    # more files for a request that has its folder: nothing to wait for, three go at once
+    page.set_input_files(
+        "#pick",
+        files=[{"name": f"extra {n}.png", "mimeType": "image/png", "buffer": PNG} for n in "abc"],
+    )
+    expect(page.locator("#filelist .file")).to_have_count(10, timeout=20_000)
+    expect(page.locator("#toast")).to_have_text("3 arquivos enviados")
+    assert sorted(fake.together[7:]) == [1, 2, 3]
+
+    # one file says its name; an empty one is refused without stopping the rest
+    page.set_input_files(
+        "#pick",
+        files=[
+            {"name": "vazio.png", "mimeType": "image/png", "buffer": b""},
+            {"name": "capa.png", "mimeType": "image/png", "buffer": PNG},
+        ],
+    )
+    expect(page.locator("#filelist .file")).to_have_count(11, timeout=20_000)
+    expect(page.locator("#toast")).to_have_text("capa.png enviado")

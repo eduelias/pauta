@@ -2015,6 +2015,12 @@ class Store:
             db.execute("UPDATE request SET updated=datetime('now') WHERE id=?", (rid,))
         return self.request(rid)
 
+    def file_id(self, item: str) -> int | None:
+        """The file kept for a OneDrive item, if any."""
+        with self.db() as db:
+            row = db.execute("SELECT id FROM file WHERE item=?", (str(item),)).fetchone()
+        return row["id"] if row else None
+
     def file(self, fid: int) -> dict:
         with self.db() as db:
             row = db.execute("SELECT * FROM file WHERE id=?", (fid,)).fetchone()

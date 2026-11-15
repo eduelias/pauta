@@ -18,7 +18,7 @@ def make(store, fake, **kw):
 
 @pytest.fixture()
 def drive(store, fake):
-    d = make(store, fake, chunk=4)
+    d = make(store, fake, chunk=4, whole=4)  # up to 4 bytes whole, more in chunks of 4
     d.start_connect()
     fake.approved = True
     assert d.poll() == "connected"
@@ -107,8 +107,9 @@ def test_tokens_refresh_and_rotate(drive, fake):
     assert json.loads(drive.token_file.read_text())["refresh_token"] == f"rt{fake.token_n}"
     # a token Graph no longer takes: one refresh, one retry
     drive._access = ("stale", 9e12)
-    drive.download_url(put(drive, b"y", "b.png")["id"])
-    assert fake.refreshes == 2
+    item = put(drive, b"y", "b.png")  # the retry sends the file's bytes again
+    assert fake.refreshes == 2 and fake.items[item["id"]]["data"] == b"y"
+    drive.download_url(item["id"])
 
 
 def test_revoked_connection_says_reconnect(drive, fake):
@@ -126,8 +127,29 @@ def test_revoked_connection_says_reconnect(drive, fake):
     assert not drive.connected and not drive.token_file.exists() and not drive.error
 
 
+def test_a_small_file_goes_up_whole(drive, fake):
+    item = put(drive, b"abcd")
+    assert item == {
+        "id": item["id"],
+        "name": "foto.png",
+        "size": 4,
+        "mime": "image/png",
+        "folder": "FOLDER-approot~Clínica~Pedido 1",
+    }
+    assert fake.whole == 1  # one request, no session
+    assert fake.items[item["id"]]["data"] == b"abcd"
+    assert fake.items[item["id"]]["path"] == "approot/Clínica/Pedido 1/foto.png"
+    assert put(drive, b"ab")["name"] == "foto 2.png"  # a clash is renamed here too
+
+
+def test_the_real_limits_send_a_photo_whole_and_a_video_in_chunks(store, fake):
+    d = make(store, fake)
+    assert d.whole == 4 * 2**20 and d.chunk % (320 * 1024) == 0 and d.chunk > d.whole
+
+
 def test_upload_in_chunks(drive, fake):
     item = put(drive, b"0123456789")  # chunks of 4 bytes
+    assert fake.whole == 0
     assert item == {
         "id": item["id"],
         "name": "foto.png",
@@ -165,15 +187,24 @@ def test_upload_limits_and_failures(drive, fake):
     with pytest.raises(DriveError) as e:  # the browser went away halfway
         drive.upload(["C", "P"], "a.png", 10, io.BytesIO(b"12345").read)
     assert e.value.status == 400 and fake.sessions == {}  # the session was dropped
+    with pytest.raises(DriveError) as e:  # the same, with a file small enough to go whole
+        drive.upload(["C", "P"], "a.png", 3, io.BytesIO(b"12").read)
+    assert e.value.status == 400 and fake.whole == 0 and fake.items == {}
     fake.fail_upload = True
     with pytest.raises(DriveError) as e:
         put(drive, b"12345")
     assert e.value.status == 502 and fake.sessions == {}
     fake.fail_upload = False
     fake.quota_full = True
+    for data in (b"12345", b"123"):  # in chunks, whole
+        with pytest.raises(DriveError) as e:
+            put(drive, data)
+        assert e.value.status == 507
+    fake.quota_full = False
+    fake.down = True
     with pytest.raises(DriveError) as e:
-        put(drive, b"12345")
-    assert e.value.status == 507
+        put(drive, b"123")
+    assert e.value.status == 502 and fake.items == {}
 
 
 def test_downloads_thumbnails_links_deletes(drive, fake):

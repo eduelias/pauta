@@ -1,6 +1,8 @@
 """Files on requests over real HTTP, with the OneDrive behind them faked (tests/fakegraph.py)."""
 
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -189,11 +191,59 @@ def test_a_thumbnail_is_fetched_from_onedrive_once(filed, fake, store):
     assert not kept.exists()
     # SQLite hands the deleted file's id to the next upload: it gets its own thumbnail,
     # never the old picture, even when the old one is still on disk
-    kept.write_bytes(body)
+    kept.write_bytes(b"the old picture")
+    asked = fake.thumb_reads
     g = upload(base, 1, "outra.png", b"\x89PNG-other", nato)[1]
     assert g["id"] == f["id"]
-    fake.down = True  # the old picture is not it: OneDrive is asked for the new file's
-    assert get(f"{base}/api/files/{g['id']}/thumb", nato)[0] != 200
-    fake.down = False
-    assert get(f"{base}/api/files/{g['id']}/thumb", nato)[0] == 200
+    status, fresh, _ = get(f"{base}/api/files/{g['id']}/thumb", nato)
+    assert status == 200 and fresh == body  # OneDrive was asked for the new file's
+    assert fake.thumb_reads == asked + 1
     assert len(list(thumbs.glob(f"{g['id']}.*"))) == 2 and not list(thumbs.glob(".*.tmp"))
+
+
+def until(done, seconds=5.0):
+    end = time.time() + seconds
+    while not done() and time.time() < end:
+        time.sleep(0.02)
+    return done()
+
+
+def test_an_upload_fetches_the_thumbnail_before_anyone_asks(filed, fake, store):
+    base, nato, _ = filed
+    thumbs = Path(f"{store.path}.thumbs")
+    upload(base, 1, "briefing.pdf", b"%PDF", nato, ctype="application/pdf")
+    fid = upload(base, 1, "foto.png", b"\x89PNG-bytes", nato)[1]["files"][0]["id"]
+    assert until(lambda: list(thumbs.glob(f"{fid}.*")))  # nobody asked for it
+    assert fake.thumb_reads == 1  # the picture's; a PDF has none to fetch
+    fake.down = True  # so the page's first look is already off the disk
+    assert get(f"{base}/api/files/{fid}/thumb", nato)[0] == 200
+
+
+def test_a_page_asking_many_times_fetches_a_thumbnail_once(filed, fake, store):
+    base, nato, _ = filed
+    fake.thumb_delay = 0.3  # OneDrive takes its time, the page redraws meanwhile
+    fid = upload(base, 1, "foto.png", b"\x89PNG-bytes", nato)[1]["files"][0]["id"]
+    got = []
+    asks = [
+        threading.Thread(target=lambda: got.append(get(f"{base}/api/files/{fid}/thumb", nato)))
+        for _ in range(5)
+    ]
+    for t in asks:
+        t.start()
+    for t in asks:
+        t.join()
+    assert [g[0] for g in got] == [200] * 5 and len({g[1] for g in got}) == 1
+    assert fake.thumb_reads == 1  # the upload's own fetch; the five waited for it
+
+
+def test_a_thumbnail_onedrive_cannot_give_yet_is_asked_for_again(filed, fake, store):
+    base, nato, _ = filed
+    fake.down = True
+    assert upload(base, 1, "foto.png", b"abc", nato)[0] == 502
+    fake.down = False
+    fake.thumbs_gone = True  # a video's is not ready right after the upload
+    fid = upload(base, 1, "video.mp4", b"mp4", nato, ctype="video/mp4")[1]["files"][0]["id"]
+    assert until(lambda: fake.thumb_reads == 1)
+    assert get(f"{base}/api/files/{fid}/thumb", nato)[0] == 404
+    fake.thumbs_gone = False
+    assert get(f"{base}/api/files/{fid}/thumb", nato)[0] == 200

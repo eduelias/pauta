@@ -1,5 +1,6 @@
-"""A fake Microsoft login and Graph on localhost: the device code flow, token refresh, upload
-sessions, downloads, thumbnails, sharing links and deletes, with enough state to assert on.
+"""A fake Microsoft login and Graph on localhost: the device code flow, token refresh, uploads
+(whole and through a session), downloads, thumbnails, sharing links and deletes, with enough
+state to assert on.
 
 Tests never talk to the real Microsoft. Point a OneDrive at it with
 `OneDrive(path, client_id=CLIENT, graph=fake.graph, login=fake.login)`.
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -29,6 +31,12 @@ class FakeGraph:
         self.token_n = 0
         self.items: dict[str, dict] = {}  # id -> {name, path, data, mime, folder}
         self.sessions: dict[str, dict] = {}
+        self.whole = 0  # files that came whole, in one PUT to their path
+        self.upload_delay = 0.0  # seconds a whole file takes to land, as the real one's does
+        self.together: list[int] = []  # how many were landing when each one arrived
+        self.thumb_reads = 0  # times a thumbnail's address was asked for
+        self.thumb_delay = 0.0  # seconds that answer takes, as the real one's does
+        self.thumbs_gone = False  # no thumbnail made yet: 404, as for a video just sent
         self.links: list[str] = []
         self.deleted: list[str] = []
         self.scopes: list[str] = []
@@ -37,6 +45,7 @@ class FakeGraph:
         self.quota_full = False
         self.quota_reads = 0  # GET /me/drive or the app folder's size
         self._n = 0
+        self._landing = 0
         self._lock = threading.Lock()
         fake = self
 
@@ -116,7 +125,7 @@ class FakeGraph:
             return h._send(401, {"error": {"code": "InvalidAuthenticationToken"}})
         if self.down:
             return h._send(503, {"error": {"code": "serviceNotAvailable"}})
-        return self._graph(h, method, path[len("/v1.0") :], body)
+        return self._graph(h, method, path[len("/v1.0") :], body, parse_qs(url.query))
 
     def _login(self, h, step, form):
         one = lambda k: (form.get(k) or [""])[0]  # noqa: E731
@@ -150,7 +159,7 @@ class FakeGraph:
             return h._send(200, self._tokens())
         return h._send(400, {"error": "unsupported_grant_type"})
 
-    def _graph(self, h, method, path, body):
+    def _graph(self, h, method, path, body, query):
         if path == "/me":
             return h._send(200, {"displayName": "Piero", "userPrincipalName": "piero@example.com"})
         if path == "/me/drive":
@@ -161,6 +170,23 @@ class FakeGraph:
         if path == "/me/drive/special/approot" and method == "GET":
             self.quota_reads += 1
             return h._send(200, {"size": sum(len(i["data"]) for i in self.items.values())})
+        m = re.fullmatch(r"/me/drive/(special/approot|root):/(.+):/content", path)
+        if m and method == "PUT":
+            if self.quota_full:
+                return h._send(507, {"error": {"code": "quotaLimitReached"}})
+            if query.get("@microsoft.graph.conflictBehavior") != ["rename"]:
+                return h._send(409, {"error": {"code": "nameAlreadyExists"}})  # its default
+            if h.headers.get("Content-Type") != "application/octet-stream":
+                return h._send(400, {"error": {"code": "invalidRequest"}})
+            prefix = "approot" if m.group(1) == "special/approot" else "root"
+            with self._lock:
+                self.whole += 1
+                self._landing += 1
+                self.together.append(self._landing)
+            time.sleep(self.upload_delay)
+            with self._lock:
+                self._landing -= 1
+            return h._send(201, self._keep(f"{prefix}/{m.group(2)}", body))
         m = re.fullmatch(r"/me/drive/(special/approot|root):/(.+):/createUploadSession", path)
         if m and method == "POST":
             if self.quota_full:
@@ -187,8 +213,12 @@ class FakeGraph:
         if not item:
             return h._send(404, {"error": {"code": "itemNotFound"}})
         if rest == "/thumbnails/0/medium":
-            if not item["mime"].startswith(("image/", "video/")):
+            if self.thumbs_gone or not item["mime"].startswith(("image/", "video/")):
+                self.thumb_reads += self.thumbs_gone
                 return h._send(404, {"error": {"code": "itemNotFound"}})
+            with self._lock:
+                self.thumb_reads += 1
+            time.sleep(self.thumb_delay)
             return h._send(200, {"url": f"{self.base}/thumbs/{iid}"})
         if not rest:
             return h._send(
@@ -213,15 +243,20 @@ class FakeGraph:
         s["data"] += body
         if len(s["data"]) < total:
             return h._send(202, {"nextExpectedRanges": [f"{len(s['data'])}-"]})
-        folder_path, name = s["path"].rsplit("/", 1)
-        taken = {i["path"] for i in self.items.values()}
-        n, final = 1, name
-        while f"{folder_path}/{final}" in taken:
-            stem, dot, ext = name.rpartition(".")
-            n += 1
-            final = f"{stem} {n}.{ext}" if dot else f"{name} {n}"
+        del self.sessions[sid]
+        return h._send(201, self._keep(s["path"], s["data"]))
+
+    def _keep(self, path: str, data: bytes) -> dict:
+        """A new file at `path`, renamed on a clash; the item as Graph describes it."""
+        folder_path, name = path.rsplit("/", 1)
         folder = "FOLDER-" + folder_path.replace("/", "~")
         with self._lock:
+            taken = {i["path"] for i in self.items.values()}
+            n, final = 1, name
+            while f"{folder_path}/{final}" in taken:
+                stem, dot, ext = name.rpartition(".")
+                n += 1
+                final = f"{stem} {n}.{ext}" if dot else f"{name} {n}"
             self._n += 1
             iid = f"ITEM{self._n}"
             mime = "image/png" if final.endswith(".png") else "application/pdf"
@@ -230,18 +265,14 @@ class FakeGraph:
             self.items[iid] = {
                 "name": final,
                 "path": f"{folder_path}/{final}",
-                "data": s["data"],
+                "data": data,
                 "mime": mime,
                 "folder": folder,
             }
-        del self.sessions[sid]
-        return h._send(
-            201,
-            {
-                "id": iid,
-                "name": final,
-                "size": len(s["data"]),
-                "file": {"mimeType": mime},
-                "parentReference": {"id": folder},
-            },
-        )
+        return {
+            "id": iid,
+            "name": final,
+            "size": len(data),
+            "file": {"mimeType": mime},
+            "parentReference": {"id": folder},
+        }
