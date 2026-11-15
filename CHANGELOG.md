@@ -7,6 +7,21 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Arquivos do pedido: o envio ficou bem mais rápido, principalmente em lote.** Três coisas
+  mudaram. Um arquivo de até 4 MB (quase todos: 37 dos 38 da semana medida) vai para o
+  OneDrive em um pedido só, em vez de abrir uma sessão de envio antes: no OneDrive pessoal
+  cada ida custa um segundo ou mais, qualquer que seja o tamanho. A página agora envia três
+  arquivos ao mesmo tempo em vez de um por vez, e a fila inteira aparece de uma vez, cada
+  arquivo com a sua barra. E a miniatura de uma imagem ou vídeo é buscada assim que o
+  arquivo chega, sem esperar alguém abrir o pedido; se a página pede a mesma miniatura
+  várias vezes enquanto o lote sobe, o OneDrive é consultado uma vez só. Medido no du7 com
+  o OneDrive de verdade, sete arquivos de 2 MB: 22,6 s antes, 6,1 s agora; cada arquivo, de
+  3,3 s para 1,9 s. O primeiro arquivo de um pedido ainda vai sozinho, porque é ele que cria
+  a pasta do pedido. No fim de um lote o aviso é um só ("7 arquivos enviados"). Arquivos
+  maiores que 4 MB continuam indo em partes, como antes.
+
 ## [1.12.0] - 2026-11-13
 
 ### Added

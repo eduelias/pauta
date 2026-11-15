@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .. import obs
+from ..onedrive import DriveError
 from . import ID, SENT, Reply
 
 SUBTYPE = re.compile(r"[a-z0-9][a-z0-9.+-]{0,30}")  # image/<this>: safe as a file suffix
@@ -22,24 +23,57 @@ def install(route, store, auth, drive, meta):
     # subtype>. The digest is of the OneDrive item: SQLite hands a deleted file's id to the
     # next upload, and that one must never get the old picture. Safe to delete wholesale.
     thumbs = Path(f"{store.path}.thumbs")
+    # one fetch per picture at a time: a page that redraws while files are still going up
+    # asks for the same new thumbnail again and again, and the upload itself is already
+    # fetching it (_warm). The others wait for that one and read what it kept
+    fetching: dict[str, threading.Lock] = {}
+    fetching_guard = threading.Lock()
 
-    def _cached_thumbnail(fid: int, item: str) -> tuple[bytes, str]:
-        key = f"{fid}.{hashlib.sha256(item.encode()).hexdigest()[:12]}"
+    def _kept(key: str) -> tuple[bytes, str] | None:
         hit = next(thumbs.glob(f"{key}.*"), None)  # never a half-written .<name>.tmp
         if hit is not None:
             with contextlib.suppress(OSError):
                 return hit.read_bytes(), f"image/{hit.name.split('.', 2)[2]}"
-        raw, ctype = drive.thumbnail(item)
-        subtype = ctype.partition("/")[2]
-        if SUBTYPE.fullmatch(subtype):
+        return None
+
+    def _cached_thumbnail(fid: int, item: str) -> tuple[bytes, str]:
+        key = f"{fid}.{hashlib.sha256(item.encode()).hexdigest()[:12]}"
+        if hit := _kept(key):
+            return hit
+        with fetching_guard:
+            mine = fetching.setdefault(key, threading.Lock())
+        with mine:
             try:
-                thumbs.mkdir(parents=True, exist_ok=True)
-                tmp = thumbs / f".{key}.{subtype}.{threading.get_ident()}.tmp"
-                tmp.write_bytes(raw)
-                tmp.replace(thumbs / f"{key}.{subtype}")
-            except OSError:  # a full or read-only disk: the page still gets its thumbnail
-                obs.event("thumbnail_not_kept", logging.WARNING)
-        return raw, ctype
+                if hit := _kept(key):  # someone fetched it while this one waited
+                    return hit
+                raw, ctype = drive.thumbnail(item)
+                subtype = ctype.partition("/")[2]
+                if SUBTYPE.fullmatch(subtype):
+                    try:
+                        thumbs.mkdir(parents=True, exist_ok=True)
+                        tmp = thumbs / f".{key}.{subtype}.{threading.get_ident()}.tmp"
+                        tmp.write_bytes(raw)
+                        tmp.replace(thumbs / f"{key}.{subtype}")
+                    except OSError:  # a full or read-only disk: the page still gets it
+                        obs.event("thumbnail_not_kept", logging.WARNING)
+                return raw, ctype
+            finally:
+                with fetching_guard:
+                    fetching.pop(key, None)
+
+    def _warm(item: dict) -> None:
+        """Fetch a new picture's thumbnail before anyone asks for it. The page draws it the
+        moment the upload ends, and that first fetch is a second and a half of OneDrive: by
+        then it is under way, and whoever opens the request later finds it on disk."""
+        fid = store.file_id(item["id"])
+        if fid is None or not item["mime"].startswith(("image/", "video/")):
+            return
+
+        def work():
+            with contextlib.suppress(DriveError, OSError):  # no thumbnail yet: the page asks
+                _cached_thumbnail(fid, item["id"])
+
+        threading.Thread(target=work, name="thumb-warm", daemon=True).start()
 
     def _forget_thumbnail(fid: int) -> None:
         for p in thumbs.glob(f"{fid}.*"):
@@ -92,7 +126,9 @@ def install(route, store, auth, drive, meta):
             raise Reply(400, {"error": "o arquivo precisa de um nome"})
         item = drive.upload(folder, name, int(length), self._reader())
         obs.event("file_uploaded", bytes=item["size"])
-        return store.add_file(int(rid), item, viewer["account"])
+        doc = store.add_file(int(rid), item, viewer["account"])
+        _warm(item)
+        return doc
 
     @route("GET", f"/api/files/{ID}")
     def download(self, viewer, _body, fid):

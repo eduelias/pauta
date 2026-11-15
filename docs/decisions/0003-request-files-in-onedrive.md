@@ -21,7 +21,7 @@ short videos; files belong to a request; clients may see them too.
 | App registration | "Pauta" in du7@msn.com's own Entra directory, personal Microsoft accounts only. Not a work directory (it would belong to the employer) and not Piero's account (he only approves access) |
 | Sign-in | Device code flow: an admin clicks Conectar on the Equipe page, the OneDrive's owner types the code at microsoft.com/link. No client secret to store or rotate, no redirect URL |
 | Token | A file next to the DB (`pauta.db.onedrive-token`, mode 600), like the session key: never in the DB, so never in its backups. Refreshed on use; Microsoft rotates it |
-| Uploads | Through Pauta: the browser posts the file, Pauta streams it to a Graph upload session in 5 MiB chunks. With files this small the extra hop is cheap, the CSP stays `'self'`, and no browser-to-Microsoft CORS setup is needed. Limit `PAUTA_UPLOAD_MAX_MB` (200) |
+| Uploads | Through Pauta: the browser posts the file and Pauta passes it on. Up to 4 MiB it goes whole, in one `PUT …:/content`; above that, through a Graph upload session in 5 MiB chunks. The page sends three files at a time (a request's first one alone: it makes the folder). With files this small the extra hop is cheap, the CSP stays `'self'`, and no browser-to-Microsoft CORS setup is needed. Limit `PAUTA_UPLOAD_MAX_MB` (200). See "What an upload costs" below |
 | Downloads | `/api/files/<id>` redirects to Graph's short-lived pre-signed link, so teammates never need access to the OneDrive. Thumbnails come through Pauta, fetched without the token |
 | Clients | "Link para o cliente": a view-only link to the request's folder that anyone with it can open, sent by WhatsApp. Made on demand, revoked in OneDrive |
 | Removing | Uploader or admin. The file goes to OneDrive's recycle bin (30 days). Deleting a request or client in Pauta leaves its files in OneDrive |
@@ -41,3 +41,36 @@ short videos; files belong to a request; clients may see them too.
 - Microsoft shows "unverified publisher" when connecting; harmless for a team app.
 - With one database per team (proposed, not decided), each team would connect its own
   OneDrive: the client id is shared, the token file sits next to each team's DB.
+
+## What an upload costs (measured 2026-11-15)
+
+The week of 9 November had 38 uploads on production, median 3.8 s each and none under 300 ms,
+and they come in batches: 17 files dropped at once took over a minute, one progress bar at a
+time. Fitting time against size gave **3.2 s of fixed cost per file** and 0.45 s per MB: an
+80 KB file took 3.5 s. So the bytes were never the problem.
+
+The network was ruled out first (du7 reaches Graph in about 0.13 s, connection included; IPv6
+is broken on du7 but IPv4 is tried first everywhere). What is slow is Graph itself on a
+personal OneDrive: every call takes 0.7 to 1.5 s whatever it carries. Timed from du7 against
+acceptance's own OneDrive:
+
+| Step | Time |
+|---|---|
+| `createUploadSession` | 1.5 s (3.4 s when the folders are new) |
+| `PUT` of the bytes to the session | 1.1 to 1.4 s |
+| `PUT …:/content`, the file whole | 1.6 to 2.3 s |
+| Thumbnail (its address, then its bytes) | 1.4 s |
+| A download link | 0.7 to 1.4 s |
+
+Hence the three changes of that day: one request instead of two for a small file, three files
+at a time, and the thumbnail fetched as the upload ends instead of when the page asks. Seven
+2 MB files, same machine, same OneDrive: **22.6 s before, 6.1 s after**; per file 3.3 s to
+1.9 s. Three files sent at once into a folder that did not exist landed in one folder the one
+time it was tried; the page still sends a new request's first file alone, because the client's
+link opens a single folder and one clean trial is not a guarantee.
+
+Not done, and where the next second is: answering the browser as soon as du7 has the bytes and
+sending them to OneDrive afterwards would make an upload feel instant, at the price of a file
+that can fail after the page said it was sent. And every download click costs one Graph call
+for a link that stays good for about an hour: keeping it for a few minutes would make repeat
+downloads free.

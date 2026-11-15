@@ -1,8 +1,8 @@
 """Files on requests, stored in one OneDrive (a personal Microsoft account) through Graph.
 
-The team uploads through Pauta; Pauta passes the bytes on to OneDrive in chunks, so nothing
-but the file's id and name stays on du7. Teammates never need access to that OneDrive: a
-download is a redirect to a short-lived link Graph hands out.
+The team uploads through Pauta; Pauta passes the bytes on to OneDrive (a small file whole, a
+big one in chunks), so nothing but the file's id and name stays on du7. Teammates never need
+access to that OneDrive: a download is a redirect to a short-lived link Graph hands out.
 
 Signing in uses the device code flow: an admin clicks "Conectar", Pauta shows a short code,
 the owner of the OneDrive types it at microsoft.com/link and approves. There is no client
@@ -39,6 +39,11 @@ APP_SCOPES = "offline_access User.Read Files.ReadWrite.AppFolder"
 DRIVE_SCOPES = "offline_access User.Read Files.ReadWrite"
 # upload chunks must be multiples of 320 KiB; 5 MiB keeps memory low on the Pi
 CHUNK = 16 * 320 * 1024
+# up to here a file goes up whole, in one request. A session costs one more round trip, and
+# on a personal OneDrive each takes a second or more whatever the size: measured on du7, a
+# 2 MB file took 3.3 s through a session and 1.9 s whole. Nearly every file the team sends
+# is under this (37 of the 38 in the week it was measured; docs/decisions/0003)
+WHOLE = 4 * 1024 * 1024
 TIMEOUT = 30
 # how long a quota read serves the Configurações page: an upload or a removal drops it,
 # and otherwise the number barely moves (reading it, with the token renewal it may
@@ -87,6 +92,7 @@ class OneDrive:
         login: str = LOGIN,
         max_mb: int | None = None,
         chunk: int = CHUNK,
+        whole: int = WHOLE,
     ):
         self.client_id = (client_id or "").strip()
         self.root = "/".join(safe_name(p) for p in (root or "").split("/") if p.strip())
@@ -94,6 +100,7 @@ class OneDrive:
         self.login = login.rstrip("/")
         self.max_bytes = (max_mb or _limit_mb()) * 1024 * 1024
         self.chunk = chunk
+        self.whole = whole
         self.token_file = Path(f"{db_path}.onedrive-token")
         self._lock = threading.Lock()
         self._access: tuple[str, float] | None = None  # token, expiry
@@ -169,21 +176,19 @@ class OneDrive:
         status, doc, _ = self._http("POST", f"{self.login}/token", form=form)
         return status, doc if isinstance(doc, dict) else {}
 
-    def _graph(self, method: str, path: str, data=None, ok=(200, 201, 202, 204)):
-        status, doc, rh = self._http(
-            method,
-            f"{self.graph}{path}",
-            data=data,
-            headers={"Authorization": f"Bearer {self._token()}"},
-        )
-        if status == 401:  # revoked or expired early: one fresh token, one retry
-            self._access = None
-            status, doc, rh = self._http(
+    def _graph(self, method: str, path: str, data=None, ok=(200, 201, 202, 204), headers=None):
+        def call():
+            return self._http(
                 method,
                 f"{self.graph}{path}",
                 data=data,
-                headers={"Authorization": f"Bearer {self._token()}"},
+                headers={**(headers or {}), "Authorization": f"Bearer {self._token()}"},
             )
+
+        status, doc, rh = call()
+        if status == 401:  # revoked or expired early: one fresh token, one retry
+            self._access = None
+            status, doc, rh = call()
         if status == 404:
             raise DriveError("arquivo não encontrado no OneDrive", 404)
         if status not in ok:
@@ -368,12 +373,42 @@ class OneDrive:
         return f"/me/drive/special/approot:/{rel}:"
 
     def upload(self, folder: list[str], name: str, size: int, read) -> dict:
-        """Stream `size` bytes from `read(n)` into folder/name (renamed on a clash).
-        Returns {id, name, size, mime, folder}."""
+        """Send `size` bytes from `read(n)` to folder/name (renamed on a clash): whole when
+        small, through a session in chunks otherwise. Returns {id, name, size, mime, folder}."""
         if size <= 0:
             raise DriveError("o arquivo está vazio", 400)
         if size > self.max_bytes:
             raise DriveError(f"arquivo grande demais (até {self.max_bytes // 2**20} MB)", 413)
+        if size <= self.whole:
+            item = self._upload_whole(folder, name, size, read)
+        else:
+            item = self._upload_in_chunks(folder, name, size, read)
+        if not isinstance(item, dict) or not item.get("id"):
+            raise DriveError(UNAVAILABLE)
+        self._quota = None  # the folder grew
+        return {
+            "id": item["id"],
+            "name": item.get("name") or name,
+            "size": int(item.get("size") or size),
+            "mime": (item.get("file") or {}).get("mimeType", ""),
+            "folder": (item.get("parentReference") or {}).get("id", ""),
+        }
+
+    def _upload_whole(self, folder: list[str], name: str, size: int, read):
+        """One request: the bytes to the path. Graph makes the folders that are missing."""
+        data = read(size)
+        if len(data) != size:
+            raise DriveError("o envio foi interrompido", 400)
+        item, _ = self._graph(
+            "PUT",
+            self._path([*folder, name]) + "/content?@microsoft.graph.conflictBehavior=rename",
+            data=data,
+            # the type Graph keeps comes from the name; this only says "not a form"
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        return item
+
+    def _upload_in_chunks(self, folder: list[str], name: str, size: int, read):
         session, _ = self._graph(
             "POST",
             self._path([*folder, name]) + "/createUploadSession",
@@ -409,16 +444,7 @@ class OneDrive:
             with contextlib.suppress(DriveError):
                 self._http("DELETE", url)  # drop the half-written upload
             raise
-        if not isinstance(item, dict) or not item.get("id"):
-            raise DriveError(UNAVAILABLE)
-        self._quota = None  # the folder grew
-        return {
-            "id": item["id"],
-            "name": item.get("name") or name,
-            "size": int(item.get("size") or size),
-            "mime": (item.get("file") or {}).get("mimeType", ""),
-            "folder": (item.get("parentReference") or {}).get("id", ""),
-        }
+        return item
 
     def download_url(self, item: str) -> str:
         doc, _ = self._graph("GET", f"/me/drive/items/{urllib.parse.quote(item, safe='')}")

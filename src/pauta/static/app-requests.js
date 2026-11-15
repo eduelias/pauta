@@ -308,8 +308,12 @@ function bindFiles(get, set) {
       catch (e) { toast(e.message, true); }
     }));
   };
+  // A response is the request as it was when that file landed. With several in flight they
+  // can arrive out of order: keep the one that knows the most files, never an older one.
+  const newest = (r) => Math.max(0, ...r.files.map((f) => f.id));
   const upload = async (files) => {
     const max = (BOOT.files.max_mb || 200) * 1048576;
+    const queue = [];
     for (const file of files) {
       if (!file.size) { track("file_failed", { reason: "empty" }); toast(`${file.name} está vazio`, true); continue; }
       if (file.size > max) { track("file_failed", { reason: "size" }); toast(`${file.name} passa de ${BOOT.files.max_mb} MB`, true); continue; }
@@ -317,17 +321,29 @@ function bindFiles(get, set) {
       row.className = "upl";
       row.innerHTML = `<span>${esc(file.name)}</span><progress max="1" value="0"></progress>`;
       $("#uploads").append(row);
+      queue.push({ file, row });
+    }
+    const sent = [];
+    const send = async ({ file, row }) => {
       try {
-        set(await sendFile(get().id, file, (f) => { $("progress", row).value = f; }));
+        const r = await sendFile(get().id, file, (f) => { $("progress", row).value = f; });
+        if (newest(r) >= newest(get())) set(r);
         track("file_added");
+        sent.push(file.name);
         redraw();
-        toast(`${file.name} enviado`);
       } catch (e) {
         track("file_failed", { reason: e.status === 0 ? "network" : "drive" });
         toast(`${file.name}: ${e.message}`, true);
       }
       row.remove();
-    }
+    };
+    // Three at a time: OneDrive takes a second or two per file whatever its size, so one by
+    // one a batch of 17 took over a minute. A request's first file goes alone, though: it
+    // makes the request's folder in OneDrive, and files racing to make it could end up in
+    // two (it held when tried, but the client's link opens one folder: not worth finding out).
+    if (queue.length && !get().files.length) await send(queue.shift());
+    await Promise.all([0, 1, 2].map(async () => { while (queue.length) await send(queue.shift()); }));
+    if (sent.length) toast(sent.length === 1 ? `${sent[0]} enviado` : `${sent.length} arquivos enviados`);
   };
   $("#pick").addEventListener("change", (e) => { upload([...e.target.files]); e.target.value = ""; });
   panel.addEventListener("dragover", (e) => { e.preventDefault(); panel.classList.add("drop"); });
