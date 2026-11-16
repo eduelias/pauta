@@ -321,6 +321,14 @@ const finVisible = () => Boolean(BOOT?.finance?.visible);
 const CAMP_NAV = ["#/campanhas", "chart", "Campanhas"];
 const metaVisible = () => Boolean(BOOT?.meta?.enabled);
 
+// A release shows as "v1.13.0". A branch build on acceptance is "1.13.1.dev41+g41acf5dab1f0"
+// (deploy-branch.yml), too long for the badge: it shows the start of the commit instead, and
+// the whole version stays in the tooltip and at the foot of Equipe.
+function shortVersion(version) {
+  const commit = /\+g([0-9a-f]{7})/.exec(version);
+  return commit ? commit[1] : `v${version}`;
+}
+
 function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
@@ -341,7 +349,7 @@ function renderShell() {
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
     b.querySelector(".ver")?.remove();
-    if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">v${esc(BOOT.version)}</span>`);
+    if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">${esc(shortVersion(BOOT.version))}</span>`);
   });
   markNav();
 }

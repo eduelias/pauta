@@ -27,6 +27,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   /api/publishing`, `POST`/`DELETE /api/clients/{id}/instagram`, `/api/posts…`. Desenho,
   limites e o que falta: `docs/publishing-spec.md`.
 
+### Changed
+
+- **Em acceptance, a versão ao lado do nome ficou curta.** Um build de branch tem uma versão
+  comprida (`1.13.1.dev41+g41acf5dab1f0`) que não cabia ao lado de "Pauta" e saía do lugar.
+  Agora aparece só o começo do commit (`41acf5d`); a versão inteira continua no texto que
+  aparece ao parar o mouse em cima e no fim de Configurações. Em produção nada muda:
+  continua `v1.13.0`.
+
 ## [1.13.0] - 2026-11-15
 
 ### Added
