@@ -62,6 +62,18 @@ def test_every_screen(signed_in, layout):
     expect(brand.locator(".ver")).to_have_text(f"v{__version__}")
 
 
+def test_a_branch_build_shows_its_commit(signed_in, monkeypatch):
+    """On acceptance the version is X.Y.Z.devN+gCOMMIT: the badge is the commit's first seven."""
+    monkeypatch.setattr("pauta.routes.account.__version__", "1.13.1.dev41+g41acf5dab1f0")
+    base, open_device = signed_in
+    page = open_device().page
+    page.goto(f"{base}/#/configuracoes")
+    ver = page.locator(".side .brand .ver")
+    expect(ver).to_have_text("41acf5d")
+    expect(ver).to_have_attribute("title", "Versão 1.13.1.dev41+g41acf5dab1f0")
+    expect(page.locator("#version")).to_have_text("Pauta 1.13.1.dev41+g41acf5dab1f0")
+
+
 def test_gravatar_shows_over_the_initials(signed_in):
     base, open_device = signed_in
     page = open_device().page
