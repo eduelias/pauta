@@ -27,6 +27,55 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   /api/publishing`, `POST`/`DELETE /api/clients/{id}/instagram`, `/api/posts…`. Desenho,
   limites e o que falta: `docs/publishing-spec.md`.
 
+## [1.13.0] - 2026-11-15
+
+### Added
+
+- **Clientes: em cartões ou em lista, na ordem que você escolher.** Ao lado da busca há
+  agora dois controles. O primeiro troca os cartões por uma lista, uma linha por cliente,
+  com colunas para segmento, situação, pedidos em aberto, total de pedidos, último pedido e
+  cliente desde. O segundo é o "Ordenar por", com esses mesmos campos e o nome; o botão ao
+  lado inverte a ordem e diz como ela está ("A → Z", "Mais primeiro", "Mais recente
+  primeiro"). Na lista, clicar no título de uma coluna ordena por ela, e clicar de novo
+  inverte. Cada ordem começa do jeito mais útil: quem tem mais pedidos em aberto, o pedido
+  mais recente, o cliente mais antigo. Clientes encerrados continuam no fim em qualquer
+  ordem (menos na ordem por situação), e quem não tem o dado (sem segmento, sem pedido)
+  vem depois de quem tem. A ordem por nome agora respeita os acentos: "Ótica" fica junto
+  do "O", não depois do "Z". A escolha fica guardada no navegador de cada pessoa. No
+  celular a lista vira linhas compactas, sem os títulos das colunas.
+
+## [1.12.1] - 2026-11-15
+
+### Changed
+
+- **Arquivos do pedido: o envio ficou bem mais rápido, principalmente em lote.** Três coisas
+  mudaram. Um arquivo de até 4 MB (quase todos: 37 dos 38 da semana medida) vai para o
+  OneDrive em um pedido só, em vez de abrir uma sessão de envio antes: no OneDrive pessoal
+  cada ida custa um segundo ou mais, qualquer que seja o tamanho. A página agora envia três
+  arquivos ao mesmo tempo em vez de um por vez, e a fila inteira aparece de uma vez, cada
+  arquivo com a sua barra. E a miniatura de uma imagem ou vídeo é buscada assim que o
+  arquivo chega, sem esperar alguém abrir o pedido; se a página pede a mesma miniatura
+  várias vezes enquanto o lote sobe, o OneDrive é consultado uma vez só. Medido no du7 com
+  o OneDrive de verdade, sete arquivos de 2 MB: 22,6 s antes, 6,1 s agora; cada arquivo, de
+  3,3 s para 1,9 s. O primeiro arquivo de um pedido ainda vai sozinho, porque é ele que cria
+  a pasta do pedido. No fim de um lote o aviso é um só ("7 arquivos enviados"). Arquivos
+  maiores que 4 MB continuam indo em partes, como antes.
+
+## [1.12.0] - 2026-11-13
+
+### Added
+
+- **Painel: o card "Saldo acabando".** A primeira tela agora lista os clientes com o saldo
+  de anúncios zerado ou que acaba dentro do prazo do time (o mesmo alerta de Campanhas →
+  Visão geral: 3 dias por padrão, ajustável em Configurações → Campanhas, 0 desliga), para
+  avisar o cliente antes de a campanha parar. Vem primeiro quem tem menos tempo: saldo que
+  já acabou, depois "acaba hoje", depois os dias contados. Cada linha traz o cliente (o nome
+  abre a página dele), quanto resta, o alerta ("saldo acabou", "saldo para 2 dias") e
+  **Avisar do saldo**, que abre o WhatsApp do cliente com a mensagem escrita, a mesma da
+  Visão geral. "Ver visão geral" leva para lá. Sem nenhum cliente em alerta o card não
+  aparece, e ele só existe onde a Meta está ligada. O Painel não ficou mais lento: abre como
+  antes e o card entra quando os saldos chegam.
+
 ## [1.11.1] - 2026-11-12
 
 ### Fixed
@@ -657,7 +706,10 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.11.1...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/eduelias/pauta/compare/v1.12.1...v1.13.0
+[1.12.1]: https://github.com/eduelias/pauta/compare/v1.12.0...v1.12.1
+[1.12.0]: https://github.com/eduelias/pauta/compare/v1.11.1...v1.12.0
 [1.11.1]: https://github.com/eduelias/pauta/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/eduelias/pauta/compare/v1.10.2...v1.11.0
 [1.10.2]: https://github.com/eduelias/pauta/compare/v1.10.1...v1.10.2

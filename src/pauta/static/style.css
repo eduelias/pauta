@@ -310,6 +310,24 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .hello p { margin: 6px 0 0; color: var(--muted); }
 .dash { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; align-items: start; }
 @media (max-width: 1100px) { .dash { grid-template-columns: 1fr; } }
+/* Saldo acabando: a line per client; on the phone two (the client and what is left, the alert and the draft) */
+.lowbal { margin-bottom: 20px; }
+.lowbal .panel-head > span { margin-right: auto; }
+.lowrow { display: flex; align-items: center; gap: 6px 16px; padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.lowrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.lowname { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--ink); }
+.lowname b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lowname:hover { color: var(--accent); }
+.lowleft { font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lowrow a.oact { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; font-size: 12.5px; font-weight: 650;
+  color: var(--accent); white-space: nowrap; }
+.lowrow a.oact:hover { text-decoration: underline; }
+@media (max-width: 899px) {
+  .lowrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .lowname b { white-space: normal; }
+  .lowrow .oflag { justify-self: start; }
+  .lowleft, .lowrow a.oact { justify-self: end; }
+}
 .empty { text-align: center; color: var(--muted); padding: 26px 10px; font-size: 14px; }
 .empty .big { font-size: 30px; display: block; margin-bottom: 6px; }
 
@@ -427,8 +445,71 @@ a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .ccard .foot .open { color: var(--accent); font-weight: 650; }
 .ccard.closed { opacity: .6; }
 /* a client without a WhatsApp number: the report's "Abrir conversa" can't open for it */
-.ccard .foot .nowa { display: inline-flex; align-items: center; gap: 4px; color: var(--s-waiting); font-weight: 600; }
-.ccard .foot .nowa .i { width: 13px; height: 13px; }
+.nowa { display: inline-flex; align-items: center; gap: 4px; color: var(--s-waiting); font-size: 13px; font-weight: 600; }
+.nowa .i { width: 13px; height: 13px; }
+/* cards or a list, and what to order by: to the right of the search and the states */
+.ctools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.ctools .pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600;
+  color: var(--muted); white-space: nowrap; }
+.toolbar .ctools select.input { min-width: 0; min-height: 38px; padding: 6px 32px 6px 10px; font-size: 14px; }
+.ctools #dir { font-size: 13.5px; color: var(--ink-2); }
+.seg.views { gap: 0; flex-wrap: nowrap; }
+.seg.views button { width: 40px; height: 38px; padding: 0; justify-content: center; border-radius: 0; }
+.seg.views button:first-child { border-radius: 10px 0 0 10px; }
+.seg.views button:last-child { border-radius: 0 10px 10px 0; margin-left: -1px; }
+/* the clients as a list: a heading orders by its column */
+.ctable th { padding: 0; }
+.ctable th button { display: flex; align-items: center; gap: 4px; width: 100%; padding: 11px 14px;
+  border: 0; background: none; font: inherit; color: inherit; cursor: pointer; white-space: nowrap; }
+.ctable th button:hover, .ctable th[aria-sort$="ending"] button { color: var(--ink); }
+.ctable th button .i { width: 13px; height: 13px; }
+.ctable td { white-space: nowrap; }
+.ctable .c-open, .ctable .c-total { text-align: right; font-variant-numeric: tabular-nums; }
+.ctable th.c-open button, .ctable th.c-total button { justify-content: flex-end; }
+.ctable td.c-open b { color: var(--accent); }
+/* the name takes what the other columns leave, and is cut short instead of pushing them out */
+.ctable td.c-name { width: 100%; max-width: 0; min-width: 190px; }
+.ctable .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ctable .who .cl { min-width: 0; }
+.ctable .who .cl b { font-weight: inherit; overflow: hidden; text-overflow: ellipsis; }
+.ctable .who .cl:hover b { color: var(--accent); }
+.ctable .who .nowa { flex: none; }
+.ctable td.c-segment { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+/* a narrower screen drops the two columns that say least */
+@media (max-width: 1179px) {
+  .ctable .c-total, .ctable .c-since { display: none; }
+}
+/* and between that and the phone the name needs the room: tighter columns, and the mark
+   alone for a missing WhatsApp (its title says the rest) */
+@media (min-width: 900px) and (max-width: 1179px) {
+  .ctable td.c-name { min-width: 150px; }
+  .ctable td.c-segment { max-width: 120px; }
+  .ctable th button, .ctable td { padding-left: 10px; padding-right: 10px; }
+  .ctable .who .nowa { font-size: 0; gap: 0; }
+  .ctable .who .nowa .i { width: 15px; height: 15px; }
+}
+.ctable .unit { display: none; }
+.ctable tr.closed { opacity: .6; }
+@media (max-width: 899px) {
+  /* "Ordenar por" takes a line; the direction and cards-or-list share the next */
+  .ctools { margin-left: 0; width: 100%; }
+  .ctools .pick { flex: 1 1 100%; }
+  .toolbar .ctools select.input { flex: 1; }
+  .ctools .views { margin-left: auto; }
+  /* a line on the phone: the name and the state, then the segment, what is open, the last request */
+  .ctable tr { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+    grid-template-areas: "name name state" "segment open last"; }
+  .ctable td.c-name { grid-area: name; width: auto; max-width: none; min-width: 0; }
+  .ctable .who { flex-wrap: wrap; gap: 4px 10px; }  /* "sem WhatsApp" under a long name */
+  .ctable td.c-state { grid-area: state; justify-self: end; }
+  .ctable td.c-segment { grid-area: segment; max-width: 45vw; }
+  .ctable td.c-open { grid-area: open; text-align: left; color: var(--accent); font-weight: 650; }
+  .ctable td.c-last { grid-area: last; justify-self: end; }
+  .ctable td.c-segment, .ctable td.c-open, .ctable td.c-last { font-size: 13px; }
+  .ctable td.c-segment, .ctable td.c-last { color: var(--muted); }
+  .ctable tr.idle td.c-open { display: none; }
+  .ctable .unit { display: inline; }
+}
 .state { font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 99px; }
 .state.Ativo { color: var(--s-done); background: var(--s-done-bg); }
 .state.Pausado { color: var(--s-waiting); background: var(--s-waiting-bg); }
