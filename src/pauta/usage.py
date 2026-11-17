@@ -36,7 +36,9 @@ EVENTS: dict[str, tuple[str, ...]] = {
     "file_failed": ("reason",),
     "client_saved": ("new",),
     "seen_today": ("n",),
-    "period": ("p",),
+    # `days` and `ago` only with p=custom: the range's length and how many days back it
+    # ends (0 = today), never its dates
+    "period": ("p", "days", "ago"),
     "client_message": ("kind",),
     "finance_entry": ("kind",),
     "search": ("what",),

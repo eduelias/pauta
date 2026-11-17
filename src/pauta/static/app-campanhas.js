@@ -51,6 +51,14 @@ function readPeriod(query) {
   }
   return { p, since, until };
 }
+// The usage log's "period" row. A Personalizado range adds its shape, never its dates:
+// `days` long, ending `ago` days back (0 = today), so the usage log can say which quick
+// period the picker lacks ("14 days up to yesterday", say).
+function trackPeriod(st) {
+  if (st.p !== "custom") { track("period", { p: st.p }); return; }
+  const [since, until] = periodDates(st.p, st);
+  track("period", { p: st.p, days: 1 - daysUntil(since) + daysUntil(until), ago: -daysUntil(until) });
+}
 const periodQuery = (st) => st.p === "custom" ? `since=${st.since}&until=${st.until}` : `p=${st.p}`;
 function savePeriod(st) {
   try { localStorage.setItem("pauta.period", JSON.stringify(st.p === "custom" ? st : { p: st.p })); } catch { /* private mode: not remembered */ }
@@ -201,7 +209,10 @@ function budgetText(k) {
   if (k.lifetime_budget_cents != null) return `${centsMoney(k.lifetime_budget_cents, k.currency)} · total`;
   return "";
 }
-function metricCells(k, total = false) {
+// `reading`: the period's reach is still being read from Meta behind the page (fillReach)
+const READING = `<span class="muted reading" title="lendo o alcance na Meta…">…</span>`;
+const reachCell = (k, reading = false) => k.reach != null ? esc(count(k.reach)) : reading ? READING : dash(NO_REACH);
+function metricCells(k, total = false, reading = false) {
   const label = resultLabel(k.result_indicator);
   const none = total && k.mixed ? MIXED_RESULTS : NO_RESULTS;
   const v = {
@@ -209,7 +220,7 @@ function metricCells(k, total = false) {
     cpr: k.results ? [esc(centsMoney(k.cost_per_result_cents, k.currency)), label] : [dash(none)],
     spend: [esc(centsMoney(k.spend_cents, k.currency))],
     impressions: [esc(count(k.impressions))],
-    reach: [total ? dash(SUM_REACH) : k.reach == null ? dash(NO_REACH) : esc(count(k.reach))],
+    reach: [total ? dash(SUM_REACH) : reachCell(k, reading)],
     budget: [total ? dash(SUM_BUDGET) : budgetText(k) ? esc(budgetText(k)) : dash(NO_BUDGET)],
   };
   return METRIC_COLS.map(([key, label]) => {
@@ -420,7 +431,7 @@ async function viewOverview(query) {
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns/overview?since=${since}&until=${until}`);
   savePeriod(st);
-  track("period", { p: st.p });
+  trackPeriod(st);
   keepHash(`#/campanhas/geral?${periodQuery(st)}`);
   const segments = [...new Set(doc.clients.map((c) => c.segment).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
   if (!segments.includes(ovState.segment)) ovState.segment = "";
@@ -452,14 +463,38 @@ async function viewOverview(query) {
   $("#ovtrend").addEventListener("change", (e) => { ovState.trend = e.target.value; draw(); });
 }
 
+// A period Pauta hadn't read from Meta yet (a Personalizado range, mostly): the list came
+// at once from the stored numbers with `reach_pending` on and "…" in the reach cells.
+// Ask again until the read behind the page has landed, then put each number in its cell.
+// The page is not redrawn: someone may be halfway through a click. Still pending after
+// the last ask, or the ask failing, leaves the dash a failed reach always had.
+const REACH_POLL_MS = 1500, REACH_POLL_MAX = 20; // every 1.5 s for up to 30 s
+async function fillReach(url) {
+  const list = $("#cblocks");
+  let doc = null;
+  for (let i = 0; i < REACH_POLL_MAX; i++) {
+    await new Promise((r) => setTimeout(r, REACH_POLL_MS));
+    if (!document.contains(list)) return;  // another screen, or this one drawn again
+    try { doc = await api("GET", url); } catch { doc = null; break; }
+    if (!document.contains(list)) return;
+    if (!doc.reach_pending) break;
+  }
+  const reach = new Map((doc?.clients || []).flatMap((c) => c.campaigns.map((k) => [String(k.id), k])));
+  list.querySelectorAll(".krow[data-id]").forEach((row) => {
+    const cell = row.querySelector(".km-reach b");
+    if (cell?.querySelector(".reading")) cell.innerHTML = reachCell(reach.get(row.dataset.id) || {});
+  });
+}
+
 const campState = { skipped: false };  // "ver ignoradas", for the session
 async function viewCampaigns(query) {
   if (!metaVisible()) { location.hash = "#/"; return; }
   const st = readPeriod(query);
   const [since, until] = periodDates(st.p, st);
-  const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`);
+  const url = `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`;
+  const doc = await api("GET", url);
   savePeriod(st);
-  track("period", { p: st.p });  // after the call: an api_slow row sits next to the period that cost it
+  trackPeriod(st);  // after the call: an api_slow row sits next to the period that cost it
   keepHash(`#/campanhas?${periodQuery(st)}`);
   const n = doc.clients.reduce((a, c) => a + c.campaigns.filter((k) => k.state !== "skipped").length, 0);
   // a campaign younger than the period has numbers only from its "ativa desde" on
@@ -491,7 +526,7 @@ async function viewCampaigns(query) {
       <div class="krow ktotal"><div class="kname"><b>Total do cliente</b></div>${metricCells(clientTotals(c), true)}${ME.is_admin ? `<div class="kact"></div>` : ""}</div>
       ${c.campaigns.map((k) => `<div class="krow ${k.state === "skipped" ? "skipped" : ""}" data-id="${k.id}">
         <div class="kname"><a href="#/campanha/${k.id}"><b>${esc(k.name)}</b></a>${stateTag(k)}${sinceTag(k)}</div>
-        ${metricCells(k)}
+        ${metricCells(k, false, doc.reach_pending)}
         ${ME.is_admin ? `<div class="kact">${k.state === "skipped"
           ? `<button class="btn small" data-follow="${k.id}" data-name="${esc(k.name)}">${icon("check")}Acompanhar</button>`
           : `<button class="btn ghost small" data-skip="${k.id}" data-name="${esc(k.name)}" title="Tirar da lista; a Meta não é alterada">Não acompanhar</button>`}</div>` : ""}
@@ -509,6 +544,7 @@ async function viewCampaigns(query) {
   </div>`;
   const redraw = () => viewCampaigns(new URLSearchParams(periodQuery(st)));
   bindPeriod(st, redraw);
+  if (doc.reach_pending) fillReach(url);
   $("#showskipped")?.addEventListener("change", (e) => { campState.skipped = e.target.checked; redraw(); });
   $("#syncnow")?.addEventListener("click", async (e) => {
     // the server answers 202 at once and syncs on its own thread: poll the list until the
@@ -738,7 +774,7 @@ async function viewCampaign(query, id) {
   const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
   const k = doc.campaign;
   savePeriod(st);
-  track("period", { p: st.p });
+  trackPeriod(st);
   keepHash(`#/campanha/${id}?${periodQuery(st)}`);
   const defs = metricDefs(k);
   let picked = readMetrics();

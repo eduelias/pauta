@@ -114,10 +114,23 @@ def test_sync_then_the_list(team, fake_meta):
     assert panetone["daily_budget_cents"] is None and panetone["lifetime_budget_cents"] is None
 
 
+def reach_read(url: str, cookie, timeout=10.0) -> dict:
+    """The list once the reach Meta is read for behind the page has landed: asked again
+    while `reach_pending` is on, as the page does."""
+    deadline = time.time() + timeout
+    while True:
+        status, doc, _ = call(url, cookie=cookie)
+        assert status == 200
+        if not doc["reach_pending"]:
+            return doc
+        assert time.time() < deadline, "the reach never came"
+        time.sleep(0.02)
+
+
 def test_custom_and_invalid_periods(team, fake_meta):
     base, nato, piero, _ = synced(team, fake_meta)
-    status, doc, _ = call(f"{base}/api/campaigns?since=2026-10-10&until=2026-10-12", cookie=piero)
-    assert status == 200 and doc["today_included"] is False
+    doc = reach_read(f"{base}/api/campaigns?since=2026-10-10&until=2026-10-12", piero)
+    assert doc["today_included"] is False
     k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
     assert k["23850001"]["spend_cents"] == 1010 + 1011 + 1012
     assert k["23850001"]["link_clicks"] == 33 and k["23850001"]["results"] == 6
@@ -138,9 +151,34 @@ def test_custom_and_invalid_periods(team, fake_meta):
     # reach failing is never the list's problem
     fake_meta.token_invalid = True
     fake_meta.calls.clear()
-    status, doc, _ = call(f"{base}/api/campaigns?since=2026-09-01&until=2026-09-30", cookie=piero)
-    assert status == 200 and all(x["reach"] is None for c in doc["clients"] for x in c["campaigns"])
+    doc = reach_read(f"{base}/api/campaigns?since=2026-09-01&until=2026-09-30", piero)
+    assert all(x["reach"] is None for c in doc["clients"] for x in c["campaigns"])
     assert call(f"{base}/api/campaigns", cookie=None)[0] == 401
+
+
+def test_a_period_never_read_answers_at_once_and_the_reach_follows(team, fake_meta, meta):
+    """A Personalizado range Pauta has not read: the list answers from the stored numbers
+    while Meta is still thinking, with `reach_pending` on and no reach yet; asked again
+    after Meta answered, the reach is there and nothing is pending. Through 1.13.0 the page
+    waited for Meta (6 to 9 seconds with ten portfolios)."""
+    base, nato, piero, _ = synced(team, fake_meta)
+    url = f"{base}/api/campaigns?since=2026-10-10&until=2026-10-12"
+    fake_meta.hold()  # Meta doesn't answer until release()
+    status, doc, _ = call(url, cookie=piero)
+    k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
+    assert status == 200 and doc["reach_pending"] is True
+    assert k["23850001"]["spend_cents"] == 1010 + 1011 + 1012 and k["23850001"]["reach"] is None
+    assert fake_meta.held.wait(5)  # ...and Meta is being asked behind the page
+    assert call(url, cookie=piero)[1]["reach_pending"] is True  # asked again: still reading
+    before = fake_meta.calls.count("POST /")
+    fake_meta.release()
+    doc = reach_read(url, piero)
+    k = {x["meta_id"]: x for c in doc["clients"] for x in c["campaigns"]}
+    assert k["23850001"]["reach"] == 500 * 3
+    assert k["23850004"]["reach"] is None  # Meta had no row for it: a dash, and not pending
+    assert fake_meta.calls.count("POST /") == before  # one read, however often the page asked
+    # the default period was read by the sync: never pending
+    assert call(f"{base}/api/campaigns", cookie=piero)[1]["reach_pending"] is False
 
 
 def test_skip_and_follow_again(team, fake_meta):
