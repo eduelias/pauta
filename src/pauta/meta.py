@@ -91,6 +91,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
@@ -109,6 +110,7 @@ STALE_SECONDS = 24 * 3600  # ...and, while Meta is read again behind it, up to t
 FAIL_SECONDS = 60  # a failed read is not retried before this...
 THROTTLE_FAIL_SECONDS = 120  # ...or this, when Meta asked for a pause
 BATCH = 50  # the Graph batch API's maximum per request
+READERS = 8  # portfolios read at the same time (each with its own token)
 MAX_PENDING = 20
 INSIGHTS_FIELDS = "spend,impressions,reach,inline_link_clicks,cost_per_inline_link_click"
 BALANCE_FIELDS = "is_prepay_account,funding_source_details,spend_cap,amount_spent"
@@ -297,6 +299,28 @@ def _stamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _outcome(call: Callable[[], object]) -> object:
+    try:
+        return call()
+    except MetaError as e:
+        return e
+
+
+def together(calls: list[Callable[[], object]]) -> list:
+    """Every call's answer, in the calls' order, a MetaError in place of the answer of one
+    that raised it (anything else is raised here). Run at the same time, up to READERS of
+    them: each is one portfolio's read with its own token, and one after another the wait
+    grew with every portfolio connected (7 s with four, 15 to 17 s with ten). A single
+    call, or no thread to be had, runs here."""
+    if len(calls) > 1:
+        try:
+            with ThreadPoolExecutor(min(READERS, len(calls)), "meta-read") as pool:
+                return list(pool.map(_outcome, calls))
+        except RuntimeError:  # can't start new thread: one after another, as before
+            obs.event("meta_read_thread_failed", logging.ERROR)
+    return [_outcome(call) for call in calls]
+
+
 class Meta:
     def __init__(
         self,
@@ -331,6 +355,9 @@ class Meta:
         self._reach: dict[tuple, tuple[float, dict[str, int]]] = {}
         self._reach_reading = threading.Lock()  # one reach read behind a page at a time
         self._reach_failed = 0.0  # when a read behind a page last failed (not retried for a minute)
+        # (account, since, until) a read behind a page got no answer for, and when: its
+        # campaigns show a dash and Meta is not asked again for a minute
+        self._reach_missed: dict[tuple, float] = {}
         # account id -> business id, from the last read; the server seeds it from the DB
         self.business_of: dict[str, str] = {}
         # linked accounts the sync's last placing read could not put under a connection
@@ -812,6 +839,14 @@ class Meta:
         if err:
             raise MetaError(str(err), err.status, err.reason)
 
+    def warm(self) -> None:
+        """At the server's start: read the account list on a thread of its own, so the
+        first page after a restart finds it read or nearly (the list lives in memory, and
+        through 1.13.0 whoever opened Painel, Campanhas or Configurações first after a
+        release waited for the whole read)."""
+        if self.connected:
+            self._refresh_soon()
+
     def _refresh_soon(self) -> None:
         """Read Meta again on a thread of its own, unless a read is already under way or
         the last one failed a moment ago (the stale list stands until the minute is up)."""
@@ -860,24 +895,23 @@ class Meta:
         return out
 
     def _read(self) -> list[dict]:
-        """The union over connections. One connection Meta refuses is left out (a revoked
-        one is marked so, by _fail; Meta not answering for it is passing trouble, no state
-        change); a throttle, or every connection failing, fails the list."""
+        """The union over connections, all read at the same time (`together`). One
+        connection Meta refuses is left out (a revoked one is marked so, by _fail; Meta
+        not answering for it is passing trouble, no state change); a throttle, or every
+        connection failing, fails the list."""
         conns = self._readable()
         if not conns:
             raise MetaError(NOT_CONNECTED, 409)
-        out: list[dict] = []
-        errors: list[MetaError] = []
-        for conn in conns:
-            try:
-                out.extend(self._read_one(conn["business_id"], conn["business_name"]))
-            except MetaError as e:
-                if e.status == 503:
-                    raise  # Meta asked the app to pause: no point trying the others
-                errors.append(e)
+        answers = together(
+            [lambda c=c: self._read_one(c["business_id"], c["business_name"]) for c in conns]
+        )
+        errors = [a for a in answers if isinstance(a, MetaError)]
+        for e in errors:
+            if e.status == 503:
+                raise e  # Meta asked the app to pause: the list waits with it
         if len(errors) == len(conns):
             raise errors[0]
-        return out
+        return [acc for a in answers if not isinstance(a, MetaError) for acc in a]
 
     def _read_one(self, business_id: str, business_name: str) -> list[dict]:
         """One connection's list from Meta: /me/adaccounts (paged: a portfolio with more
@@ -1120,24 +1154,82 @@ class Meta:
         stale: bool = True,
     ) -> dict[str, int]:
         """The period's reach per campaign ({meta_id: people}) for (account_id, meta_id)
-        pairs: one batched read per account, with its portfolio's token, answered from
-        memory for an hour per (account, period). After the hour the last numbers answer
-        at once (up to a day old) while Meta is read again on a thread of its own, so the
-        page never waits for a read it already had once; `stale=False` (the hourly sync, a
-        refresh) waits for Meta. Reach doesn't add over days, so this is the only honest
-        period number. A campaign Meta says nothing about is left out (the caller shows
-        a dash)."""
+        pairs: one batched read per portfolio, with its token, answered from memory for an
+        hour per (account, period). After the hour the last numbers answer at once (up to
+        a day old) while Meta is read again on a thread of its own; `stale=False` (the
+        hourly sync, a refresh) waits for Meta. A period never read waits for Meta here:
+        a page asks `reach_served` instead. Reach doesn't add over days, so this is the
+        only honest period number. A campaign Meta says nothing about is left out (the
+        caller shows a dash)."""
         since = clamp_since(since, today)
         if since > until or not pairs:
             return {}
+        by_account = self._by_account(pairs)
+        out, kept, todo, behind = self._reach_known(by_account, since, until, stale)
+        if not todo:
+            if behind:
+                out.update(kept)
+                self._refresh_reach_soon(self._pairs_of(pairs, behind), since, until, today)
+            return out
+        # Meta is asked anyway: the old answers are read fresh in the same go
+        out.update(self._read_reach(todo + behind, by_account, since, until))
+        return out
+
+    def reach_served(
+        self,
+        pairs: list[tuple[str, str]],
+        since: date,
+        until: date,
+        today: date | None = None,
+    ) -> tuple[dict[str, int], bool]:
+        """`reach()` for a page, which never waits for Meta: what memory has (up to a day
+        old) at once, and whether the rest is being read on a thread behind it. While
+        that is true the page shows the campaigns without a number as "being read" and
+        asks again; false with campaigns still missing means Meta won't say now (a read
+        that failed, or one that had no answer for an account, is not repeated for a
+        minute), and the page shows its dash. Through 1.13.0 a period Pauta had never read
+        (every Personalizado range) made the page wait 6 to 9 seconds for this."""
+        since = clamp_since(since, today)
+        if since > until or not pairs:
+            return {}, False
+        by_account = self._by_account(pairs)
+        out, kept, todo, behind = self._reach_known(by_account, since, until, True)
+        out.update(kept)
+        now = time.time()
+        with self._lock:
+            unread = [
+                aid
+                for aid in todo
+                if now - self._reach_missed.get((aid, since, until), 0.0) >= FAIL_SECONDS
+            ]
+        ask = unread + behind
+        if not ask:
+            return out, False
+        reading = self._refresh_reach_soon(self._pairs_of(pairs, ask), since, until, today)
+        return out, bool(unread) and reading
+
+    @staticmethod
+    def _by_account(pairs: list[tuple[str, str]]) -> dict[str, list[str]]:
         by_account: dict[str, list[str]] = {}
         for account_id, meta_id in pairs:
             by_account.setdefault(_digits(account_id), []).append(str(meta_id))
+        return by_account
+
+    @staticmethod
+    def _pairs_of(pairs: list[tuple[str, str]], aids: list[str]) -> list[tuple[str, str]]:
+        return [(a, m) for a, m in pairs if _digits(a) in aids]
+
+    def _reach_known(
+        self, by_account: dict[str, list[str]], since: date, until: date, stale: bool
+    ) -> tuple[dict[str, int], dict[str, int], list[str], list[str]]:
+        """What memory says of a period: the answers under an hour old, the older ones
+        still worth showing (`stale`, up to a day), the accounts with nothing to answer
+        from, and the accounts those older answers belong to (to be read again behind)."""
         now = time.time()
         out: dict[str, int] = {}
+        kept: dict[str, int] = {}
         todo: list[str] = []
-        behind: list[str] = []  # answered from an old read: Meta is asked again behind
-        kept: dict[str, int] = {}  # ...those old answers
+        behind: list[str] = []
         with self._lock:
             for aid, ids in by_account.items():
                 hit = self._reach.get((aid, since, until))
@@ -1152,16 +1244,16 @@ class Meta:
                     behind.append(aid)
                 else:
                     todo.append(aid)
-        if not todo:
-            if behind:
-                out.update(kept)
-                self._refresh_reach_soon(
-                    [(a, m) for a, m in pairs if _digits(a) in behind], since, until, today
-                )
-            return out
-        todo += behind  # Meta is asked anyway: the old answers are read fresh in one go
+        return out, kept, todo, behind
+
+    def _read_reach(
+        self, aids: list[str], by_account: dict[str, list[str]], since: date, until: date
+    ) -> dict[str, int]:
+        """Meta, now, for these accounts: every portfolio's batch at the same time
+        (`together`), each answer into memory. A portfolio Meta refuses whole (a revoked
+        token, a throttle, no answer) is raised once the others are kept."""
         by_business: dict[str, list[str]] = {}
-        for aid in todo:
+        for aid in aids:
             try:
                 business_id = self._business_for(aid)
             except MetaError:
@@ -1172,52 +1264,80 @@ class Meta:
                 obs.event("meta_reach_unplaced", logging.WARNING)
                 continue
             by_business.setdefault(business_id, []).append(aid)
-        for business_id, aids in by_business.items():
-            reads = [
-                f"act_{aid}/insights?"
-                + urllib.parse.urlencode(
-                    {
-                        "level": "campaign",
-                        "time_range": _time_range(since, until),
-                        "fields": "campaign_id,reach",
-                        "filtering": _filter_ids(by_account[aid]),
-                        "limit": "500",
-                    }
-                )
-                for aid in aids
+        answers = together(
+            [
+                lambda b=b, mine=mine: self._read_reach_one(b, mine, by_account, since, until)
+                for b, mine in by_business.items()
             ]
-            answers: list = []
-            for i in range(0, len(reads), BATCH):
-                answers.extend(self._batch(reads[i : i + BATCH], business_id))
-            for aid, (status, doc) in zip(aids, answers, strict=True):
-                if status != 200:
-                    code = self._code(doc)
-                    if code == 190 or self._throttle(code):
-                        raise self._fail(status or 0, doc, "reach", business_id)
-                    obs.event("meta_reach_missing", logging.WARNING, status=status, code=code)
-                    continue
-                got: dict[str, int | None] = dict.fromkeys(by_account[aid], None)
-                for r in doc.get("data") or []:
-                    mid = _digits(r.get("campaign_id"))
-                    if mid in got:
-                        got[mid] = _int(r.get("reach"))
-                with self._lock:
-                    self._reach = {
-                        k: v for k, v in self._reach.items() if now - v[0] < REACH_STALE_SECONDS
-                    }
-                    self._reach[(aid, since, until)] = (now, got)
-                out.update({m: v for m, v in got.items() if v is not None})
+        )
+        out: dict[str, int] = {}
+        errors = [a for a in answers if isinstance(a, MetaError)]
+        for a in answers:
+            if not isinstance(a, MetaError):
+                out.update(a)
+        if errors:
+            raise next((e for e in errors if e.status == 503), errors[0])
+        return out
+
+    def _read_reach_one(
+        self,
+        business_id: str,
+        aids: list[str],
+        by_account: dict[str, list[str]],
+        since: date,
+        until: date,
+    ) -> dict[str, int]:
+        """One portfolio's accounts: a batched insights read per account, kept per
+        (account, period). An account Meta has no answer for is left out and not kept."""
+        reads = [
+            f"act_{aid}/insights?"
+            + urllib.parse.urlencode(
+                {
+                    "level": "campaign",
+                    "time_range": _time_range(since, until),
+                    "fields": "campaign_id,reach",
+                    "filtering": _filter_ids(by_account[aid]),
+                    "limit": "500",
+                }
+            )
+            for aid in aids
+        ]
+        answers: list = []
+        for i in range(0, len(reads), BATCH):
+            answers.extend(self._batch(reads[i : i + BATCH], business_id))
+        now = time.time()
+        out: dict[str, int] = {}
+        for aid, (status, doc) in zip(aids, answers, strict=True):
+            if status != 200:
+                code = self._code(doc)
+                if code == 190 or self._throttle(code):
+                    raise self._fail(status or 0, doc, "reach", business_id)
+                obs.event("meta_reach_missing", logging.WARNING, status=status, code=code)
+                continue
+            got: dict[str, int | None] = dict.fromkeys(by_account[aid], None)
+            for r in doc.get("data") or []:
+                mid = _digits(r.get("campaign_id"))
+                if mid in got:
+                    got[mid] = _int(r.get("reach"))
+            with self._lock:
+                self._reach = {
+                    k: v for k, v in self._reach.items() if now - v[0] < REACH_STALE_SECONDS
+                }
+                self._reach[(aid, since, until)] = (now, got)
+            out.update({m: v for m, v in got.items() if v is not None})
         return out
 
     def _refresh_reach_soon(
         self, pairs: list[tuple[str, str]], since: date, until: date, today: date | None
-    ) -> None:
-        """Read the period's reach again on a thread of its own, unless one is already
-        under way or the last one failed a moment ago (the old numbers stand meanwhile)."""
+    ) -> bool:
+        """Read the period's reach (`since` already clamped) on a thread of its own, unless
+        one is already under way or the last one failed a moment ago (what memory has
+        stands meanwhile). Whether a read is under way now: this one, or the one that
+        holds the lock (another period's; the page that asks again starts this one)."""
         if time.time() - self._reach_failed < FAIL_SECONDS:
-            return
+            return False
         if not self._reach_reading.acquire(blocking=False):
-            return
+            return True
 
         def work():
             try:
@@ -1225,13 +1345,30 @@ class Meta:
             except MetaError:
                 self._reach_failed = time.time()  # the next page after a minute tries again
             except Exception:
+                self._reach_failed = time.time()
                 obs.event("meta_reach_failed", logging.ERROR)
                 logging.getLogger("pauta").exception("reach read failed behind a page")
             finally:
+                self._note_missed(pairs, since, until)
                 self._reach_reading.release()
 
         try:
             threading.Thread(target=work, name="meta-reach", daemon=True).start()
-        except RuntimeError:  # no thread to be had: the old numbers stand, nothing waits
+        except RuntimeError:  # no thread to be had: what memory has stands, nothing waits
             self._reach_reading.release()
             obs.event("meta_read_thread_failed", logging.ERROR)
+            return False
+        return True
+
+    def _note_missed(self, pairs: list[tuple[str, str]], since: date, until: date) -> None:
+        """After a read behind a page: the accounts it still has no answer for (Meta
+        refused that one, or no portfolio reads it) are not asked again for a minute,
+        so a page that keeps asking doesn't keep Meta busy over a dash."""
+        missed = self._reach_known(self._by_account(pairs), since, until, False)[2]
+        now = time.time()
+        with self._lock:
+            self._reach_missed = {
+                k: at for k, at in self._reach_missed.items() if now - at < FAIL_SECONDS
+            }
+            for aid in missed:
+                self._reach_missed[(aid, since, until)] = now

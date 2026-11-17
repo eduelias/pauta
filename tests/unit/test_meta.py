@@ -292,6 +292,26 @@ def test_the_sync_waits_for_the_new_list(linked, fake_meta, monkeypatch):
     assert linked.accounts(stale=False)[0]["name"] == "Clínica Renomeada"
 
 
+def test_the_server_start_reads_the_list_before_any_page_asks(linked, fake_meta):
+    """`warm()`: a new process has no list in memory; the read starts at once on a thread
+    of its own, and a page arriving meanwhile waits for that same read, not a second one."""
+    linked._cache = None  # as after a restart
+    n = fake_meta.calls.count("GET /me/adaccounts")
+    fake_meta.hold()
+    started = time.time()
+    linked.warm()
+    assert fake_meta.held.wait(2) and linked._reading.locked()  # at Meta, nobody waiting
+    fake_meta.release()
+    _settles(linked, started)
+    assert fake_meta.calls.count("GET /me/adaccounts") == n + 1
+    assert [a["id"] for a in linked.accounts()] == ["111", "222"]
+    assert fake_meta.calls.count("GET /me/adaccounts") == n + 1
+    # nothing connected: nothing to read, no thread
+    linked.disconnect()
+    linked.warm()
+    assert not linked._reading.locked()
+
+
 def test_a_read_failing_behind_the_list_keeps_it(linked, fake_meta, monkeypatch):
     first = linked.accounts()
     now = meta_mod.time.time()

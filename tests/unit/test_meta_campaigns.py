@@ -5,6 +5,7 @@ campaign ids), the period's reach with its hour-long cache, the account's day, a
 error mapping."""
 
 import logging
+import threading
 import time
 from datetime import UTC, date, datetime, timedelta
 
@@ -364,3 +365,109 @@ def test_a_reach_read_failing_behind_the_page_keeps_the_numbers(linked, fake_met
     assert linked.reach(pairs, since, until, today=TODAY) == out
     _reach_settles(linked)
     assert fake_meta.calls.count("POST /") == n + 1
+
+
+def test_a_page_never_waits_for_a_period_not_read_yet(linked, fake_meta):
+    """`reach_served`: nothing in memory for the period answers {} and "being read" at
+    once; the read lands behind it and the next ask has the numbers, without Meta."""
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001"), ("111", "23850003"), ("222", "23850004")]
+    fake_meta.hold()
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, True)
+    assert fake_meta.held.wait(2) and linked._reach_reading.locked()
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, True)  # no second read
+    # another period asked meanwhile waits its turn: pending, started by a later ask
+    assert linked.reach_served(pairs, since, since, today=TODAY) == ({}, True)
+    fake_meta.release()
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == 1
+    want = {"23850001": 500 * 11, "23850004": 500 * 6}  # 23850003 is paused: Meta has no row
+    assert linked.reach_served(pairs, since, until, today=TODAY) == (want, False)
+    assert fake_meta.calls.count("POST /") == 1 and not linked._reach_reading.locked()
+    assert linked.reach_served([], since, until) == ({}, False)
+    assert linked.reach_served(pairs, until, since) == ({}, False)
+
+
+def test_a_page_gets_the_old_reach_and_no_pending_while_it_is_read_again(linked, fake_meta):
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001")]
+    out = linked.reach(pairs, since, until, today=TODAY)
+    for key in list(linked._reach):
+        linked._reach[key] = (linked._reach[key][0] - 3601, linked._reach[key][1])
+    assert linked.reach_served(pairs, since, until, today=TODAY) == (out, False)
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == 2  # read again behind the page
+
+
+def test_an_account_meta_has_no_answer_for_is_not_pending_for_a_minute(linked, fake_meta):
+    """Meta refuses one account (#100, an account it doesn't know): the others get their
+    reach, that one shows a dash, and a page that keeps asking doesn't keep Meta busy."""
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001"), ("333", "1")]
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, True)
+    _reach_settles(linked)
+    n = fake_meta.calls.count("POST /")
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({"23850001": 500 * 11}, False)
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == n
+    # after the minute it is asked again
+    for key in list(linked._reach_missed):
+        linked._reach_missed[key] -= meta_mod.FAIL_SECONDS + 1
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({"23850001": 500 * 11}, True)
+    _reach_settles(linked)
+    assert fake_meta.calls.count("POST /") == n + 1
+
+
+def test_a_failed_read_behind_the_page_is_not_pending(linked, fake_meta):
+    since, until = date(2026, 10, 10), TODAY
+    pairs = [("111", "23850001")]
+    fake_meta.down = True
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, True)
+    _reach_settles(linked)
+    n = fake_meta.calls.count("POST /")
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, False)  # a dash
+    assert fake_meta.calls.count("POST /") == n and not linked._reach_reading.locked()
+    fake_meta.down = False
+    linked._reach_failed -= meta_mod.FAIL_SECONDS + 1
+    for key in list(linked._reach_missed):
+        linked._reach_missed[key] -= meta_mod.FAIL_SECONDS + 1
+    assert linked.reach_served(pairs, since, until, today=TODAY) == ({}, True)
+    _reach_settles(linked)
+    assert linked.reach_served(pairs, since, until, today=TODAY)[0] == {"23850001": 500 * 11}
+
+
+def test_portfolios_are_read_at_the_same_time(linked, fake_meta):
+    """Two portfolios: both account lists, and both reach batches, are with Meta at once
+    (one after another the wait grew with every portfolio connected)."""
+    fake_meta.business = OTHER_BUSINESS
+    connect(linked, fake_meta, account=8)
+    linked.accounts(refresh=True)
+    seen = threading.Barrier(2, timeout=5)
+    real_one, real_reach = linked._read_one, linked._read_reach_one
+
+    def one(*args):
+        seen.wait()  # passes only when the other portfolio's read is here too
+        return real_one(*args)
+
+    def reach_one(*args):
+        seen.wait()
+        return real_reach(*args)
+
+    linked._read_one, linked._read_reach_one = one, reach_one
+    assert [a["id"] for a in linked.accounts(refresh=True)] == ["111", "222", "444"]
+    seen.reset()
+    pairs = [("111", "23850001"), ("444", "23850007")]
+    out = linked.reach(pairs, date(2026, 10, 10), TODAY, today=TODAY)
+    assert out["23850001"] == 500 * 11
+    assert {k[0] for k in linked._reach} == {"111", "444"}
+
+
+def test_together_keeps_the_order_and_hands_back_meta_errors():
+    def boom():
+        raise MetaError("no", 503)
+
+    out = meta_mod.together([lambda: 1, boom, lambda: 3])
+    assert out[0] == 1 and out[2] == 3 and isinstance(out[1], MetaError) and out[1].status == 503
+    assert meta_mod.together([]) == [] and meta_mod.together([lambda: "one"]) == ["one"]
+    with pytest.raises(ValueError):  # anything but a MetaError is the caller's to hear
+        meta_mod.together([lambda: 1, lambda: int("x")])

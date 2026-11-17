@@ -35,6 +35,7 @@ def cmd_serve(args) -> None:
     obs.setup_logging()
     obs.event("start", version=__version__, auth="passkeys" if auth.enabled else "open")
     if meta.enabled and os.environ.get("PAUTA_META_SYNC") != "off":
+        meta.warm()  # the account list, read now: the first page doesn't wait for it
         sync.Scheduler(store, meta).start()
         obs.event("meta_sync_scheduled")
     try:

@@ -214,6 +214,8 @@ def test_serve_starts_the_sync_scheduler_when_meta_is_on(state, monkeypatch, cap
 
     monkeypatch.setattr(cli, "ThreadingHTTPServer", FakeServer)
     monkeypatch.setattr(sync, "Scheduler", FakeScheduler)
+    # the account list is read at the start too (Meta.warm), before the first page asks
+    monkeypatch.setattr(cli.Meta, "warm", lambda self: started.append("warm"))
     monkeypatch.setenv("PAUTA_META_APP_ID", APP_ID)
     monkeypatch.setenv("PAUTA_META_CONFIG_ID", CONFIG_ID)
     state.mkdir(parents=True, exist_ok=True)
@@ -223,6 +225,6 @@ def test_serve_starts_the_sync_scheduler_when_meta_is_on(state, monkeypatch, cap
     assert started == []
     monkeypatch.delenv("PAUTA_META_SYNC")
     cli.main(["serve"])
-    assert started[1:] == ["started"] and started[0].enabled
+    assert started[0] == "warm" and started[2:] == ["started"] and started[1].enabled
     handler = obs.setup_logging()
     obs.log.removeHandler(handler)

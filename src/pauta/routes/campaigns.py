@@ -73,6 +73,16 @@ def install(route, store, auth, drive, meta):
         except MetaError:
             return {}
 
+    def _reach_served(self, pairs: list[tuple[str, str]], since: str, until: str):
+        """`_reach` for the list, which never waits for Meta: what is known now, and
+        whether the rest is being read behind the page (it asks again while so)."""
+        if not pairs or not meta.connected:
+            return {}, False
+        try:
+            return meta.reach_served(pairs, date.fromisoformat(since), date.fromisoformat(until))
+        except MetaError:
+            return {}, False
+
     def _live_accounts(self) -> dict[str, dict]:
         """Meta's latest account list by id (the cached read, as the client cards use);
         {} when Meta isn't connected or won't say: a balance is never the list's
@@ -90,7 +100,9 @@ def install(route, store, auth, drive, meta):
         with its campaigns and the period's sums, Ads Manager's Resultados (`results`,
         `result_indicator`, `cost_per_result_cents`), the lead cost (`cpl_cents`: spend
         ÷ link clicks) and the campaign's budget; `reach` comes from Meta for the period
-        as a whole (null when Meta won't say: never the list's problem). A client whose
+        as a whole (null when Meta won't say: never the list's problem, and never a wait:
+        a period Pauta hasn't read yet answers without it, with `reach_pending` on while
+        Meta is read behind, and the page asks again). A client whose
         linked accounts hold no tracked campaign (a portfolio just connected, say) is
         listed with `campaigns: []`, so it doesn't look like the connection failed.
         `accounts` is the client's linked ad accounts with the balance from Meta's
@@ -121,7 +133,7 @@ def install(route, store, auth, drive, meta):
             for k in c["campaigns"]
             if k["meta_id"] and k["account_id"]
         ]
-        reach = _reach(self, pairs, since, until)
+        reach, reach_pending = _reach_served(self, pairs, since, until)
         live = _live_accounts(self)
         portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
         seen = store.seen_on(today)
@@ -150,6 +162,7 @@ def install(route, store, auth, drive, meta):
             "last_sync": meta.last_sync,
             "sync_error": meta.sync_error,
             "syncing": sync.running(),
+            "reach_pending": reach_pending,
             # the daily check: how many of the clients with something to check someone
             # has been through today
             "seen": {

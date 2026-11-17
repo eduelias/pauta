@@ -225,6 +225,43 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(member.locator("[data-seen]").first).to_be_visible()  # the daily check is everyone's
 
 
+def test_a_period_never_read_shows_at_once_and_the_reach_arrives(synced, fake_meta):
+    """A Personalizado range Pauta has not read from Meta: the list is there while Meta is
+    still thinking, the reach cells say "…", and each number lands in its cell when Meta
+    answers, without the page being drawn again (through 1.13.0 the whole page waited, 6 to
+    9 seconds with ten portfolios). The usage log keeps the range's shape, not its dates."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    fake_meta.hold()  # Meta answers nothing until release()
+    page.goto(f"{base}/#/campanhas?since=2026-10-10&until=2026-10-12")
+    limpeza = page.locator(".krow[data-id]", has_text="Limpeza de pele novembro")
+    expect(limpeza.locator(".km-spend b")).to_contain_text(brl(1010 + 1011 + 1012))
+    expect(limpeza.locator(".km-reach .reading")).to_have_text("…")
+    assert fake_meta.held.wait(5)  # the read is with Meta, behind the page
+    page.evaluate("document.querySelector('#cblocks').dataset.drawn = 'once'")
+    fake_meta.release()
+    expect(limpeza.locator(".km-reach b")).to_have_text("1.500", timeout=10_000)
+    expect(page.locator(".km-reach .reading")).to_have_count(0)
+    # Panetone starts after this range: Meta has no row for it, the usual dash
+    panetone = page.locator(".krow[data-id]", has_text="Panetone")
+    expect(panetone.locator(".km-reach b span")).to_have_attribute("title", "a Meta não respondeu")
+    expect(page.locator("#cblocks")).to_have_attribute("data-drawn", "once")  # filled in place
+    # a reload answers from memory: no "…" at any point
+    page.reload()
+    expect(limpeza.locator(".km-reach b")).to_have_text("1.500")
+    page.goto("about:blank")  # pagehide: the usage batch leaves as a beacon
+    want = {"p": "custom", "days": 3, "ago": (today() - date(2026, 10, 12)).days}
+    for _ in range(100):
+        with store.db() as db:
+            rows = [
+                json.loads(r[0]) for r in db.execute("SELECT props FROM usage WHERE event='period'")
+            ]
+        if rows:
+            break
+        time.sleep(0.05)
+    assert rows and all(r == want for r in rows), rows
+
+
 def test_skip_follow_again_and_sync_now(synced):
     base, store, laptop, clinic, bakery = synced
     page = laptop.page

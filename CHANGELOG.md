@@ -9,6 +9,20 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ### Changed
 
+- **Campanhas com período Personalizado abre na hora.** Um período que o Pauta ainda não
+  tinha lido na Meta (qualquer intervalo de datas escolhido à mão) fazia a página inteira
+  esperar o alcance: de 6 a 9 segundos. Agora a lista aparece logo com os números
+  guardados, a coluna Alcance mostra "…" enquanto a Meta responde, e cada número entra no
+  lugar quando chega, sem a página piscar. Se a Meta não responder, fica o traço de sempre.
+- **A primeira página depois de uma atualização do Pauta não espera mais a Meta.** A lista
+  de contas de anúncio era lida um portfólio depois do outro (uns 7 segundos com quatro
+  portfólios, de 15 a 17 com dez) e quem abrisse Painel, Campanhas ou Configurações
+  primeiro esperava tudo isso. Agora os portfólios são lidos ao mesmo tempo, e a leitura
+  começa quando o Pauta inicia, antes de alguém pedir. O alcance por período também é
+  lido em todos os portfólios de uma vez.
+- **O registro de uso guarda o formato do período Personalizado**: quantos dias e há
+  quantos dias termina, nunca as datas. Serve para saber qual período rápido falta no
+  seletor.
 - **Em acceptance, a versão ao lado do nome ficou curta.** Um build de branch tem uma versão
   comprida (`1.13.1.dev41+g41acf5dab1f0`) que não cabia ao lado de "Pauta" e saía do lugar.
   Agora aparece só o começo do commit (`41acf5d`); a versão inteira continua no texto que

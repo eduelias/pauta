@@ -255,7 +255,7 @@ def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, mo
 
 def test_meta_down_for_one_portfolio_is_not_a_state(meta_on, fake_meta, monkeypatch):
     """Meta not answering for one connection leaves it out this time, without marking it:
-    the next read tries again. A throttle stops at once: Meta asked the whole app to wait."""
+    the next read tries again. A throttle fails the list: Meta asked the whole app to wait."""
     connect_two(meta_on, fake_meta)
     real = meta_on._read_one
 
@@ -272,8 +272,8 @@ def test_meta_down_for_one_portfolio_is_not_a_state(meta_on, fake_meta, monkeypa
     fake_meta.throttle = True
     with pytest.raises(MetaError) as e:
         meta_on.accounts(refresh=True)
-    # the first connection's list was read, its batch throttled, the second never asked
-    assert str(e.value) == THROTTLED and fake_meta.calls.count("GET /me/adaccounts") == 4
+    # both portfolios are read at the same time: each list was read, each batch throttled
+    assert str(e.value) == THROTTLED and fake_meta.calls.count("GET /me/adaccounts") == 5
 
 
 def test_a_second_portfolio_keeps_the_first(meta_on, fake_meta):
