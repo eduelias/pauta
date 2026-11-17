@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-11-17
+
 ### Changed
 
 - **Campanhas com período Personalizado abre na hora.** Um período que o Pauta ainda não
@@ -708,7 +710,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/eduelias/pauta/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/eduelias/pauta/compare/v1.12.1...v1.13.0
 [1.12.1]: https://github.com/eduelias/pauta/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/eduelias/pauta/compare/v1.11.1...v1.12.0
