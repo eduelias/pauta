@@ -117,6 +117,7 @@ OPEN_VIEWER = {
     "name": "Você",
     "email": "",
     "whatsapp": "",
+    "start": "",
     "avatar": "",
     "is_admin": True,
 }
@@ -234,6 +235,7 @@ class Auth:
             "name": acc["name"] if acc else None,
             "email": acc["email"] if acc else "",
             "whatsapp": acc["whatsapp"] if acc else "",
+            "start": acc["start"] if acc else "",
             "avatar": gravatar(acc["email"]) if acc else "",
             "is_admin": bool(acc and acc["is_admin"]),
         }
@@ -648,6 +650,14 @@ class Auth:
             db.execute(
                 "UPDATE account SET whatsapp=? WHERE id=?",
                 (ACCOUNT_FIELDS["whatsapp"](number, db), account_id),
+            )
+
+    def set_start(self, account_id: int, screen) -> None:
+        """The screen the app opens on for this person (one of `STARTS`, '' for the Painel)."""
+        with self.store.db() as db:
+            db.execute(
+                "UPDATE account SET start=? WHERE id=?",
+                (ACCOUNT_FIELDS["start"](screen, db), account_id),
             )
 
 

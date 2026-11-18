@@ -5,7 +5,7 @@
 // ---------- router ------------------------------------------------------------------------
 
 const ROUTES = [
-  [/^\/?$/, viewDash],
+  [/^\/?(?:painel)?$/, viewDash],
   [/^\/quadro$/, viewBoard],
   [/^\/pedidos$/, viewList],
   [/^\/pedido\/(\d+)$/, viewRequest],
@@ -97,8 +97,11 @@ async function enter() {
   if (!USAGE.opened) {  // once per page load, when the version is known
     USAGE.opened = true;
     const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    track("app_open", { version: BOOT.version || "", theme });
+    track("app_open", { version: BOOT.version || "", theme, ...(startScreen() && { start: startScreen() }) });
   }
+  // opened without an address of its own: the screen the person chose on Perfil, in place
+  // of the Painel (replaceState: Back doesn't return to an address that would come here again)
+  if (hashParts().path === "/" && startScreen()) history.replaceState(null, "", `#/${startScreen()}`);
   renderShell();
   await route();
 }

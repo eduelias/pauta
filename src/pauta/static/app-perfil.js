@@ -20,6 +20,13 @@ function passkeyRow(k, alone) {
       <button class="btn ghost small danger" data-remove="${esc(k.id)}" data-label="${esc(k.label || "Passkey")}" ${alone ? 'disabled title="Adicione outra passkey antes de tirar esta"' : ""}>${icon("trash")}Remover</button></div></div>`;
 }
 
+// "Tela inicial": the Painel and the screens this person can see, plus the one they had
+// chosen if it went out of sight (Meta switched off), so saving their name doesn't drop it
+function startOptions() {
+  const shown = Object.entries(STARTS).filter(([k]) => startVisible(k) || k === ME.start);
+  return [["", "Painel"], ...shown].map(([k, label]) => `<option value="${k}"${k === (ME.start || "") ? " selected" : ""}>${label}</option>`).join("");
+}
+
 async function viewProfile() {
   const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
   app.innerHTML = `<div style="max-width:760px">
@@ -33,6 +40,8 @@ async function viewProfile() {
           <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
         <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
           <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
+        <div class="field wide"><label for="mystart">Tela inicial</label><select class="input" id="mystart">${startOptions()}</select>
+          <span class="muted small">A tela que abre quando você entra na Pauta, neste e nos outros aparelhos. Um link para um pedido continua abrindo o pedido, e o Painel segue no menu.</span></div>
       </div>
       <div class="mt"><button class="btn" id="saveme">${icon("check")}Salvar</button></div>` : ""}
     </section>
@@ -51,7 +60,7 @@ async function viewProfile() {
   </div>`;
   $("#saveme")?.addEventListener("click", async () => {
     try {
-      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value };
+      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value, start: $("#mystart").value };
       ME = { ...ME, ...(await api("PATCH", "/api/me", body)) };
       track("settings_changed", { section: "perfil" });
       BOOT = await api("GET", "/api/boot");

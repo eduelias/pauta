@@ -34,6 +34,24 @@ def test_patch_me_takes_name_email_and_whatsapp(team):
     assert call(f"{base}/api/me", {}, nato, "PATCH")[1]["name"] == "Nato"  # nothing to change
 
 
+def test_patch_me_takes_the_start_screen(team):
+    base, nato, piero, _ = team
+    assert call(f"{base}/api/me", cookie=piero)[1]["start"] == ""  # the Painel
+    status, me, _ = call(f"{base}/api/me", {"start": "quadro"}, piero, "PATCH")
+    assert (status, me["start"]) == (200, "quadro")
+    # it is the person's: on their boot data wherever they sign in, nobody else's changes
+    assert call(f"{base}/api/boot", cookie=piero)[1]["me"]["start"] == "quadro"
+    assert call(f"{base}/api/boot", cookie=nato)[1]["me"]["start"] == ""
+    # Campanhas may be chosen with Meta off: the page falls back to the Painel when it opens
+    assert call(f"{base}/api/me", {"start": "campanhas"}, nato, "PATCH")[1]["start"] == "campanhas"
+    for bad in ("perfil", "pedido/1", "#/quadro", 3):
+        status, err, _ = call(f"{base}/api/me", {"start": bad}, piero, "PATCH")
+        assert status == 400 and err["error"].startswith("valor inválido"), bad
+    # another field saved on its own leaves it alone; blank goes back to the Painel
+    assert call(f"{base}/api/me", {"name": "Piero S"}, piero, "PATCH")[1]["start"] == "quadro"
+    assert call(f"{base}/api/me", {"start": ""}, piero, "PATCH")[1]["start"] == ""
+
+
 def test_the_number_is_the_persons_only_not_even_an_admins(team):
     base, nato, piero, _ = team
     call(f"{base}/api/me", {"whatsapp": "31600000000"}, piero, "PATCH")

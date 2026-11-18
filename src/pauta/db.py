@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,
     disabled INTEGER NOT NULL DEFAULT 0, session_gen INTEGER NOT NULL DEFAULT 0,
-    created TEXT NOT NULL DEFAULT (datetime('now')), whatsapp TEXT NOT NULL DEFAULT ''
+    created TEXT NOT NULL DEFAULT (datetime('now')), whatsapp TEXT NOT NULL DEFAULT '',
+    start TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS passkey (
     id TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
@@ -411,9 +412,14 @@ def _account(v, db):
     return aid
 
 
+# the screens a person may pick to open the app on (Perfil, "Tela inicial"); '' is the
+# Painel. Whether they can see the one they picked (Campanhas with Meta off, Financeiro
+# hidden) is the page's to check when it opens: it falls back to the Painel.
+STARTS = ("quadro", "pedidos", "clientes", "campanhas", "financeiro")
+
 # what a person may change about their own account on Perfil; the name and e-mail have
 # their own rules in auth.py (uniqueness in the team)
-ACCOUNT_FIELDS = {"whatsapp": _text(40)}
+ACCOUNT_FIELDS = {"whatsapp": _text(40), "start": _choice(STARTS, blank=True)}
 
 CLIENT_FIELDS = {
     "name": _text(80),
@@ -631,6 +637,9 @@ class Store:
             # it (GET /api/me), never /api/members, the boot data or the export
             if "whatsapp" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''")
+            # v15: the screen the app opens on for this person (Perfil); '' is the Painel
+            if "start" not in cols:
+                db.execute("ALTER TABLE account ADD COLUMN start TEXT NOT NULL DEFAULT ''")
             # v7: the domain a passkey belongs to (decision 4's move); '' until it's next used
             cols = {r[1] for r in db.execute("PRAGMA table_info(passkey)")}
             if "rp_id" not in cols:

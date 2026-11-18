@@ -160,3 +160,91 @@ def test_a_link_for_my_new_phone(live, device):
     page.goto(f"{base}/#/configuracoes")
     expect(page.locator("#mechip")).to_contain_text("Piero")
     expect(page.locator(".member", has_text="Piero Sales")).to_be_visible()
+
+
+def fresh(page, url):
+    """Open `url` as a new page load (from the same page, a new hash is only a hashchange)."""
+    page.goto("about:blank")
+    page.goto(url)
+
+
+def test_the_app_opens_on_the_screen_the_person_chose(live, device):
+    base, auth, store = live
+    laptop = join(device, base, auth, "Piero Sales", admin=True)
+    page = laptop.page
+    painel, quadro = page.locator(".hello h1"), page.get_by_role("heading", name="Quadro")
+
+    # as always: the Painel, and Perfil says so; Campanhas isn't offered with Meta off
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#mystart")).to_have_value("")
+    offered = page.locator("#mystart option").all_inner_texts()
+    assert offered[:4] == ["Painel", "Quadro", "Pedidos", "Clientes"]
+    assert "Campanhas" not in offered
+    page.select_option("#mystart", "quadro")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    expect(page.locator("#mystart")).to_have_value("quadro")
+    with store.db() as conn:
+        assert conn.execute("SELECT start FROM account WHERE id=1").fetchone()[0] == "quadro"
+
+    # opened by the bare address (the icon, the typed domain): the Quadro, marked in the menu
+    for bare in (base, f"{base}/", f"{base}/#/"):
+        fresh(page, bare)
+        expect(quadro).to_be_visible()
+        assert page.url == f"{base}/#/quadro"
+    expect(page.locator('#nav [data-nav="#/quadro"]')).to_have_class(re.compile(r"\bon\b"))
+
+    # the Painel stays one click away, from the menu and from the logo, and a reload of it
+    # is still the Painel
+    page.locator("#nav a", has_text="Painel").click()
+    expect(painel).to_be_visible()
+    assert page.url == f"{base}/#/painel"
+    expect(page.locator("#nav a", has_text="Painel")).to_have_class(re.compile(r"\bon\b"))
+    page.reload()
+    expect(painel).to_be_visible()
+    page.goto(f"{base}/#/pedidos")
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    page.locator(".side .brand").click()
+    expect(painel).to_be_visible()
+    # "Cancelar" on a new request goes to "#/", inside the app: the Painel, not the Quadro
+    page.goto(f"{base}/#/novo")
+    page.get_by_role("link", name="Cancelar").click()
+    expect(painel).to_be_visible()
+
+    # an address of its own still opens what it names
+    fresh(page, f"{base}/#/clientes")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+
+    # it is the person's, not the device's: the phone opens on the Quadro too
+    value = auth.make_cookie(1, secure=False).split(";")[0].split("=", 1)[1]
+    phone = device(viewport={"width": 390, "height": 844}, is_mobile=True)
+    phone.context.add_cookies([{"name": "pauta_session", "value": value, "url": base}])
+    phone.page.goto(base)
+    expect(phone.page.get_by_role("heading", name="Quadro")).to_be_visible()
+    expect(phone.page.locator("#tabbar a", has_text="Painel")).to_have_attribute("href", "#/painel")
+
+    # out and in again with the passkey lands there as well
+    page.goto(f"{base}/#/perfil")
+    page.click("#logout")
+    expect(page.locator("#login")).to_be_visible()
+    page.click("#login")
+    expect(quadro).to_be_visible()
+
+
+def test_a_start_screen_out_of_sight_falls_back_to_the_painel(live, device):
+    base, auth, store = live
+    page = join(device, base, auth, "Renato Lima", admin=True).page
+    auth.set_start(1, "campanhas")  # chosen while Meta was on; it is off here
+    fresh(page, base)
+    expect(page.locator(".hello h1")).to_be_visible()
+    assert page.url in (base, f"{base}/")
+    expect(page.locator("#nav a", has_text="Painel")).to_have_attribute("href", "#/")
+    # Perfil keeps showing the choice, so saving something else doesn't drop it
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#mystart")).to_have_value("campanhas")
+    page.fill("#mywa", "31600000000")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    with store.db() as conn:
+        row = conn.execute("SELECT start, whatsapp FROM account WHERE id=1").fetchone()
+    assert tuple(row) == ("campanhas", "31600000000")
