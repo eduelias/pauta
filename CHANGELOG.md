@@ -7,6 +7,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Perfil: escolha a tela em que a Pauta abre.** Em Perfil há agora o campo "Tela inicial":
+  Painel (como sempre foi), Quadro, Pedidos, Clientes e, para quem os vê, Campanhas e
+  Financeiro. A escolha é da pessoa e vale em todos os aparelhos em que ela entra. Ela só
+  decide onde a Pauta abre sem um endereço próprio (o ícone no celular, o endereço
+  digitado): um link para um pedido continua abrindo o pedido. O Painel segue no menu e no
+  logo, e se a tela escolhida sair de vista (a Meta desligada, o Financeiro escondido) a
+  Pauta abre no Painel. O registro de uso passa a guardar a tela escolhida junto da
+  abertura do app, para medir quem usa.
+
 ## [1.13.1] - 2026-11-17
 
 ### Changed

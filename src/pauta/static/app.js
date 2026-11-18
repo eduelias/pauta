@@ -321,6 +321,17 @@ const finVisible = () => Boolean(BOOT?.finance?.visible);
 const CAMP_NAV = ["#/campanhas", "chart", "Campanhas"];
 const metaVisible = () => Boolean(BOOT?.meta?.enabled);
 
+// The screen the person chose to open the Pauta on (Perfil, "Tela inicial"); none is the
+// Painel. One they can't see any more (Campanhas with Meta off, Financeiro hidden) counts
+// as none. It only decides where the app opens without an address of its own (the icon,
+// the bare domain): a link to a request still opens the request.
+const STARTS = { quadro: "Quadro", pedidos: "Pedidos", clientes: "Clientes", campanhas: "Campanhas", financeiro: "Financeiro" };
+const startVisible = (s) => (s === "campanhas" ? metaVisible() : s === "financeiro" ? finVisible() : s in STARTS);
+const startScreen = () => (ME.start && startVisible(ME.start) ? ME.start : "");
+// The Painel's own address. "#/" would be the chosen screen again on the next reload, so
+// with one chosen the menu and the logo go to "#/painel", which always is the Painel.
+const homeHash = () => (startScreen() ? "#/painel" : "#/");
+
 // A release shows as "v1.13.0". A branch build on acceptance is "1.13.1.dev41+g41acf5dab1f0"
 // (deploy-branch.yml), too long for the badge: it shows the start of the commit instead, and
 // the whole version stays in the tooltip and at the foot of Equipe.
@@ -333,12 +344,13 @@ function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
+  const home = [homeHash(), "dash", "Painel"];
   const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
-    : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : [e]));
+    : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : e[0] === "#/" ? [home] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
   $("#tabbar").innerHTML = [
-    ["#/", "dash", "Painel"], ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
+    home, ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
     metaVisible() ? CAMP_NAV : finVisible() ? FIN_NAV : ["#/quadro", "board", "Quadro"], ["#/clientes", "clients", "Clientes"],
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
   $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
@@ -347,6 +359,7 @@ function renderShell() {
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
+    b.setAttribute("href", home[0]);
     b.querySelector(".ver")?.remove();
     if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">${esc(shortVersion(BOOT.version))}</span>`);
   });
@@ -356,7 +369,7 @@ function renderShell() {
 function markNav() {
   const h = location.hash || "#/";
   const base = "#/" + (h.slice(2).split(/[/?]/)[0] || "");
-  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/campanha": "#/campanhas", "#/": "#/" };
+  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/campanha": "#/campanhas", "#/": homeHash(), "#/painel": homeHash() };
   const want = map[base] || base;
   $$("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === want));
 }

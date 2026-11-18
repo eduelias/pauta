@@ -466,6 +466,8 @@ def make_handler(
                 auth.set_email(viewer["account"], body["email"])
             if "whatsapp" in body:
                 auth.set_whatsapp(viewer["account"], body["whatsapp"])
+            if "start" in body:
+                auth.set_start(viewer["account"], body["start"])
             return self._me(auth.viewer(self.headers.get("Cookie")))
 
     # the rest of /api, by area; same table, same order as before the split
