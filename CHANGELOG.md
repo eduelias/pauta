@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-11-19
+
 ### Added
 
 - **Aviso de versão nova em abas abertas.** Uma aba que fica aberta por dias continuava
@@ -739,7 +741,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.14.1...HEAD
+[1.14.1]: https://github.com/eduelias/pauta/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/eduelias/pauta/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/eduelias/pauta/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/eduelias/pauta/compare/v1.12.1...v1.13.0
