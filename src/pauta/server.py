@@ -23,9 +23,9 @@ import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from . import __version__, obs, sync
+from . import __version__, assets, obs, sync
 from .auth import Auth, AuthError
 from .db import (
     Invalid,
@@ -48,7 +48,7 @@ from .routes import (
     usage,
 )
 
-STATIC = Path(__file__).parent / "static"
+STATIC = assets.STATIC
 MAX_BODY = 256 * 1024
 # a connection that sends nothing for this long is dropped, and only so many are served at
 # once: slow or stalled clients can't pile up threads on the Pi
@@ -243,8 +243,11 @@ def make_handler(
 
         def _json(self, status: int, doc, cookie: str | None = None):
             body = json.dumps(doc, ensure_ascii=False).encode()
-            # the version on every answer: a tab open since before a release sees it changed
+            # on every answer, for a tab open since before a release: the version (it offers
+            # a reload when that changed) and the reload mark (it reloads when that changed)
             extra = {"Cache-Control": "no-store", "X-Pauta-Version": __version__}
+            if mark := store.reload_mark():
+                extra["X-Pauta-Reload"] = mark
             if cookie:
                 extra["Set-Cookie"] = cookie
             self.send_response(status)
@@ -284,7 +287,7 @@ def make_handler(
         def _page(self, status: int, body: bytes | Path):
             """An HTML page of our own (the public report, its 404), never cached."""
             if isinstance(body, Path):
-                body = body.read_bytes()
+                body = assets.page(body.name).encode()
             self.send_response(status)
             self._headers("text/html; charset=utf-8", len(body), {"Cache-Control": "no-store"})
             self._write(body)
@@ -313,14 +316,16 @@ def make_handler(
                 self._write(ROBOTS)
                 return
             rel = path.lstrip("/")
-            target = (STATIC / rel).resolve() if rel else None
-            if not target or not target.is_file() or STATIC.resolve() not in target.parents:
-                target = STATIC / "index.html"  # the app routes with #/...
-            body = target.read_bytes()
-            ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            body = assets.content(rel) if rel and rel != "index.html" else None
+            if body is None:  # the app routes with #/...: anything else is the shell
+                rel, cache = "index.html", "no-cache"
+                body = assets.page(rel).encode()
+            else:  # a year for the address a page gave it (?v=<tag>), five minutes bare
+                asked = parse_qs(urlparse(self.path).query).get("v", [None])[0]
+                cache = assets.cache_for(rel, asked)
+            ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
             if ctype.startswith("text/") or ctype.endswith(("javascript", "json", "svg+xml")):
                 ctype += "; charset=utf-8"
-            cache = "no-cache" if target.name == "index.html" else "public, max-age=300"
             self.send_response(200)
             self._headers(ctype, len(body), {"Cache-Control": cache})
             self._write(body)

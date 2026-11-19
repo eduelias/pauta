@@ -3,6 +3,7 @@ valid card, the public data and page open without one and carry only the card, u
 expired and revoked tokens are a plain 404 page, Revogar, and the rate limits."""
 
 import http.client
+import re
 from urllib.parse import urlparse
 
 import pytest
@@ -181,8 +182,12 @@ def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_m
     )
     assert '<meta name="robots" content="noindex, nofollow">' in page
     assert "{{" not in page
-    for script in ("/app.js", "/app-campanhas.js", "/app-report.js"):
-        assert f'<script src="{script}"></script>' in page
+    # one script: the card's three files as a bundle, at an address that caches for good
+    (script,) = re.findall(r'<script src="([^"]+)"></script>', page)
+    assert script.startswith("/report.bundle.js?v=")
+    status, headers, js = raw(base, "GET", script)
+    assert status == 200 and headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert b"// ---- app-report.js" in js and b"// ---- app-team.js" not in js
     assert "98888" not in page and "23850001" not in page
     # a campaign name with markup in it is text in the page
     with store.db() as db:

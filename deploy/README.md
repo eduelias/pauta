@@ -239,6 +239,11 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
   invite --admin` prints a link (7 days, one person). The first account is always an admin.
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
+- Make every open tab reload itself (a fix people must get now): on du7,
+  `PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta reload`. Each tab
+  reloads at its next change of screen, never under a form being filled, and the running
+  server needs no restart. After an ordinary release tabs only show "A Pauta foi
+  atualizada" and wait for the person. Tabs loaded before 1.15.0 know neither.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
   an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
   or `pauta move-link <name>` on du7). Disabling ends every session

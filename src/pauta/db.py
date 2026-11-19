@@ -28,6 +28,13 @@ from . import finance, obs
 
 SCHEMA_VERSION = 15
 
+# Raise this in a release whose server no longer works with the page an earlier release
+# loaded: every open tab then reloads itself instead of only offering to. It is half of the
+# reload mark (Store.reload_mark); `pauta reload` changes the other half, any day.
+RELOAD_EPOCH = 1
+# how long the server trusts its copy of the mark before reading the file again
+RELOAD_RECHECK_SECONDS = 2.0
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS account (
@@ -623,6 +630,7 @@ def gravatar(email: str | None) -> str:
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self._reload: tuple[float, str] = (0.0, "")  # (good until, the mark)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript(SCHEMA)
@@ -1615,6 +1623,35 @@ class Store:
             ).fetchall()
         got = {r["key"]: r["value"] for r in rows}
         return {"last_sync": got.get("sync_at") or None, "sync_error": got.get("sync_error") or ""}
+
+    # ---- the reload mark --------------------------------------------------------------------
+
+    def reload_mark(self) -> str:
+        """What every answer carries as X-Pauta-Reload and the page keeps from its boot data:
+        when the two differ, the page reloads itself at the next change of screen. It is
+        RELOAD_EPOCH (a release that needs it) and a counter in the file (`pauta reload`, run
+        by another process: the server reads it again every couple of seconds)."""
+        until, mark = self._reload
+        if time.monotonic() < until:
+            return mark
+        try:
+            with self.db() as db:
+                row = db.execute("SELECT value FROM meta WHERE key='reload'").fetchone()
+        except sqlite3.Error:  # an answer (the health check's 503 too) never fails on this
+            return mark
+        mark = f"{RELOAD_EPOCH}.{row['value'] if row else 0}"
+        self._reload = (time.monotonic() + RELOAD_RECHECK_SECONDS, mark)
+        return mark
+
+    def force_reload(self) -> str:
+        """Change the mark: every open tab reloads at its next change of screen."""
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO meta(key, value) VALUES ('reload', '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
+            )
+        self._reload = (0.0, "")
+        return self.reload_mark()
 
     def set_sync_state(self, at: str, error: str) -> None:
         with self.db() as db:

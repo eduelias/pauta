@@ -37,12 +37,22 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   an `install(route, store, auth, drive, meta)` registering plain functions on the same route
   table; what they share is in `routes/__init__.py`. Everything but login/join needs a session
   (client data is private). Writes from a foreign `Origin` are refused; cookie is SameSite=Strict.
-- `src/pauta/static/`: one vanilla-JS app in plain scripts sharing one global scope, loaded in
-  order by `index.html`: `app.js` (helpers, shell), then one file per screen area
+- `src/pauta/assets.py`: how the pages name static files, with no build step. The scripts a
+  page lists between `<!-- bundle NAME -->` and `<!-- /bundle -->` are served as one file
+  (`/app.bundle.js`, `/report.bundle.js`), and every local `src`/`href` (and `url(/...)` in
+  the stylesheet) gets `?v=<start of the file's SHA-256>`: that address is cached for a year,
+  a bare one for five minutes, the shell never. A new script goes in the page's bundle block.
+- Open tabs and releases: every JSON answer carries `X-Pauta-Version` and `X-Pauta-Reload`.
+  Another version shows the "A Pauta foi atualizada" bar (the person reloads); another
+  reload mark makes the tab reload itself at its next change of screen. The mark changes
+  with `pauta reload` on the server, or by raising `RELOAD_EPOCH` in `db.py` in a release
+  whose server no longer works with an older page.
+- `src/pauta/static/`: one vanilla-JS app in plain scripts sharing one global scope, in the
+  order `index.html` lists them: `app.js` (helpers, shell), then one file per screen area
   (`app-requests.js`, `app-clients.js`, `app-financeiro.js`, `app-campanhas.js`, `app-team.js`,
   `app-perfil.js`), then `app-router.js` (hash routes `#/...`, start-up; last, since it names
   every view). `style.css` (light
-  and dark), vendored `qrcode.js` (MIT). CSP is `'self'` only (no CDNs, no external fonts);
+  and dark), vendored `qrcode.js` (MIT, fetched only when an invite is made). CSP is `'self'` only (no CDNs, no external fonts);
   the one exception is `img-src https://gravatar.com` for people's avatars. Accounts may
   set an email, which is only used for that: teammates get the SHA-256 hash, never the
   address. `d=blank` means no Gravatar shows the initials underneath. `#/perfil` is the

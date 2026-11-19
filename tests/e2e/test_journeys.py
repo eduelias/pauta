@@ -92,6 +92,12 @@ def test_admin_invites_a_member_who_cannot_delete(live, device):
     link = admin.locator(".invlink").inner_text()
     assert link.startswith(f"{base}/#/entrar/")
     expect(admin.locator("#qrbox .qr svg")).to_be_visible()
+    # the QR code library came for this, once: it is not part of every page load
+    assert admin.locator('script[src*="qrcode.js?v="]').count() == 1
+    admin.click("#invite")
+    expect(admin.locator(".invlink")).not_to_have_text(link)
+    assert admin.locator('script[src*="qrcode.js"]').count() == 1
+    link = admin.locator(".invlink").inner_text()
 
     phone = device(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
     phone.page.goto(link)

@@ -322,11 +322,24 @@ function metaBalance(a) {
   return b.funding ? esc(b.funding) : "—";
 }
 
+// The QR code library is only for an invite: fetched the first time one is made.
+let qrLoading;
+function loadQr() {
+  qrLoading ||= new Promise((done, failed) => {
+    const s = document.createElement("script");
+    s.src = BOOT.qrcode;
+    s.onload = done;
+    s.onerror = () => { qrLoading = null; failed(new Error("o QR code não carregou; tente de novo")); };
+    document.head.append(s);
+  });
+  return qrLoading;
+}
+
 async function makeInvite() {
   const box = $("#qrbox");
   const admin = $("#asadmin").checked;
   try {
-    const inv = await api("POST", "/api/invite", { admin });
+    const [inv] = await Promise.all([api("POST", "/api/invite", { admin }), loadQr()]);
     const url = location.origin + inv.path;
     const qr = qrcode(0, "M");
     qr.addData(url);
