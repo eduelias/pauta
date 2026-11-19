@@ -194,8 +194,7 @@ def test_the_app_opens_on_the_screen_the_person_chose(live, device):
         assert page.url == f"{base}/#/quadro"
     expect(page.locator('#nav [data-nav="#/quadro"]')).to_have_class(re.compile(r"\bon\b"))
 
-    # the Painel stays one click away, from the menu and from the logo, and a reload of it
-    # is still the Painel
+    # the Painel stays one click away in the menu, and a reload of it is still the Painel
     page.locator("#nav a", has_text="Painel").click()
     expect(painel).to_be_visible()
     assert page.url == f"{base}/#/painel"
@@ -204,8 +203,10 @@ def test_the_app_opens_on_the_screen_the_person_chose(live, device):
     expect(painel).to_be_visible()
     page.goto(f"{base}/#/pedidos")
     expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    # the logo is home, and home is now the Quadro: no stop at the Painel on the way back
     page.locator(".side .brand").click()
-    expect(painel).to_be_visible()
+    expect(quadro).to_be_visible()
+    assert page.url == f"{base}/#/quadro"
     # "Cancelar" on a new request goes to "#/", inside the app: the Painel, not the Quadro
     page.goto(f"{base}/#/novo")
     page.get_by_role("link", name="Cancelar").click()
@@ -222,6 +223,11 @@ def test_the_app_opens_on_the_screen_the_person_chose(live, device):
     phone.page.goto(base)
     expect(phone.page.get_by_role("heading", name="Quadro")).to_be_visible()
     expect(phone.page.locator("#tabbar a", has_text="Painel")).to_have_attribute("href", "#/painel")
+    # the tab bar has no Quadro when Campanhas or Financeiro takes its slot: the logo leads back
+    phone.page.locator("#tabbar a", has_text="Pedidos").click()
+    expect(phone.page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    phone.page.locator(".topbar .brand").click()
+    expect(phone.page.get_by_role("heading", name="Quadro")).to_be_visible()
 
     # out and in again with the passkey lands there as well
     page.goto(f"{base}/#/perfil")
@@ -229,6 +235,36 @@ def test_the_app_opens_on_the_screen_the_person_chose(live, device):
     expect(page.locator("#login")).to_be_visible()
     page.click("#login")
     expect(quadro).to_be_visible()
+
+
+def test_an_open_tab_offers_a_reload_after_a_release(live, device, monkeypatch):
+    base, auth, _ = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    bar = page.locator("#updatebar")
+    page.goto(f"{base}/#/quadro")
+    expect(page.get_by_role("heading", name="Quadro")).to_be_visible()
+    expect(bar).to_have_count(0)
+    shown = page.locator(".brand .ver").first.inner_text()
+
+    # a release goes out while the tab stays open: the next thing the person does shows the
+    # bar, and it stays from screen to screen (one bar, not one per answer)
+    for module in ("pauta.server", "pauta.routes.account"):  # the answers' header, the boot data
+        monkeypatch.setattr(f"{module}.__version__", "99.0.0")
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(bar).to_contain_text("A Pauta foi atualizada")
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(bar).to_have_count(1)
+    assert page.locator(".brand .ver").first.inner_text() == shown  # still the old page
+
+    # the reload is the person's to press: the same screen, on the new version, no bar
+    bar.get_by_role("button", name="Recarregar").click()
+    expect(page.locator(".brand .ver").first).to_have_text("v99.0.0")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(bar).to_have_count(0)
 
 
 def test_a_start_screen_out_of_sight_falls_back_to_the_painel(live, device):

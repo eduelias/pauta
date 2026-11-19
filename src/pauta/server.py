@@ -243,7 +243,8 @@ def make_handler(
 
         def _json(self, status: int, doc, cookie: str | None = None):
             body = json.dumps(doc, ensure_ascii=False).encode()
-            extra = {"Cache-Control": "no-store"}
+            # the version on every answer: a tab open since before a release sees it changed
+            extra = {"Cache-Control": "no-store", "X-Pauta-Version": __version__}
             if cookie:
                 extra["Set-Cookie"] = cookie
             self.send_response(status)

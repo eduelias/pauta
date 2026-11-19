@@ -21,6 +21,22 @@ def test_anonymous_sees_nothing(site):
         assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
 
 
+def test_every_answer_names_the_version(team):
+    """An open tab compares it with the version it loaded, to offer a reload after a release."""
+    from pauta import __version__
+
+    base, nato, _, _ = team
+    anonymous, ok, refused = (
+        call(f"{base}/api/me"),
+        call(f"{base}/api/boot", cookie=nato),
+        call(f"{base}/api/requests"),
+    )
+    assert (anonymous[0], ok[0], refused[0]) == (200, 200, 401)
+    for _, _, headers in (anonymous, ok, refused):
+        assert headers["X-Pauta-Version"] == __version__
+    assert ok[1]["version"] == __version__  # what the page keeps to compare with
+
+
 def test_invites_are_single_use_and_admin_only(team, site):
     base, nato, piero, _ = team
     _, auth, _ = site

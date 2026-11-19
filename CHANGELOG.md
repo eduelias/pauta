@@ -7,6 +7,22 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Aviso de versão nova em abas abertas.** Uma aba que fica aberta por dias continuava
+  rodando a versão em que foi carregada, sem saber que saiu outra. Agora, depois de um
+  lançamento, a aba mostra no alto da tela "A Pauta foi atualizada" com o botão
+  "Recarregar". A Pauta não recarrega sozinha, para não perder um formulário pela metade.
+  Vale para abas carregadas desta versão em diante: uma aba já aberta numa versão
+  anterior precisa ser recarregada uma vez à mão.
+
+### Changed
+
+- **O logo leva para a tela inicial de quem escolheu uma.** Com uma "Tela inicial"
+  escolhida em Perfil, o logo (na lateral e no alto do celular) abre essa tela em vez do
+  Painel, que continua no menu. Sem escolha, nada muda. No celular isso também dá um
+  caminho de volta ao Quadro quando ele não está na barra de baixo.
+
 ## [1.14.0] - 2026-11-18
 
 ### Added

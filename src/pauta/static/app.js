@@ -43,6 +43,7 @@ async function api(method, path, body) {
   catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
   const doc = await res.json().catch(() => ({}));
   trackApi(method, path, res.status, performance.now() - t0);
+  noteVersion(res.headers.get("X-Pauta-Version"));
   if (res.status === 401 && ME?.auth && !path.startsWith("/api/passkey")) {
     ME.logged_in = false;
     showGate();
@@ -55,6 +56,24 @@ async function api(method, path, body) {
     throw err;
   }
   return doc;
+}
+
+// A tab stays open for days and keeps running the code it loaded. Every API answer names
+// the server's version: one that isn't this page's means a release went out since, and a
+// bar on every screen offers the reload (never by itself: a form may be half filled).
+let STALE = false;
+function noteVersion(served) {
+  if (STALE || !served || !BOOT?.version || served === BOOT.version) return;
+  STALE = true;
+  addUpdateBar();
+}
+
+function addUpdateBar() {
+  if (!STALE || $("#updatebar") || $("#shell").hidden) return;
+  app.insertAdjacentHTML("afterbegin", `<div class="movebar" id="updatebar" role="status">
+    <div><b>A Pauta foi atualizada</b><span>Recarregue a página para usar a versão nova.</span></div>
+    <button class="btn primary" id="reloadme">Recarregar</button></div>`);
+  $("#reloadme").addEventListener("click", () => location.reload());
 }
 
 let toastTimer;
@@ -329,8 +348,10 @@ const STARTS = { quadro: "Quadro", pedidos: "Pedidos", clientes: "Clientes", cam
 const startVisible = (s) => (s === "campanhas" ? metaVisible() : s === "financeiro" ? finVisible() : s in STARTS);
 const startScreen = () => (ME.start && startVisible(ME.start) ? ME.start : "");
 // The Painel's own address. "#/" would be the chosen screen again on the next reload, so
-// with one chosen the menu and the logo go to "#/painel", which always is the Painel.
+// with one chosen the menu's Painel goes to "#/painel", which always is the Painel.
 const homeHash = () => (startScreen() ? "#/painel" : "#/");
+// The logo is "home": the chosen screen, for whoever chose one (the Painel stays in the menu).
+const logoHash = () => (startScreen() ? `#/${startScreen()}` : "#/");
 
 // A release shows as "v1.13.0". A branch build on acceptance is "1.13.1.dev41+g41acf5dab1f0"
 // (deploy-branch.yml), too long for the badge: it shows the start of the commit instead, and
@@ -359,7 +380,7 @@ function renderShell() {
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
-    b.setAttribute("href", home[0]);
+    b.setAttribute("href", logoHash());
     b.querySelector(".ver")?.remove();
     if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">${esc(shortVersion(BOOT.version))}</span>`);
   });
