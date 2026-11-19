@@ -71,6 +71,7 @@ async function route() {
         await view(query, ...m.slice(1));
         app.firstElementChild?.classList.add("fadein");
         addMoveBar();
+        addUpdateBar();
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
         document.body.classList.remove("report");  // an error screen keeps its navigation
