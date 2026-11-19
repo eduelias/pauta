@@ -267,6 +267,70 @@ def test_an_open_tab_offers_a_reload_after_a_release(live, device, monkeypatch):
     expect(bar).to_have_count(0)
 
 
+def mark_load(page):
+    """Mark this page load: the mark is on <html>, so it is gone once the page reloads."""
+    page.evaluate("document.documentElement.dataset.sameLoad = '1'")
+
+
+def test_the_server_can_make_an_open_tab_reload(live, device):
+    """`pauta reload` (or a release that raises RELOAD_EPOCH): the tab reloads by itself, but
+    at a change of screen, never under a form that is being filled."""
+    base, auth, store = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#myname")).to_have_value("Piero Sales")
+    mark_load(page)
+
+    # the mark changes while the person is on a form: saving it talks to the server, and the
+    # page stays (what they typed in the other field too)
+    store.force_reload()
+    page.fill("#mywa", "+55 11 90000-0000")
+    page.fill("#myemail", "piero@example.com")
+    page.fill("#myname", "Piero S")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+
+    # the next change of screen is the reload: straight to the screen they asked for
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    assert page.url == f"{base}/#/clientes"
+    expect(page.locator("#updatebar")).to_have_count(0)
+    expect(page.locator("#mechip")).to_contain_text("Piero S")  # the save went through
+
+    # on a fresh page the mark is the one it loaded with: no reload for nothing
+    mark_load(page)
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+
+    # a second order within the minute doesn't spin the page: the bar asks instead
+    store.force_reload()
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("#updatebar")).to_contain_text("A Pauta foi atualizada")
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+    page.locator("#updatebar").get_by_role("button", name="Recarregar").click()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("#updatebar")).to_have_count(0)
+
+
+def test_a_reload_order_met_while_a_screen_loads_reloads_right_there(live, device):
+    base, auth, store = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    page.goto(f"{base}/#/quadro")
+    expect(page.get_by_role("heading", name="Quadro")).to_be_visible()
+    mark_load(page)
+    store.force_reload()  # the tab sat idle meanwhile: it learns of it from the screen's own data
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    assert page.url.startswith(f"{base}/#/pedidos")
+    expect(page.locator("#updatebar")).to_have_count(0)
+
+
 def test_a_start_screen_out_of_sight_falls_back_to_the_painel(live, device):
     base, auth, store = live
     page = join(device, base, auth, "Renato Lima", admin=True).page

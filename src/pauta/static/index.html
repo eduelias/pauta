@@ -49,7 +49,8 @@
   <div id="gate" class="gate" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
   <div id="modal" class="modal" hidden></div>
-  <script src="/vendor/qrcode.js"></script>
+  <!-- served as one file, /app.bundle.js (pauta/assets.py); the order here is the order in it -->
+  <!-- bundle app.bundle.js -->
   <script src="/app.js"></script>
   <script src="/app-requests.js"></script>
   <script src="/app-clients.js"></script>
@@ -58,5 +59,6 @@
   <script src="/app-team.js"></script>
   <script src="/app-perfil.js"></script>
   <script src="/app-router.js"></script>
+  <!-- /bundle -->
 </body>
 </html>

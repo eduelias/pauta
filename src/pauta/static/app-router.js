@@ -43,6 +43,8 @@ function enterScreen(name) {
 
 async function route() {
   const { path, query } = hashParts();
+  // the server asked for a reload while this tab was on a form or a board: now is the time
+  if (MUST_RELOAD && BOOT && reloadNow()) return;
   if (path === "/equipe" || path.startsWith("/equipe/")) {
     // the tab's name up to 1.6: bookmarks, Meta's way back and old links land on the new one
     const q = query.toString();

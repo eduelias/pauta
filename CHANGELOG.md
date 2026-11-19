@@ -7,6 +7,27 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **O servidor pode mandar as abas abertas recarregarem.** Depois de um lançamento comum a
+  aba só avisa ("A Pauta foi atualizada") e espera a pessoa. Agora dá para obrigar: o
+  comando `pauta reload`, no servidor, faz cada aba aberta recarregar sozinha na próxima
+  troca de tela, e um lançamento que não funciona mais com a página antiga faz o mesmo
+  sem comando (`RELOAD_EPOCH`). A aba nunca recarrega no meio de um formulário: espera a
+  pessoa mudar de tela, e ela cai na tela que pediu. Se o servidor pedir de novo em menos
+  de um minuto, a aba mostra o aviso em vez de recarregar outra vez. Vale para abas
+  carregadas desta versão em diante.
+
+### Changed
+
+- **Páginas mais leves para carregar** (medidas com as regras do YSlow). Os scripts do
+  app agora chegam como um arquivo só, em vez de nove. Os arquivos do app (script,
+  estilos, ícones) ganharam um endereço que muda quando o conteúdo muda e ficam guardados
+  no navegador por um ano, em vez de cinco minutos: depois da primeira visita, abrir a
+  Pauta só busca a página e os dados, e um lançamento novo aparece na hora, sem esperar o
+  cache vencer. A biblioteca do QR code (56 KB) só é buscada quando alguém cria um
+  convite. A página do relatório do cliente recebeu o mesmo tratamento.
+
 ## [1.14.1] - 2026-11-19
 
 ### Added

@@ -43,7 +43,7 @@ async function api(method, path, body) {
   catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
   const doc = await res.json().catch(() => ({}));
   trackApi(method, path, res.status, performance.now() - t0);
-  noteVersion(res.headers.get("X-Pauta-Version"));
+  noteServer(res.headers, nav !== null);
   if (res.status === 401 && ME?.auth && !path.startsWith("/api/passkey")) {
     ME.logged_in = false;
     showGate();
@@ -59,13 +59,36 @@ async function api(method, path, body) {
 }
 
 // A tab stays open for days and keeps running the code it loaded. Every API answer names
-// the server's version: one that isn't this page's means a release went out since, and a
-// bar on every screen offers the reload (never by itself: a form may be half filled).
+// the server's version and its reload mark, and the page compares them with its boot data:
+// - another version: a release went out since. A bar on every screen offers the reload,
+//   and the page waits for the person (a form may be half filled).
+// - another mark: the server wants this page gone (`pauta reload`, or a release that no
+//   longer works with it). It reloads by itself, but only where nothing is lost: as a
+//   screen loads (the address is already the new screen's), so at the next change of
+//   screen at the latest. Until then the same bar shows.
 let STALE = false;
-function noteVersion(served) {
-  if (STALE || !served || !BOOT?.version || served === BOOT.version) return;
+let MUST_RELOAD = false;
+function noteServer(headers, loadingScreen) {
+  if (!BOOT) return;
+  const mark = headers.get("X-Pauta-Reload");
+  const version = headers.get("X-Pauta-Version");
+  if (mark && BOOT.reload && mark !== BOOT.reload) MUST_RELOAD = true;
+  if (!MUST_RELOAD && (!version || !BOOT.version || version === BOOT.version)) return;
   STALE = true;
+  if (MUST_RELOAD && loadingScreen && reloadNow()) throw new Stale("reload");
   addUpdateBar();
+}
+
+// The reload the server asked for. Once a minute at most per tab, so a mark that never
+// settles can't spin the page: past that the bar stays and the person decides.
+function reloadNow() {
+  try {
+    const last = Number(sessionStorage.getItem("pauta_reloaded")) || 0;
+    if (Date.now() - last < 60_000) return false;
+    sessionStorage.setItem("pauta_reloaded", String(Date.now()));
+  } catch { /* no storage (private mode): the reload still happens */ }
+  location.reload();  // "pagehide" sends what the usage log still holds
+  return true;
 }
 
 function addUpdateBar() {

@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import re
 import sqlite3
 from urllib.parse import urlparse
 
@@ -42,8 +43,10 @@ def test_health_reports_a_broken_database(site, monkeypatch):
         raise sqlite3.OperationalError("disk I/O error")
 
     monkeypatch.setattr(store, "db", broken)
-    status, doc, _ = call(f"{base}/healthz")
+    monkeypatch.setattr(store, "_reload", (0.0, ""))  # the reload mark is due a read as well
+    status, doc, headers = call(f"{base}/healthz")
     assert status == 503 and doc["status"] == "error"
+    assert "X-Pauta-Reload" not in headers  # no mark to give, and the answer still goes out
 
 
 def test_security_headers_everywhere(site):
@@ -68,6 +71,32 @@ def test_static_files(site):
     assert body == b"User-agent: *\nDisallow: /\n"
     status, headers, body = raw(base, "HEAD", "/app.js")
     assert status == 200 and body == b"" and int(headers["Content-Length"]) > 1000
+
+
+def test_what_the_shell_names_is_cached_for_good(site):
+    base, _, _ = site
+    status, headers, shell = raw(base, "GET", "/")
+    assert status == 200 and headers["Cache-Control"] == "no-cache"
+    refs = re.findall(r'(?:src|href)="(/[^"]+)"', shell.decode())
+    assert len(refs) == 6 and all("?v=" in r for r in refs)
+    for ref in refs:
+        status, headers, body = raw(base, "GET", ref)
+        assert status == 200 and len(body) > 100, ref
+        assert headers["Cache-Control"] == "public, max-age=31536000, immutable", ref
+    # the app's scripts are one file, served as JavaScript
+    (script,) = (r for r in refs if r.startswith("/app.bundle.js"))
+    status, headers, body = raw(base, "GET", script)
+    assert headers["Content-Type"] == "text/javascript; charset=utf-8"
+    assert b"// ---- app.js" in body and b"// ---- app-router.js" in body
+    # the picture the stylesheet names carries its tag too
+    css = raw(base, "GET", next(r for r in refs if "style.css" in r))[2].decode()
+    icon = re.search(r"url\((/icon\.svg\?v=[0-9a-f]+)\)", css)[1]
+    assert raw(base, "GET", icon)[1]["Cache-Control"].endswith("immutable")
+    # an address from an older page is served, but not pinned: its tag is not today's file
+    status, headers, _ = raw(base, "GET", "/app.bundle.js?v=000000000000")
+    assert status == 200 and headers["Cache-Control"] == "no-cache"
+    # the QR code library is no longer part of every load; the boot data says where it is
+    assert b"qrcode.js" not in shell
 
 
 @pytest.mark.parametrize(

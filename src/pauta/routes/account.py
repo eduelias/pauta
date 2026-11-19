@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from .. import __version__
+from .. import __version__, assets
 from ..auth import MOVE_LINK_DAYS
 from ..db import EXPORT_TABLES
 from . import CRED, ID, Reply, finance_visible
@@ -155,6 +155,9 @@ def install(route, store, auth, drive, meta):
             "members": members,
             "avatars": avatars,
             "version": __version__,
+            "reload": store.reload_mark(),
+            # the QR code library, fetched only when an invite is made
+            "qrcode": assets.url("vendor/qrcode.js"),
             "files": {
                 "enabled": drive.enabled,
                 "connected": drive.connected,

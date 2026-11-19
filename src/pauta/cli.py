@@ -314,6 +314,15 @@ def cmd_usage(args) -> None:
     print(usage.render(usage.summary(store, days=args.days)))
 
 
+def cmd_reload(args) -> None:
+    """Make every open tab reload itself: at its next change of screen, never in the middle
+    of a form. The running server notices within a couple of seconds. Tabs loaded before
+    1.15 don't know the mark; they see the "A Pauta foi atualizada" bar after a release."""
+    store = Store(db_path())
+    mark = store.force_reload()
+    print(f"reload mark {mark} in {store.path}: open tabs reload at their next screen")
+
+
 def cmd_meta(args) -> None:
     """sync: one pass of the campaign sync over every connected portfolio (the hourly one by
     default, --days for more); status: the connections, the linked accounts, the last sync."""
@@ -402,6 +411,8 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--enable", action="store_true", help="switch the usage log on")
     g.add_argument("--disable", action="store_true", help="switch the usage log off")
     s.set_defaults(fn=cmd_usage)
+    s = sub.add_parser("reload", help="make every open tab reload itself")
+    s.set_defaults(fn=cmd_reload)
     s = sub.add_parser("meta", help="the Meta connection and the campaign sync")
     s.add_argument("action", choices=["sync", "status"])
     s.add_argument("--days", type=int, default=sync.HOURLY_DAYS, help="days back to sync")

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from pauta import __version__, cli, obs
+from pauta import __version__, cli, db, obs
 from pauta.auth import Auth
 from pauta.db import Store
 
@@ -52,6 +52,22 @@ def test_users(state, capsys):
     cli.main(["users"])
     line = capsys.readouterr().out
     assert "Renato" in line and "passkeys=0" in line and "admin" in line
+
+
+def test_reload_changes_the_mark_a_running_server_reads(state, capsys, monkeypatch):
+    server = Store(state / "pauta.db")  # the running server's own Store
+    assert server.reload_mark() == f"{db.RELOAD_EPOCH}.0"
+    cli.main(["reload"])  # another process: it only writes the file
+    assert f"reload mark {db.RELOAD_EPOCH}.1" in capsys.readouterr().out
+    assert server.reload_mark() == f"{db.RELOAD_EPOCH}.0"  # its copy, for a couple of seconds
+    monkeypatch.setattr(db, "RELOAD_RECHECK_SECONDS", 0.0)
+    server._reload = (0.0, "")
+    assert server.reload_mark() == f"{db.RELOAD_EPOCH}.1"
+    cli.main(["reload"])
+    assert server.reload_mark() == f"{db.RELOAD_EPOCH}.2"
+    # a release that needs every tab gone raises the epoch: a new mark with no command run
+    monkeypatch.setattr(db, "RELOAD_EPOCH", db.RELOAD_EPOCH + 1)
+    assert server.reload_mark() == f"{db.RELOAD_EPOCH}.2"
 
 
 def test_backup_writes_copies_and_prunes(state, tmp_path, capsys):

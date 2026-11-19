@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from .. import (
+    assets,
     obs,
     overview,
     server,  # for the settings the tests patch there
@@ -450,7 +451,7 @@ def install(route, store, auth, drive, meta):
             "{{url}}": f"{origin}/r/{token}",
             "{{origin}}": origin,
         }
-        page = (server.STATIC / "report.html").read_text(encoding="utf-8")
+        page = assets.page("report.html")
         for mark, value in fill.items():
             page = page.replace(mark, html.escape(value, quote=True))
         return self._page(200, page.encode())
