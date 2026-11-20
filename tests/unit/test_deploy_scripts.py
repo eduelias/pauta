@@ -173,56 +173,12 @@ def test_guard_refuses_other_branch_deploys(env, why):
 
 @pytest.fixture
 def release(tmp_path):
+    """What a release run built, and the sha256 of each file as that run hands them over."""
     wheel = tmp_path / "pauta-1.2.3-py3-none-any.whl"
     lock = tmp_path / "requirements.lock"
-    wheel.write_bytes(b"the published wheel")
+    wheel.write_bytes(b"the wheel this run built")
     lock.write_text("webauthn==2.7.0 --hash=sha256:abc\n")
-    sums = tmp_path / "SHA256SUMS"
-    sums.write_text(
-        "".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}\n" for f in (wheel, lock))
-        + f"{'0' * 64}  pauta-1.2.3.tar.gz\n"
-    )
-    return wheel, lock, sums
-
-
-def verify(sums, wheel, lock):
-    # fetch_sums is the only network call: swap it for the file
-    script = (
-        f'source "{DEPLOY / "pauta-deploy"}"; fetch_sums() {{ cat "$SUMS"; }}; '
-        f'verify_release 1.2.3 "$WHEEL" "$LOCK"'
-    )
-    env = {"SUMS": str(sums), "WHEEL": str(wheel), "LOCK": str(lock), "PATH": os.environ["PATH"]}
-    return subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
-
-
-def test_published_files_pass(release):
-    r = verify(release[2], release[0], release[1])
-    assert r.returncode == 0, r.stderr
-    assert "match the published v1.2.3" in r.stderr
-
-
-def test_a_swapped_wheel_is_refused(release):
-    wheel, lock, sums = release
-    wheel.write_bytes(b"something a job built itself")
-    r = verify(sums, wheel, lock)
-    assert r.returncode == 1
-    assert "pauta-1.2.3-py3-none-any.whl is not the published one" in r.stderr
-
-
-def test_a_swapped_lockfile_is_refused(release):
-    wheel, lock, sums = release
-    lock.write_text("evil==1.0\n")
-    r = verify(sums, wheel, lock)
-    assert r.returncode == 1 and "requirements.lock is not the published one" in r.stderr
-
-
-def test_missing_entry_or_release_is_refused(release, tmp_path):
-    wheel, lock, sums = release
-    sums.write_text(sums.read_text().splitlines()[1] + "\n")  # the lockfile's line only
-    r = verify(sums, wheel, lock)
-    assert r.returncode == 1 and "lists no pauta-1.2.3-py3-none-any.whl" in r.stderr
-    r = verify(tmp_path / "missing", wheel, lock)
-    assert r.returncode == 1 and "can't fetch SHA256SUMS of v1.2.3" in r.stderr
+    return wheel, lock, *(hashlib.sha256(f.read_bytes()).hexdigest() for f in (wheel, lock))
 
 
 def test_sourcing_does_not_deploy():
@@ -264,30 +220,65 @@ def test_python_runs_isolated_and_from_the_root_directory(tmp_path):
     assert r.stdout.splitlines()[-1] == "/"
 
 
+def install(root, wheel, lock, wheel_sha, lock_sha):
+    # main, as deploy.yml calls it, up to the install: the rest are stand-ins
+    script = (
+        "backup_db() { :; }; activate() { :; }; prune() { :; }; "
+        'install_release() { echo "installed $1"; }; '
+        f"main 1.2.3 {wheel} {lock} {wheel_sha} {lock_sha}"
+    )
+    return deploy(root, script)
+
+
+def test_this_runs_files_pass(release, tmp_path):
+    r = install(tmp_path / "opt", *release)
+    assert r.returncode == 0, r.stderr
+    assert "are the ones this release run built" in r.stderr
+    assert r.stdout == "installed 1.2.3\n"
+
+
+def test_a_swapped_wheel_is_refused(release, tmp_path):
+    wheel, lock, wheel_sha, lock_sha = release
+    wheel.write_bytes(b"something a job built itself")
+    r = install(tmp_path / "opt", wheel, lock, wheel_sha, lock_sha)
+    assert r.returncode == 1
+    assert "pauta-1.2.3-py3-none-any.whl is not the one this release run built" in r.stderr
+    assert f"expected {wheel_sha}" in r.stderr
+    assert "installed" not in r.stdout  # it dies before anything is installed
+
+
+def test_a_swapped_lockfile_is_refused(release, tmp_path):
+    wheel, lock, wheel_sha, lock_sha = release
+    r = install(tmp_path / "opt", wheel, lock, wheel_sha, "0" * 64)  # another build's hash
+    assert r.returncode == 1
+    assert "requirements.lock is not the one this release run built" in r.stderr
+    assert "installed" not in r.stdout
+
+
 def test_the_wheel_and_lockfile_are_read_once(release, tmp_path):
-    wheel, lock, sums = release
+    wheel, lock, wheel_sha, lock_sha = release
     root = tmp_path / "opt"
     # an install_release stand-in: the caller's file changes after the check, and it shows
     # what it was handed. The files are named as deploy.yml names them, from its directory
     # under sudo each file is read as the caller: runuser is a stand-in that says so
     script = (
-        'fetch_sums() { cat "$SUMS"; }; backup_db() { :; }; activate() { :; }; prune() { :; }; '
+        "backup_db() { :; }; activate() { :; }; prune() { :; }; "
         'runuser() { echo "as $2" >&2; shift 3; "$@"; }; '
         f'install_release() {{ echo changed > "{wheel}"; ls -ld "${{2%/*}}" | cut -c1-10; '
         'echo "$2 $3"; cat "$2"; }; '
-        f"main 1.2.3 {wheel.name} {lock.name}"
+        f"main 1.2.3 {wheel.name} {lock.name} {wheel_sha} {lock_sha}"
     )
-    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums), SUDO_USER="someone")
+    r = deploy(root, script, cwd=tmp_path, SUDO_USER="someone")
     assert r.returncode == 0, r.stderr
     assert r.stderr.count("as someone") == 2  # the wheel and the lockfile
     mode, paths, content = r.stdout.splitlines()
     assert mode == "drwx------"  # root only
     assert all(path.startswith(f"{root}/.incoming.") for path in paths.split())
-    assert content == "the published wheel"
+    assert content == "the wheel this run built"
     assert not list(root.glob(".incoming.*"))  # gone when the deploy ends
     # and when it is refused (the caller's wheel is the changed one now)
-    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
-    assert r.returncode == 1 and "is not the published one" in r.stderr
+    r = deploy(root, script, cwd=tmp_path)
+    assert r.returncode == 1 and "is not the one this release run built" in r.stderr
     assert not list(root.glob(".incoming.*"))
 
 
@@ -346,15 +337,66 @@ def test_rollback_goes_to_the_release_before(opt):
     assert "live 1.2.2 (was 1.2.3)" in (opt / "deploy.log").read_text()
 
 
+@linux
+def test_activate_switches_to_an_installed_release(opt):
+    backup = 'backup_db() { echo "backup before $1" >> "$ROOT/calls"; }; '
+    r = switch(opt, backup + "main --activate 1.2.3", "1.2.2 1.2.3")
+    assert r.returncode == 0, r.stderr
+    assert (opt / "current").resolve().name == "1.2.3"
+    assert (opt / "previous").resolve().name == "1.2.2"
+    assert (opt / "calls").read_text() == "backup before 1.2.3\nsystemctl restart pauta\n"
+    # one that doesn't come up healthy: back to the release before, like a deploy
+    r = switch(opt, "main --activate 1.2.2", "1.2.3")
+    assert r.returncode == 1
+    assert (opt / "current").resolve().name == "1.2.3"
+
+
+def test_activate_refuses_a_release_that_is_not_installed(opt):
+    (opt / "releases" / "1.2.4").mkdir()  # an install that never finished
+    for version in ("1.2.4", "1.2.5"):
+        r = switch(opt, f"main --activate {version}", "1.2.2 1.2.3")
+        assert r.returncode == 1
+        assert f"{version} is not installed on du7" in r.stderr
+        assert sorted(r.stderr.split("Installed:")[1].split()) == ["1.2.2", "1.2.3"]
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert not (opt / "calls").exists()  # no backup, no restart
+
+
+def test_capabilities_needs_no_lock(tmp_path):
+    root = tmp_path / "opt"
+    r = deploy(root, "flock() { return 1; }; main --capabilities")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "pinned activate\n"
+    assert not root.exists()
+
+
+WHEEL = "/x/pauta-1.2.3-py3-none-any.whl"
+SHA = "a" * 64
+
+
 @pytest.mark.parametrize(
     ("args", "why"),
     [
         ("1.2.3", "usage"),
         ("--rollback now", "usage"),
-        ("1.2 /x/pauta-1.2-py3-none-any.whl /x/requirements.lock", "bad version"),
-        ("1.2.3 /x/pauta-9.9.9-py3-none-any.whl /x/requirements.lock", "unexpected wheel"),
-        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/other.lock", "unexpected lockfile"),
-        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/requirements.lock", "no wheel at"),
+        ("--activate", "usage"),
+        ("--activate 1.2.3 now", "usage"),
+        ("--activate 1.2", "bad version"),
+        ("--capabilities now", "usage"),
+        # the hashes: both, and each 64 hex digits as sha256sum prints them
+        (f"1.2.3 {WHEEL} /x/requirements.lock", "usage"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA}", "usage"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA} ''", "bad sha256"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA[:63]} {SHA}", "bad sha256"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA} {SHA.upper()}", "bad sha256"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA} {SHA}x", "bad sha256"),
+        (f"1.2 /x/pauta-1.2-py3-none-any.whl /x/requirements.lock {SHA} {SHA}", "bad version"),
+        (
+            f"1.2.3 /x/pauta-9.9.9-py3-none-any.whl /x/requirements.lock {SHA} {SHA}",
+            "unexpected wheel",
+        ),
+        (f"1.2.3 {WHEEL} /x/other.lock {SHA} {SHA}", "unexpected lockfile"),
+        (f"1.2.3 {WHEEL} /x/requirements.lock {SHA} {SHA}", "no wheel at"),
     ],
 )
 def test_main_refuses_bad_arguments(args, why, tmp_path):
