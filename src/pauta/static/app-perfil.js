@@ -220,7 +220,7 @@ const META_STATES = {
   revoked: "acesso revogado na Meta; reconecte em Adicionar contas",
 };
 const stampBR = (iso) => {
-  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(" ", "T") + "Z");
+  const d = stamp(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 };

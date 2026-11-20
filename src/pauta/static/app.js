@@ -270,7 +270,7 @@ function addDays(iso, n) {
 }
 const daysUntil = (iso) => Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(todayISO() + "T00:00:00Z")) / 86400000);
 const fmtDate = (iso, opts = { day: "numeric", month: "short" }) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", opts).replace(".", "") : "";
-const stamp = (s) => new Date(/Z$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
+const stamp = (s) => new Date(/(Z|[+-]\d\d:?\d\d)$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
 function ago(s) {
   const sec = (Date.now() - stamp(s)) / 1000;
   if (sec < 60) return "agora";

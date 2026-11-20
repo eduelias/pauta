@@ -117,3 +117,13 @@ def test_the_quick_periods_on_any_day(gate, today):
     assert gate.evaluate(
         "() => periodDates('custom', { since: '2026-02-10', until: '2026-01-05' })"
     ) == ["2026-01-05", "2026-02-10"]
+
+
+def test_a_timestamp_reads_the_same_however_the_server_wrote_it(gate):
+    """SQLite's "date time" (UTC), an ISO stamp ending in Z, and one with an offset are the
+    same instant to `stamp`, and so to the "dd/mm hh:mm" of the Meta card built on it."""
+    forms = ["2026-11-20 10:00:00", "2026-11-20T10:00:00Z", "2026-11-20T07:00:00-03:00"]
+    times = gate.evaluate("(forms) => forms.map((f) => stamp(f).getTime())", forms)
+    assert times == [1795168800000] * 3
+    assert len(set(gate.evaluate("(forms) => forms.map(stampBR)", forms))) == 1
+    assert gate.evaluate("() => stampBR('nada')") == ""
