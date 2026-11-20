@@ -290,6 +290,7 @@ class FakeMeta:
         self.token_invalid = False  # the token was revoked (code 190)
         self.campaigns = {k: [dict(c) for c in v] for k, v in CAMPAIGNS.items()}
         self.fail_campaigns: set[str] = set()  # account ids whose campaign list answers 400
+        self.fail_history: set[str] = set()  # campaign ids whose read by id answers 500
         self.throttle = False  # every read answers code 4 (too many calls)
         self.down = False  # Meta answers 500
         self.gate: threading.Event | None = None  # hold(): Graph answers wait for release()
@@ -507,6 +508,8 @@ class FakeMeta:
             (flt,) = json.loads(q["filtering"])
             assert flt == {**flt, "field": "campaign.id", "operator": "IN"}, flt
             wanted = set(flt["value"])
+            if wanted & self.fail_history:
+                return 500, oauth_error(1, "An unknown error occurred")
         live = [
             c
             for c in self.campaigns.get(aid, [])

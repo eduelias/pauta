@@ -106,6 +106,30 @@ def test_the_hourly_pass_keeps_the_account_list_warm(team):
     assert len(fake.calls) == n  # the pass just read it
 
 
+def test_a_history_read_that_failed_is_tried_again_until_it_works(team):
+    """A campaign first seen in a pass gets its numbers back to its start. When Meta fails
+    that one read the campaign is already saved, so it is no longer new: the next passes
+    must still fetch what is missing (once: a history that was read is not read again)."""
+    store, meta, fake, *_ = team
+    fake.fail_history.add("23850001")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert [e["account"] for e in out["errors"]] == ["111"] and out["campaigns_new"] == 3
+    assert days(store, "23850001") == ["2026-10-19", "2026-10-20"]  # the window only
+    # a day later Meta answers: the history runs from the start to where the window begins
+    fake.fail_history.clear()
+    tomorrow = TODAY + timedelta(days=1)
+    out = sync.run(store, meta, days=2, today=tomorrow)
+    assert out["errors"] == [] and out["campaigns_new"] == 0
+    assert days(store, "23850001") == [
+        (date(2026, 10, 3) + timedelta(days=i)).isoformat() for i in range(19)
+    ]
+    assert days(store, "23850002")[0] == "2026-10-12"  # the one after it in the account too
+    # read once: the next pass asks for the windows only
+    fake.calls.clear()
+    sync.run(store, meta, days=2, today=tomorrow)
+    assert sum("/insights" in c for c in fake.calls) == 2
+
+
 def test_run_links_done_requests(team):
     store, meta, fake, clinic, _ = team
     r = store.create_request(

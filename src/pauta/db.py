@@ -1093,9 +1093,11 @@ class Store:
         one changes nothing. New rows appear only for ACTIVE campaigns (ended or archived ones
         never show up unless asked); a known one follows Meta's status: ACTIVE reopens an
         ended or paused row, anything else ends an active one. `skipped` is never touched.
-        Returns the new rows' meta ids (the caller fetches their history)."""
+        Returns the new rows' meta ids and, as `pending`, the listed ones whose history is
+        still to be read: the new ones, and older ones until `history_done` (the caller
+        fetches it; a row saved here is not new again when that read fails)."""
         aid = digits(account_id)
-        out: dict = {"new": [], "ended": 0, "reopened": 0}
+        out: dict = {"new": [], "pending": [], "ended": 0, "reopened": 0}
         with self.db() as db:
             row = db.execute(
                 "SELECT client FROM meta_account WHERE account_id=?", (aid,)
@@ -1151,6 +1153,11 @@ class Store:
                         (today, known["id"]),
                     )
                     out["ended"] += 1
+            pending = self._history_pending(db) + out["new"]
+            if out["new"]:
+                self._set_history_pending(db, pending)
+            listed = {digits(m.get("id")) for m in metas}
+            out["pending"] = [mid for mid in pending if mid in listed]
         if out["new"] or out["ended"] or out["reopened"]:
             obs.event(
                 "campaigns_synced",
@@ -1160,6 +1167,25 @@ class Store:
                 reopened=out["reopened"],
             )
         return out
+
+    @staticmethod
+    def _history_pending(db) -> list[str]:
+        """The campaigns (meta ids) saved without their numbers back to their start yet."""
+        row = db.execute("SELECT value FROM meta WHERE key='history_pending'").fetchone()
+        return json.loads(row[0]) if row else []
+
+    @staticmethod
+    def _set_history_pending(db, meta_ids: list[str]) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_pending', ?)",
+            (json.dumps(meta_ids),),
+        )
+
+    def history_done(self, meta_id: str) -> None:
+        """The campaign's numbers back to its start are stored: never asked for again."""
+        with self.db() as db:
+            left = [mid for mid in self._history_pending(db) if mid != meta_id]
+            self._set_history_pending(db, left)
 
     def store_insights(self, rows: list[dict], fetched: str | None = None) -> int:
         """Daily numbers per campaign, upserted by (meta_id, day). `results` stays NULL when

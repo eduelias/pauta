@@ -4,8 +4,9 @@
 client: Meta's campaign list keeps the `campaign` rows (new ACTIVE ones appear, ones Meta
 stopped delivering end), then the last `days` days of per-campaign insights are written to
 `insight`; a campaign seen for the first time also gets its history back to its start (Meta
-keeps 37 months). Finally done "Criar/Reativar campanha" requests whose Ads Manager link
-names a campaign are tied to it.
+keeps 37 months), asked for again on the next passes for as long as that read fails. Finally
+done "Criar/Reativar campanha" requests whose Ads Manager link names a campaign are tied to
+it.
 
 One account's trouble doesn't stop the others; a linked account no connection has placed
 under its portfolio is reported rather than skipped in silence, after one account list per
@@ -288,22 +289,23 @@ def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
         aid, since, today, today=today, business_id=bid, objectives=objectives
     )
     out["insight_rows"] += store.store_insights(rows, fetched)
+    out["campaigns_new"] += len(res["new"])
     starts = {m["id"]: m.get("started") for m in metas}
-    for mid in res["new"]:
-        out["campaigns_new"] += 1
+    # the new ones, and the ones an earlier pass saved and then failed to read back
+    for mid in res["pending"]:
         started = starts.get(mid)
-        if not started or date.fromisoformat(started) >= since:
-            continue
-        history = meta.daily_insights(
-            aid,
-            date.fromisoformat(started),
-            since - timedelta(days=1),
-            meta_ids=[mid],
-            today=today,
-            business_id=bid,
-            objectives=objectives,
-        )
-        out["insight_rows"] += store.store_insights(history, fetched)
+        if started and date.fromisoformat(started) < since:
+            history = meta.daily_insights(
+                aid,
+                date.fromisoformat(started),
+                since - timedelta(days=1),
+                meta_ids=[mid],
+                today=today,
+                business_id=bid,
+                objectives=objectives,
+            )
+            out["insight_rows"] += store.store_insights(history, fetched)
+        store.history_done(mid)
 
 
 def due(now: datetime, last_hourly: datetime | None, last_nightly: datetime | None) -> set[str]:
