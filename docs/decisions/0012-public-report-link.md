@@ -1,7 +1,11 @@
 # 12. A public link to one campaign report
 
-- **Status:** shipped in 1.8.2 (2026-11-05). Proposed 2026-11-04. It is the first
-  exception to decision 2's rule that everything in Pauta needs a signed-in account.
+- **Status:** shipped in 1.8.2 (2026-11-05). Proposed 2026-11-04. It is the first page
+  that shows the team's data without a signed-in account. The rule it bends is in
+  `CLAUDE.md` ("everything but login/join needs a session"); decision 2 builds on it.
+  Routes that already answered without a session: sign-in, joining by invite, the one-time
+  passkey link (decision 4) and, since 1.7.0, Meta's login callback
+  (`GET /api/meta/callback`, decision 8).
 - **Amended 2026-11-05:** the lifetime went from 30 days (as released in 1.8.2) to 5
   (1.8.3). Links made before keep the expiry stored on their row.
 - **2026-11-20:** the code differs: "5 dias" is fixed text in the link preview's description

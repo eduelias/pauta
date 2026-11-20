@@ -17,4 +17,4 @@ both files.
 | [9](0009-branch-deploys-to-acceptance.md) | Any branch on acceptance, by hand, by the owner, as its own user (amends 1) | Shipped; announced in 1.7.0 |
 | [10](0010-perfil-e-configuracoes.md) | Perfil for the person (name, WhatsApp, passkeys, new-passkey link); Equipe becomes Configurações | Shipped in 1.7.0 |
 | [11](0011-analytics.md) | Analytics: a first-party usage log inside the app, Plausible (cloud, EU) on the public site; no session replay | App part shipped in 1.8.1; site part proposed |
-| [12](0012-public-report-link.md) | A public, expiring, read-only link to one campaign report for the client (amends 2: the first open page) | Shipped in 1.8.2; the lifetime is 5 days since 1.8.3 |
+| [12](0012-public-report-link.md) | A public, expiring, read-only link to one campaign report for the client (amends 2: the first page that shows team data without an account) | Shipped in 1.8.2; the lifetime is 5 days since 1.8.3 |
