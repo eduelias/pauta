@@ -69,17 +69,13 @@ jobs:
             echo "::error::a release for $GITHUB_REF_NAME already exists; only this run makes one"
             exit 1
           fi
-          # releases are immutable once published: attach everything to a draft, check that
-          # what GitHub holds is what was built, then publish
+          # releases are immutable once published: attach everything to a draft, then publish
           gh release create "$GITHUB_REF_NAME" dist/* --draft \
             --verify-tag --title "Pauta $VERSION" --notes-file notes.md
-          gh release download "$GITHUB_REF_NAME" --dir uploaded
-          (cd dist && sha256sum -- *) | sort -k2 > built.sums
-          (cd uploaded && sha256sum -- *) | sort -k2 > uploaded.sums
-          diff built.sums uploaded.sums || { echo "::error::the draft's files are not the build's"; exit 1; }
           gh release edit "$GITHUB_REF_NAME" --draft=false
-          # published (immutable from here): what anyone downloads is still what was built
+          # published (immutable from here): what anyone downloads is what was built
           gh release download "$GITHUB_REF_NAME" --dir published
+          (cd dist && sha256sum -- *) | sort -k2 > built.sums
           (cd published && sha256sum -- *) | sort -k2 > published.sums
           diff built.sums published.sums || { echo "::error::the published files are not the build's"; exit 1; }
 

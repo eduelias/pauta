@@ -45,8 +45,8 @@ starts `.github/workflows/release.yml`:
 2. **Publish**: checks the tag, `pyproject.toml` and `CHANGELOG.md` agree and that the
    wheel and lockfile still have those two hashes, refuses if the tag already has a
    release, and creates the GitHub release with the CHANGELOG notes, the wheel, the sdist,
-   `requirements.lock` and `SHA256SUMS`: as a draft first, published once its files compare
-   equal to the build, and compared once more after. The release page is for people; du7
+   `requirements.lock` and `SHA256SUMS`: as a draft first, then published, and the
+   published files are compared with the build. The release page is for people; du7
    never reads it.
 3. **Deploy** (`deploy.yml`): du7 asks its `pauta-deploy` what it can do (an older copy
    stops the job here), downloads this run's `dist` artifact and runs
