@@ -5,6 +5,20 @@
   in the team's file) and decision 6 (plans live in `control.db`; nothing here touches them).
 - **Changes:** adds a `Financeiro` tab, a `Pagamentos` card on the client page and a
   `Financeiro` panel on Equipe; the mobile tab bar shows Financeiro instead of Quadro.
+- **Amended by:** decision 10 (1.7.0): Equipe is Configurações, so the panel is on
+  Configurações → Financeiro.
+- **Amended by:** decision 8 (1.7.0): on the phone, Campanhas takes Quadro's slot when Meta
+  is on; Financeiro has it only with Meta off.
+- **2026-11-20:** not built as of 1.15.1: a way to set a cycle's explicit start (the column
+  `billing.started` exists; no route, command or screen writes it).
+- **2026-11-20:** the code differs: the screens do not use the currency stored on the
+  cycle. The panel formats every amount with the team's current setting, and the client
+  card formats all payments with the open cycle's currency; `payment` has no currency.
+- **2026-11-20:** the code differs: "integer cents, never floats" holds for the tables.
+  The default fee setting is a float in currency units, and the API answers amounts as
+  cents divided by 100.
+- **2026-11-20:** the code differs: `/api/export` carries the payments and the finance
+  settings, not the `billing` rows (the cycles).
 
 ## Context
 
@@ -36,11 +50,11 @@ no bank credentials and nothing of ours touching a customer's money.
 | Ledger | Payments are **voided, never deleted**: the list is an audit trail. The person who recorded a payment, or an admin, may void it |
 | The engine | `finance.py`, pure functions with no SQLite: from a cycle, its live payments and today, it generates the expected periods (monthly, weekly or yearly; the day of month clamps to the month's last day and comes back after a short month), allocates payments **oldest-first** against them, and derives the status, next due date, amount owed and months active. Nothing derived is stored, so a configuration change recalculates everything consistently; partial and double payments and future price steps need no special cases |
 | Statuses | For Ativo, billed clients only, in this order on the panel: `late` (a period's due date plus the grace days has passed unpaid), `due` (a period is due, inside the grace days), `due_soon` (the next period starts within the configured window), `awaiting_first` (no payment yet, with the first-payment anchor), `paid` (everything up to today covered) |
-| Anchor | How a cycle's first period starts is a team setting: `first_payment` (Piero: the first recorded payment sets the day), `client_since` (the "cliente desde" date), `fixed_day` (everyone on the same day of the month) |
-| Settings (per team, admins, Equipe → Financeiro) | `enabled`, `currency`, `amount` (the default fee new clients get), `cadence`, `anchor`, `due_soon_days` (7), `grace_days` (0), `visibility` (`all` or `admins`), `bill_new_clients`. Validated like `CLIENT_FIELDS`; sent in the boot data so the UI never guesses |
-| Visibility | `visibility` is enforced in the routes, not only hidden in the UI: with `admins`, members get 403 on every finance route and the client payload carries no money. With `enabled` off the routes answer 404 and the tab is gone |
-| API | `GET /api/finance` (summary and one row per client); `GET|PATCH /api/finance/settings` (admin); `PATCH /api/clients/{id}/billing` (fee, billed); `POST /api/clients/{id}/payments`; `DELETE /api/payments/{id}` (void). `GET /api/clients/{id}` gains `billing` and `payments`; `/api/export` includes both |
-| UI | **Financeiro** tab after Clientes (on the phone it takes Quadro's slot: Piero filters Pedidos instead); summary numbers, then the groups above, each row with the client, months active, due date, last payment and a **Registrar pagamento** button (date defaults to today, amount to the fee). A **Pagamentos** card under Atalhos on the client page with the fee, the list and the form |
+| Anchor | How a cycle's first period starts is a team setting: `first_payment` (Piero: the first recorded payment sets the day), `client_since` (the "cliente desde" date), `fixed_day` (everyone on the same day of the month). A client without a "cliente desde" date counts from the day its cycle opened |
+| Settings (per team, admins, Configurações → Financeiro) | `enabled`, `currency`, `amount` (the default fee new clients get), `cadence`, `anchor`, `fixed_day` (1 to 28, for the `fixed_day` anchor), `due_soon_days` (7), `grace_days` (0), `visibility` (`all` or `admins`), `bill_new_clients`. Validated like `CLIENT_FIELDS`; sent in the boot data so the UI never guesses |
+| Visibility | `visibility` is enforced in the routes, not only hidden in the UI: with `admins`, members get 403 on every finance route and the client payload carries no money. With `enabled` off the routes answer 404 and the tab is gone; the two settings routes still answer admins |
+| API | `GET /api/finance` (summary and one row per client; with `?month=YYYY-MM`, also that month's payments and what was received in it and in total); `GET|PATCH /api/finance/settings` (admin); `PATCH /api/clients/{id}/billing` (fee, billed); `POST /api/clients/{id}/payments`; `DELETE /api/payments/{id}` (void). `GET /api/clients/{id}` gains `billing` and `payments`; `/api/export` includes both |
+| UI | **Financeiro** tab after Clientes (on the phone it takes Quadro's slot: Piero filters Pedidos instead); summary numbers, which are also filters ("Recebido" opens the month's payments, with a month picker), then the groups above, each row with the client, months active, due date, last payment and a **Registrar pagamento** button (date defaults to today, amount to the fee). A **Pagamentos** card under Atalhos on the client page with the fee, the list and the form |
 | Multi-team | Everything is in the team's file and keyed by nothing global, so decision 5 picks it up unchanged. `/metrics` stays counts only, never amounts |
 
 ## Consequences
