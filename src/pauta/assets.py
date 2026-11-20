@@ -47,7 +47,7 @@ def _keep(key, make):
             return _kept[key]
     value = make()
     with _lock:
-        if stamp == _stamp:
+        if stamp == _stamp and value is not None:  # a miss is not kept: anyone can ask for one
             _kept[key] = value
     return value
 
