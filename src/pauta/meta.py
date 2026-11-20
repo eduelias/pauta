@@ -42,10 +42,10 @@ reads, each with that connection's token and appsecret_proof. The union is kept 
 minutes; concurrent cold readers wait for one read and share it; a read that failed as a
 whole is remembered for a minute (two when Meta asked for a pause) so a page full of client
 cards doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers Meta
-won't return comes back with `numbers: false` and a reason; one connection Meta refuses is
-left out (a revoked token marks it `revoked` on `connections()`; Meta not answering for it
-is passing trouble) and the others still read; only a throttle, or every connection
-failing, fails the whole list.
+won't return comes back with `numbers: false` and a reason; a connection whose token was
+revoked is left out and marked `revoked` on `connections()`; one Meta doesn't answer for
+is passing trouble (its accounts stand as last read, for up to a day) and the others still
+read; only a throttle, or every connection failing, fails the whole list.
 
 Campaign tracking (`sync.py`) reads more: each linked account's campaign list (paged) and
 its per-campaign daily insights for a range, plus the period's reach per campaign (reach
@@ -349,6 +349,7 @@ class Meta:
         # one of those is of the connections before it and is not kept
         self._gen = 0
         self._failed: tuple[float, MetaError] | None = None  # the last read that failed whole
+        self._read_at: dict[str, float] = {}  # business id -> when Meta last answered for it
         self._reading = threading.Lock()  # one Meta read at a time (accounts())
         self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
         self.sync_error = ""  # what the last sync ran into, "" when it went well
@@ -899,10 +900,11 @@ class Meta:
         return out
 
     def _read(self) -> list[dict]:
-        """The union over connections, all read at the same time (`together`). One
-        connection Meta refuses is left out (a revoked one is marked so, by _fail; Meta
-        not answering for it is passing trouble, no state change); a throttle, or every
-        connection failing, fails the list."""
+        """The union over connections, all read at the same time (`together`). A revoked
+        connection is left out (and marked so, by _fail). Meta not answering for one is
+        passing trouble, no state change: its accounts stand as the kept list has them
+        (the balance alert and Configurações go by this list), for up to a day without
+        an answer. A throttle, or every connection failing, fails the list."""
         conns = self._readable()
         if not conns:
             raise MetaError(NOT_CONNECTED, 409)
@@ -915,7 +917,17 @@ class Meta:
                 raise e  # Meta asked the app to pause: the list waits with it
         if len(errors) == len(conns):
             raise errors[0]
-        return [acc for a in answers if not isinstance(a, MetaError) for acc in a]
+        kept = self._cache[1] if self._cache else []
+        now = time.time()
+        out: list[dict] = []
+        for c, a in zip(conns, answers, strict=True):
+            bid = c["business_id"]
+            if not isinstance(a, MetaError):
+                self._read_at[bid] = now
+                out.extend(a)
+            elif a.status != 409 and now - self._read_at.get(bid, 0.0) < STALE_SECONDS:
+                out.extend(acc for acc in kept if acc["business_id"] == bid)
+        return out
 
     def _read_one(self, business_id: str, business_name: str) -> list[dict]:
         """One connection's list from Meta: /me/adaccounts (paged: a portfolio with more
