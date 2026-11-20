@@ -336,7 +336,8 @@ def _date(v, _db):
     if not DATE_RE.match(v):
         raise Invalid(f"data inválida: {v}")
     try:
-        date.fromisoformat(v)
+        if date.fromisoformat(v).year < 1990:  # a year typed halfway ("0202")
+            raise ValueError
     except ValueError:
         raise Invalid(f"data inválida: {v}") from None
     return v
@@ -358,9 +359,9 @@ def _money(v, _db):
             v = v.replace(".", "").replace(",", ".")
     try:
         n = round(float(v), 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise Invalid("verba precisa ser um número") from None
-    if n < 0 or n > 100_000_000:
+    if not 0 <= n <= 100_000_000:  # written this way, not-a-number fails it too
         raise Invalid("verba fora do intervalo")
     return n
 

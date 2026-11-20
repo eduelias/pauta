@@ -69,10 +69,14 @@ UNAVAILABLE = "o OneDrive não respondeu; tente de novo"
 
 
 def safe_name(name: str, limit: int = 120) -> str:
-    """A name OneDrive accepts: no reserved characters, no leading/trailing dots or spaces."""
-    name = BAD_NAME.sub("_", " ".join(str(name or "").split()))
-    name = name.strip(" .")[:limit].strip(" .")
-    return name or "arquivo"
+    """A name OneDrive accepts: no reserved characters, no leading/trailing dots or spaces.
+    A name over the limit is cut in its stem and keeps its ending (".pdf"): OneDrive tells
+    the kind of file by it, and the thumbnail goes by the kind."""
+    name = BAD_NAME.sub("_", " ".join(str(name or "").split())).strip(" .")
+    ext = re.search(r"\.\w{1,10}$", name)
+    if ext and len(name) > limit:
+        name = name[: limit - len(ext[0])].rstrip(" .") + ext[0]
+    return name[:limit].strip(" .") or "arquivo"
 
 
 def _limit_mb() -> int:
