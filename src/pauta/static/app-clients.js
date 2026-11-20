@@ -167,12 +167,14 @@ async function viewNewClient() {
   }));
   f.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const btn = $("button.primary", f);
+    btn.disabled = true;
     try {
       const c = await api("POST", "/api/clients", { ...Object.fromEntries(new FormData(f)), ...segs });
       track("client_saved", { new: true });
       toast("Cliente salvo");
       location.hash = `#/cliente/${c.id}`;
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
   });
 }
 

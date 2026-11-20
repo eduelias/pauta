@@ -475,8 +475,9 @@ async function viewRequest(_q, id) {
   const autosize = (t) => { t.style.height = "auto"; t.style.height = t.scrollHeight + 2 + "px"; };
   $$("textarea.input").forEach((t) => { autosize(t); t.addEventListener("input", () => autosize(t)); });
   const send = async () => {
-    const t = $("#comment");
-    if (!t.value.trim()) return;
+    const t = $("#comment"), btn = $("#send");
+    if (!t.value.trim() || btn.disabled) return;  // disabled: the first tap is still on its way
+    btn.disabled = true;
     try {
       r = await api("POST", `/api/requests/${r.id}/comments`, { text: t.value });
       track("comment_added");
@@ -484,6 +485,7 @@ async function viewRequest(_q, id) {
       autosize(t);
       if (root.isConnected) $("#tl").innerHTML = timeline(r);
     } catch (e) { toast(e.message, true); }
+    btn.disabled = false;
   };
   $("#send").addEventListener("click", send);
   $("#comment").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); });
@@ -605,8 +607,10 @@ function quickClient() {
     m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") done(null); };
     $("#qc").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const go = $("button.primary", e.target);
+      go.disabled = true;
       try { done(await api("POST", "/api/clients", Object.fromEntries(new FormData(e.target)))); track("client_saved", { new: true }); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(err.message, true); go.disabled = false; }
     });
   });
 }

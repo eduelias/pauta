@@ -337,8 +337,9 @@ function loadQr() {
 }
 
 async function makeInvite() {
-  const box = $("#qrbox");
+  const box = $("#qrbox"), btn = $("#invite");
   const admin = $("#asadmin").checked;
+  btn.disabled = true;
   try {
     const [inv] = await Promise.all([api("POST", "/api/invite", { admin }), loadQr()]);
     const url = location.origin + inv.path;
@@ -355,4 +356,5 @@ async function makeInvite() {
       <a class="btn" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
     bindCopy(box);
   } catch (e) { toast(e.message, true); }
+  btn.disabled = false;
 }

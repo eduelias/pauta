@@ -1,5 +1,6 @@
-"""Calls that answer late, as on a phone with a bad connection: an answer for a screen the
-person has left is not drawn on the one they are on."""
+"""Calls that answer late or are sent twice, as on a phone with a bad connection: an answer
+for a screen the person has left is not drawn on the one they are on, and a second tap
+while the first call is on its way sends nothing."""
 
 import pytest
 from playwright.sync_api import expect
@@ -87,3 +88,58 @@ def test_a_screen_that_draws_itself_again_late_does_not_cover_the_next_one(desk)
     let_go(page, held)
     expect(page.get_by_role("heading", name="Clientes", exact=True)).to_be_visible()
     expect(page.locator(".board")).to_have_count(0)
+
+
+def test_a_second_tap_sends_nothing(desk):
+    """Two taps on a slow connection posted the comment twice (a comment cannot be deleted)
+    and made two invites, one of them never shown."""
+    base, store, d = desk
+    page = d.page
+    posts = []
+    page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
+    page.goto(f"{base}/#/pedido/1")
+    held = hold(page, "**/api/requests/1/comments", "POST")
+    page.fill("#comment", "Pode subir a campanha")
+    with page.expect_request("**/api/requests/1/comments"):
+        page.press("#comment", "Control+Enter")
+    expect(page.locator("#send")).to_be_disabled()
+    page.press("#comment", "Control+Enter")  # the keyboard's way to the same button
+    page.evaluate("() => document.querySelector('#send').click()")
+    let_go(page, held)
+    expect(page.locator("#tl .bubble")).to_have_text(["Pode subir a campanha"])
+    expect(page.locator("#send")).to_be_enabled()
+    assert len([u for u in posts if u.endswith("/comments")]) == 1
+
+    page.goto(f"{base}/#/configuracoes")
+    held = hold(page, "**/api/invite", "POST")
+    with page.expect_request("**/api/invite"):
+        page.get_by_role("button", name="Gerar convite").click()
+    expect(page.get_by_role("button", name="Gerar convite")).to_be_disabled()
+    page.evaluate("() => document.querySelector('#invite').click()")
+    let_go(page, held)
+    expect(page.locator("#qrbox .invlink")).to_be_visible()
+    expect(page.get_by_role("button", name="Gerar convite")).to_be_enabled()
+    with store.db() as conn:
+        assert conn.execute("SELECT count(*) FROM invite").fetchone()[0] == 1
+
+    # the two forms that make a client: the one on its own screen and the quick one
+    page.goto(f"{base}/#/cliente/novo")
+    held = hold(page, "**/api/clients", "POST")
+    page.fill("#f input[name=name]", "Ótica Boa Vista")
+    with page.expect_request(lambda r: r.method == "POST"):
+        page.get_by_role("button", name="Salvar cliente").click()
+    page.evaluate("() => document.querySelector('#f button.primary').click()")
+    let_go(page, held)
+    expect(page.locator("#cname")).to_contain_text("Ótica Boa Vista")
+    page.unroute("**/api/clients")
+    page.goto(f"{base}/#/novo")
+    page.get_by_role("button", name="Novo", exact=True).click()
+    held = hold(page, "**/api/clients", "POST")
+    page.fill("#qc input[name=name]", "Açougue Bom de Corte")
+    with page.expect_request(lambda r: r.method == "POST"):
+        page.get_by_role("button", name="Criar cliente").click()
+    page.evaluate("() => document.querySelector('#qc button.primary').click()")
+    let_go(page, held)
+    expect(page.locator("#modal")).to_be_hidden()
+    assert [c["name"] for c in store.clients()].count("Ótica Boa Vista") == 1
+    assert [c["name"] for c in store.clients()].count("Açougue Bom de Corte") == 1
