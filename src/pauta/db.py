@@ -23,6 +23,7 @@ import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import finance, obs
 
@@ -34,6 +35,8 @@ SCHEMA_VERSION = 15
 RELOAD_EPOCH = 1
 # how long the server trusts its copy of the mark before reading the file again
 RELOAD_RECHECK_SECONDS = 2.0
+# where the team's day turns: never the server's own zone (du7 runs on CET) nor UTC
+TEAM_TZ = ZoneInfo("America/Sao_Paulo")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -618,6 +621,12 @@ def period_results(results, spend_cents: int) -> dict:
 def _utcnow() -> str:
     """Now as SQLite's datetime('now') writes it (UTC, to the second)."""
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def team_today() -> date:
+    """Today's date where the team is: what "due today", "late" and "done on" go by. In the
+    evening in Brazil the server's clock and UTC are already on tomorrow."""
+    return datetime.now(TEAM_TZ).date()
 
 
 def gravatar(email: str | None) -> str:
@@ -1699,7 +1708,10 @@ class Store:
 
     @staticmethod
     def _close_cycle(db, cid: int) -> None:
-        db.execute("UPDATE billing SET ended=date('now') WHERE client=? AND ended IS NULL", (cid,))
+        db.execute(
+            "UPDATE billing SET ended=? WHERE client=? AND ended IS NULL",
+            (team_today().isoformat(), cid),
+        )
 
     def _sync_cycle(self, db, cid: int, by: int | None) -> None:
         """Ativo and billed means an open cycle; anything else closes it. Coming back opens a
@@ -1728,11 +1740,14 @@ class Store:
             return None
         settings = self._settings(db)
         payments = self._cycle_payments(db, cycle["id"])
+        # `created` is a UTC instant; the day the cycle opened is the team's
+        created = datetime.fromisoformat(cycle["created"]).replace(tzinfo=UTC)
+        opened = created.astimezone(TEAM_TZ).date()
         anchor = finance.resolve_anchor(
             settings,
             first_payment=payments[0][0] if payments else None,
             since=date.fromisoformat(client["since"]) if client.get("since") else None,
-            opened=date.fromisoformat(cycle["created"][:10]),
+            opened=opened,
             started=date.fromisoformat(cycle["started"]) if cycle["started"] else None,
         )
         st = finance.standing(
@@ -1740,13 +1755,13 @@ class Store:
             cents=cycle["cents"],
             anchor=anchor,
             payments=payments,
-            today=today or date.today(),
+            today=today or team_today(),
         )
         return {
             "id": cycle["id"],
             "amount": cycle["cents"] / 100,
             "currency": cycle["currency"],
-            "opened": cycle["created"][:10],
+            "opened": opened.isoformat(),
             **st.as_dict(),
         }
 
@@ -1797,7 +1812,7 @@ class Store:
                 raise Invalid("informe o valor")
             if vals["amount"] <= 0:
                 raise Invalid("o valor precisa ser maior que zero")
-            if vals["paid_on"] > (date.today() + timedelta(days=1)).isoformat():
+            if vals["paid_on"] > (team_today() + timedelta(days=1)).isoformat():
                 raise Invalid("a data do pagamento não pode estar no futuro")
             cycle = db.execute(
                 "SELECT id FROM billing WHERE client=? AND ended IS NULL", (cid,)
@@ -1836,7 +1851,7 @@ class Store:
     def finance(self, today: date | None = None, month: str | None = None) -> dict:
         """The panel: every Ativo, billed client and where it stands, plus what came in each
         month and the payments of `month` (default: this one)."""
-        today = today or date.today()
+        today = today or team_today()
         if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
             raise Invalid("mês inválido, use AAAA-MM")
         this_month = today.strftime("%Y-%m")
@@ -1969,7 +1984,7 @@ class Store:
             vals.setdefault("status", "todo")
             vals.setdefault("priority", "Média")
             if vals["status"] == "done" and not vals.get("done_on"):
-                vals["done_on"] = date.today().isoformat()
+                vals["done_on"] = team_today().isoformat()
             vals["created_by"] = by
             cols = ", ".join(vals)
             marks = ", ".join("?" for _ in vals)
@@ -1991,7 +2006,7 @@ class Store:
                 raise Invalid("descreva o que precisa ser feito")
             changed = {k: v for k, v in vals.items() if old[k] != v}
             if changed.get("status") == "done" and not (changed.get("done_on") or old["done_on"]):
-                changed["done_on"] = date.today().isoformat()
+                changed["done_on"] = team_today().isoformat()
             if not changed:
                 return self.request(rid)
             sets = ", ".join(f"{k}=?" for k in changed)

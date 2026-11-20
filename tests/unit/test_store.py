@@ -1,11 +1,12 @@
 """The Store: clients, requests, their timeline, lists, people and backups."""
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store
+from pauta import db as dbm
+from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store, team_today
 from pauta.finance import add_months
 
 
@@ -103,7 +104,7 @@ def test_create_request_defaults(store, client):
 
 def test_request_created_done_gets_a_done_date(store, client):
     r = new_request(store, client, status="done")
-    assert r["done_on"] == date.today().isoformat()
+    assert r["done_on"] == team_today().isoformat()
     r = new_request(store, client, status="done", done_on="2026-01-02")
     assert r["done_on"] == "2026-01-02"
 
@@ -116,7 +117,7 @@ def test_update_logs_status_and_edits(store, client):
     events = [(e["kind"], e["text"]) for e in r["events"]]
     assert events[1:] == [("status", "todo>doing"), ("edited", "verba")]
     r = store.update_request(r["id"], {"status": "done"}, None)
-    assert r["done_on"] == date.today().isoformat()
+    assert r["done_on"] == team_today().isoformat()
     assert r["events"][-1]["text"] == "doing>done"  # done_on is not reported as an edit
     with pytest.raises(Invalid):
         store.update_request(r["id"], {"what": ""}, None)
@@ -352,7 +353,7 @@ def test_payment_validation(store, client):
 
 def test_the_panel(store):
     # dates relative to today: the ledger refuses payments in the future
-    today = date.today()
+    today = team_today()
     ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
     a = store.save_client({"name": "Em dia"})
     b = store.save_client({"name": "Atrasado"})
@@ -405,9 +406,33 @@ def test_panel_rows_carry_the_client_id_not_the_cycle_id(store):
     assert rows["Delta"]["id"] == first["id"] and rows["Delta"]["billing"] == 2
     assert rows["Isabel"]["id"] == isabel["id"] and rows["Isabel"]["billing"] == 3
     store.add_payment(
-        rows["Isabel"]["id"], {"paid_on": date.today().isoformat(), "amount": 100}, None
+        rows["Isabel"]["id"], {"paid_on": team_today().isoformat(), "amount": 100}, None
     )
     assert store.client(isabel["id"])["payments"][0]["amount"] == 100
+
+
+def test_today_is_the_teams_day_not_the_servers(store, client, monkeypatch):
+    class Evening(datetime):  # 22:30 on 9 March in São Paulo: UTC and du7 are on the 10th
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2031, 3, 10, 1, 30, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr(dbm, "datetime", Evening)
+    assert team_today() == date(2031, 3, 9)
+    assert new_request(store, client, status="done")["done_on"] == "2031-03-09"
+    r = new_request(store, client)
+    assert store.update_request(r["id"], {"status": "done"}, None)["done_on"] == "2031-03-09"
+    assert store.finance()["today"] == "2031-03-09"
+    cid = client["id"]
+    with pytest.raises(Invalid):  # the day after tomorrow, as the team counts
+        store.add_payment(cid, {"paid_on": "2031-03-11", "amount": 100}, None)
+    # the day a cycle opened and the day it closed are the team's too
+    with store.db() as conn:
+        conn.execute("UPDATE billing SET created='2031-03-10 01:30:00' WHERE client=?", (cid,))
+    assert store.client(cid)["billing"]["opened"] == "2031-03-09"
+    store.save_client({"state": "Pausado"}, cid)
+    with store.db() as conn:
+        assert conn.execute("SELECT ended FROM billing").fetchone()[0] == "2031-03-09"
 
 
 def test_deleting_a_client_takes_its_ledger(store, client):

@@ -1,11 +1,12 @@
 """The finance routes over HTTP: who may see money, recording and voiding, settings."""
 
-from datetime import date, timedelta
+from datetime import timedelta
 
+from pauta.db import team_today
 from softpasskey import call
 
-TODAY = date.today().isoformat()
-AGO_40 = (date.today() - timedelta(days=40)).isoformat()
+TODAY = team_today().isoformat()
+AGO_40 = (team_today() - timedelta(days=40)).isoformat()
 
 
 def client(base, cookie, name="Clínica Bem Estar"):
