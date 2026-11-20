@@ -17,10 +17,10 @@ short videos; files belong to a request; clients may see them too.
 
 | Topic | Decision |
 |---|---|
-| Where the bytes live | That OneDrive, under `Apps/Pauta/<cliente>/Pedido <n>/`. du7 keeps only each file's OneDrive id, name, size, type, uploader and date (`file` table) |
+| Where the bytes live | That OneDrive, under `Apps/Pauta/<cliente>/Pedido <n>/`. du7 keeps each file's OneDrive id, name, size, type, uploader and date (`file` table) and, since 1.8.4, a copy of its thumbnail in a folder next to the database (a cache, not in the backups) |
 | Permission | `Files.ReadWrite.AppFolder`: Pauta sees only its own app folder, never the rest of the drive. `PAUTA_ONEDRIVE_ROOT` can point it elsewhere, which asks for the whole drive instead |
 | App registration | "Pauta" in du7@msn.com's own Entra directory, personal Microsoft accounts only. Not a work directory (it would belong to the employer) and not Piero's account (he only approves access) |
-| Sign-in | Device code flow: an admin clicks Conectar on the Equipe page, the OneDrive's owner types the code at microsoft.com/link. No client secret to store or rotate, no redirect URL |
+| Sign-in | Device code flow: an admin clicks Conectar on Configurações → Arquivos (the Equipe page until 1.7.0), the OneDrive's owner types the code at microsoft.com/link. No client secret to store or rotate, no redirect URL |
 | Token | A file next to the DB (`pauta.db.onedrive-token`, mode 600), like the session key: never in the DB, so never in its backups. Refreshed on use; Microsoft rotates it |
 | Uploads | Through Pauta: the browser posts the file and Pauta passes it on. Up to 4 MiB it goes whole, in one `PUT …:/content`; above that, through a Graph upload session in 5 MiB chunks. The page sends three files at a time (a request's first one alone: it makes the folder). With files this small the extra hop is cheap, the CSP stays `'self'`, and no browser-to-Microsoft CORS setup is needed. Limit `PAUTA_UPLOAD_MAX_MB` (200). See "What an upload costs" below |
 | Downloads | `/api/files/<id>` redirects to Graph's short-lived pre-signed link, so teammates never need access to the OneDrive. Thumbnails come through Pauta, fetched without the token |
