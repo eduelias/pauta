@@ -16,6 +16,7 @@ from test_meta import connect
 from fakemeta import APP_ID, BUSINESS, CONFIG_ID, OTHER_BUSINESS, secret
 from pauta.db import SCHEMA_VERSION, Invalid, Store
 from pauta.meta import (
+    CACHE_SECONDS,
     LEGACY,
     NOT_CONNECTED,
     RECONNECT,
@@ -223,6 +224,26 @@ def test_a_revoked_token_marks_only_its_connection(meta_on, fake_meta):
     connect(meta_on, fake_meta, account=9)
     assert [c["state"] for c in meta_on.connections()] == ["revoked", "ok"]
     assert [a["id"] for a in meta_on.accounts()] == ["444"]
+
+
+def test_a_connection_already_revoked_does_not_drop_the_list_again(meta_on, fake_meta):
+    """Revoking in Meta is how work with a client ends, and the connection stays listed
+    (and read) until an admin clicks Desconectar. Its 190 drops the kept list once, when
+    the state changes; after that the other portfolio's list is kept like any other, so
+    a page does not read all of Meta, twice, on every load."""
+    connect_two(meta_on, fake_meta)
+    fake_meta.revoke(OTHER_BUSINESS)
+    assert [a["id"] for a in meta_on.accounts()] == ["111", "222"]
+    assert meta_on.connections()[1]["state"] == "revoked"
+    n = len(fake_meta.calls)
+    assert [a["id"] for a in meta_on.accounts()] == ["111", "222"]
+    assert len(fake_meta.calls) == n  # answered from memory
+    # past its ten minutes the list is read once, and kept again
+    meta_on._cache = (meta_on._cache[0] - CACHE_SECONDS, meta_on._cache[1])
+    fake_meta.calls.clear()
+    assert [a["id"] for a in meta_on.accounts(stale=False)] == ["111", "222"]
+    assert fake_meta.calls.count("GET /me/adaccounts") == 2  # one per connection, once
+    assert meta_on.status()["accounts_stale"] is False
 
 
 def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, monkeypatch):

@@ -497,18 +497,20 @@ class Meta:
         """The first connection's trouble, for /metrics and the old callers; "" when fine."""
         return next((c["error"] for c in self.connections() if c["error"]), "")
 
-    def _mark(self, business_id: str, state: str, error: str) -> None:
+    def _mark(self, business_id: str, state: str, error: str) -> bool:
         """A connection's state, kept in its file so it outlives a restart. Read and write
         under the lock, and only a file still there: Desconectar (which unlinks under the
-        same lock) wins over a late 190."""
+        same lock) wins over a late 190. Returns whether the saved state changed."""
+        wrote = False
         with self._lock:
             doc = self._saved(business_id)
             if doc and (doc.get("state") or "ok", doc.get("error") or "") != (state, error):
-                self._save(
+                wrote = self._save(
                     {**doc, "business_id": business_id, "state": state, "error": error},
                     create=False,
                 )
         self._changed()
+        return wrote
 
     def _changed(self) -> None:
         if self.on_change:
@@ -572,16 +574,18 @@ class Meta:
 
     def _fail(self, status: int, doc: dict, step: str, business_id: str = "") -> MetaError:
         """The error for a Graph answer that wasn't 200 (logged without any message text).
-        A 190 marks the one connection it came from as revoked; the others go on."""
+        A 190 marks the one connection it came from as revoked; the others go on. The
+        kept list is dropped when that mark is new."""
         code = self._code(doc)
         obs.event("meta_error", logging.WARNING, status=status, code=code, step=step)
         if code == 190:
-            # dropped, not aged: the pages must report the revocation, not an old list
-            self._cache = None
-            self._gen += 1
             obs.event("meta_revoked", logging.ERROR, business=business_id or None)
-            if business_id:
-                self._mark(business_id, "revoked", REVOKED)
+            if business_id and self._mark(business_id, "revoked", REVOKED):
+                # dropped, not aged: the pages must report the revocation, not an old list.
+                # Only when the state changes: a connection stays revoked (and read) until
+                # an admin disconnects it, and must not cost every page a full read
+                self._cache = None
+                self._gen += 1
             return MetaError(REVOKED, 409)
         if self._throttle(code):
             return MetaError(THROTTLED, 503)
