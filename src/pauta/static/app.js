@@ -121,6 +121,9 @@ function toast(msg, err = false) {
   if (err) track("error_shown", errorClass());
 }
 
+// Escape leaves a dialog, as a tap on its Cancelar (or "Agora não") does
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal [data-a=cancel]")?.click(); });
+
 // ---------- usage log (decision 11) -------------------------------------------------------------
 // What the team does in the app, for `pauta usage`: event names and prop keys from a fixed
 // table (the server drops the rest), the account id (never a name), nothing from the team's

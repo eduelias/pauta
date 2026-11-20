@@ -158,14 +158,14 @@ async function viewList(query) {
       (!needle || [r.client_name, r.kind, r.what, r.goal, r.missing, `#${r.id}`].join(" ").toLowerCase().includes(needle)));
     rows = ["done", "cancelled", "all"].includes(f) ? rows.sort((a, b) => b.id - a.id) : rows.sort(sortOpen);
     $("#rows").innerHTML = rows.length ? `<table class="table"><thead><tr><th>Nº</th><th>Cliente</th><th>Tipo</th><th>O que fazer</th><th>Prazo</th><th>Status</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr data-id="${r.id}"><td class="num">#${r.id}</td>
+      ${rows.map((r) => `<tr data-id="${r.id}"><td class="num"><a href="#/pedido/${r.id}">#${r.id}</a></td>
         <td><span class="cl">${avatar(r.client_name)}${esc(r.client_name)}</span></td>
         <td class="kind-cell"><span class="tag">${esc(r.kind || "—")}</span></td>
         <td class="what-cell"><div>${esc(r.what)}</div></td>
         <td class="nowrap">${dueBadge(r) || '<span class="faint">—</span>'} ${prio(r.priority)}</td>
         <td>${statusBadge(r)}</td></tr>`).join("")}
       </tbody></table>` : `<div class="panel empty"><span class="big">🔎</span>Nenhum pedido aqui.</div>`;
-    $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", () => { location.hash = `#/pedido/${tr.dataset.id}`; }));
+    $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = `#/pedido/${tr.dataset.id}`; }));
     keepHash(`#/pedidos?f=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${client ? `&c=${client}` : ""}`);
   };
   let typing;
@@ -375,14 +375,14 @@ async function viewRequest(_q, id) {
     <div class="req">
       <div>
         <div class="row-gap"><a class="cl" href="#/cliente/${c.id}">${avatar(c.name, "md")}<span style="font-size:16px">${esc(c.name)}</span></a>${r.kind ? `<span class="tag accent">${esc(r.kind)}</span>` : ""}</div>
-        <div class="quiet"><textarea class="input req-title" data-f="what" rows="1">${esc(r.what)}</textarea></div>
+        <div class="quiet"><textarea class="input req-title" data-f="what" rows="1" aria-label="O que precisa ser feito">${esc(r.what)}</textarea></div>
         <div class="req-meta">${personAvatar(r.created_by, r.created_by_name || "?")}<span>Pedido por <b>${esc(r.created_by_name || "—")}</b> · ${esc(ago(r.created))}</span><span id="duebadge">${dueBadge(r)}</span></div>
         <div class="panel">
           <div class="section-title">Status</div>
           ${seg("status", Object.keys(o.status), r.status, o.status, "statuses")}
           <div id="missingbox" class="mt" ${r.status === "waiting" || r.missing ? "" : "hidden"}>
             <div class="field"><label>O que falta${r.created_by_name ? ` (${esc(firstName(r.created_by_name))})` : ""}</label>
-            <textarea class="input" data-f="missing" placeholder="O que está faltando para seguir?">${esc(r.missing)}</textarea></div>
+            <textarea class="input" data-f="missing" aria-label="O que falta" placeholder="O que está faltando para seguir?">${esc(r.missing)}</textarea></div>
           </div>
         </div>
         <div class="panel">
@@ -431,6 +431,8 @@ async function viewRequest(_q, id) {
       </aside>
     </div></div>`;
   const root = app.firstElementChild;  // off the page once the person leaves this request
+  // a row's name is a plain cell beside its field: the field gets it as its label
+  $$(".kv .k", root).forEach((k) => $("[data-f]", k.nextElementSibling)?.setAttribute("aria-label", k.textContent));
 
   const save = async (patch, el) => {
     try {
