@@ -226,7 +226,7 @@ CAMPAIGN_URL_ID = (
     r"campaign_id=(\d+)",
     r"/campaigns/(\d+)",
 )
-EXPORT_TABLES = ("campaign", "review", "insight", "meta_connection", "meta_log")
+EXPORT_TABLES = ("billing", "campaign", "review", "insight", "meta_connection", "meta_log")
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -1612,7 +1612,7 @@ class Store:
         return self.report_link(token)
 
     def table(self, name: str) -> list[dict]:
-        """Every row of one of the tracking tables, for the export."""
+        """Every row of one of the tables the export carries whole."""
         if name not in EXPORT_TABLES:
             raise Invalid("tabela desconhecida")
         with self.db() as db:

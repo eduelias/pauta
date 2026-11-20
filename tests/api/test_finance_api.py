@@ -164,3 +164,7 @@ def test_export_carries_the_ledger(team):
     doc = call(f"{base}/api/export", cookie=nato)[1]
     assert doc["finance"]["currency"] == "BRL"
     assert [p["amount"] for p in doc["payments"]] == [100]
+    # the cycle each payment points at comes along: who pays how much, and since when
+    (cycle,) = doc["billing"]
+    assert cycle["client"] == c["id"] and cycle["cents"] == 10000 and cycle["ended"] is None
+    assert doc["payments"][0]["billing"] == cycle["id"]
