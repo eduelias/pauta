@@ -187,6 +187,8 @@ def test_a_clients_days_of_balance_are_those_of_its_first_account_to_run_out():
         "days_left": None,
     }
     assert overview.balance([account(None, 7000)]) is None and overview.balance([]) is None
+    # a live account without a spending limit next to an idle one at zero: nothing ran out
+    assert overview.balance([account(None, 7000), account(0, 0, active=False)]) is None
 
 
 # ---- flags -----------------------------------------------------------------------------------
@@ -243,6 +245,9 @@ def test_results_falling_to_zero_at_the_same_spend_raise_the_volume_alert():
     # with more money in (spend up 40%) there is no cost per result to compare: said too
     more = {**gone, "text": "resultados caíram a zero com mais investimento"}
     assert overview.flags(client(total(7000, 50), before), TODAY) == [more]
+    # one result left out of 250 rounds to -100% and is not zero: the cost alert says it
+    few = overview.flags(client(total(7000, 50, 1, CHATS), total(5000, 50, 250, CHATS)), TODAY)
+    assert [f["key"] for f in few] == ["cost"]
     # under the minimum count before, the clicks still decide (4 results → 0 says little)
     assert overview.flags(client(total(5000, 50), total(5000, 50, 4, CHATS)), TODAY) == []
     # the last week counts something else: not the same thing, the click compares

@@ -73,25 +73,29 @@ function periodPicker(st) {
   </div>`;
 }
 function bindPeriod(st, onChange) {
+  // The screen draws itself again with the new period. When that fails, the period goes back
+  // to the one drawn (the buttons and the dates still show it, whatever was tapped since)
+  // and the person is told, instead of a tap that did nothing
+  const drawn = { p: st.p, since: st.since, until: st.until, dates: [$("#psince").value, $("#puntil").value] };
+  const change = () => Promise.resolve(onChange()).catch((e) => {
+    Object.assign(st, { p: drawn.p, since: drawn.since, until: drawn.until });
+    [$("#psince").value, $("#puntil").value] = drawn.dates;
+    toast(e.message, true);
+  });
   $("#period .seg").addEventListener("click", (e) => {
     const b = e.target.closest("[data-p]");
     if (!b || b.dataset.p === st.p) return;
     const [since, until] = periodDates(st.p, st);  // Personalizado starts from the range shown
-    const was = { ...st };
     st.p = b.dataset.p;
     if (st.p === "custom") { st.since = since; st.until = until; }
-    change(was);
+    change();
   });
-  // the screen draws itself again with the new period; when that fails the period goes back
-  // (the buttons still show it) and the person is told, instead of a tap that did nothing
-  const change = (was) => Promise.resolve(onChange()).catch((e) => { Object.assign(st, was); toast(e.message, true); });
   const custom = () => {
     const a = $("#psince").value, b = $("#puntil").value;
     if (!isISO(a) || !isISO(b)) return;
-    const was = { ...st };
     [st.since, st.until] = a <= b ? [a, b] : [b, a];
     st.p = "custom";
-    change(was);
+    change();
   };
   $("#psince").addEventListener("change", custom);
   $("#puntil").addEventListener("change", custom);

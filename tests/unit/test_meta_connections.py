@@ -267,6 +267,18 @@ def test_a_connection_meta_does_not_answer_for_keeps_its_accounts_as_last_read(m
     assert [a["id"] for a in meta_on.accounts(refresh=True)] == ["111", "222", "444"]
 
 
+def test_meta_not_answering_is_said_over_an_old_revocation(meta_on, fake_meta):
+    """Every connection fails: one revoked long ago, the other because Meta is down. The
+    reason given is the passing one, not "reconnect", which would fix nothing."""
+    connect_two(meta_on, fake_meta)
+    fake_meta.revoke(BUSINESS)
+    meta_on.accounts()
+    fake_meta.down_for.add(OTHER_BUSINESS)
+    with pytest.raises(MetaError) as e:
+        meta_on._read()
+    assert e.value.status != 409
+
+
 def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, monkeypatch):
     """Desconectar unlinks the file while a read is out; Meta's 190 for that read arrives
     after. Marking "revoked" reads and writes under the lock and only a file still there,

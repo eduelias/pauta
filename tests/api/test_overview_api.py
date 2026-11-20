@@ -92,7 +92,7 @@ def test_a_member_sees_every_client_on_one_row(team, fake_meta):
 
 
 def test_days_of_balance_are_per_ad_account_the_smallest_for_the_client(
-    team, fake_meta, monkeypatch
+    team, fake_meta, monkeypatch, store
 ):
     """Two ad accounts of one client: R$ 10,00 left on the one that spends about R$ 20 a
     day, R$ 1.000,00 on the other. Summed it reads as weeks of balance; the first account
@@ -109,6 +109,12 @@ def test_days_of_balance_are_per_ad_account_the_smallest_for_the_client(
     (row,) = get(base, piero)["clients"]
     assert row["balance"] == {"remaining_cents": 1000, "days_left": 0}
     assert {"key": "balance", "level": overview.ACT, "text": "saldo acaba hoje"} in row["flags"]
+    # its campaigns ended: what is left on an account where nothing runs is not running out
+    with store.db() as db:
+        db.execute("UPDATE campaign SET state='ended' WHERE account_id='111'")
+    (row,) = get(base, piero)["clients"]
+    assert row["balance"]["days_left"] != 0
+    assert "balance" not in {f["key"] for f in row["flags"]}
 
 
 def test_a_custom_period_and_its_previous_one(team, fake_meta):

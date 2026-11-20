@@ -132,6 +132,22 @@ def test_a_history_read_that_failed_is_tried_again_until_it_works(team):
     assert sum("/insights" in c for c in fake.calls) == 2
 
 
+def test_a_pause_asked_during_a_history_read_ends_the_pass(team, monkeypatch):
+    store, meta, *_ = team
+    real, asked = meta.daily_insights, []
+
+    def paused(*args, meta_ids=None, **kw):
+        if meta_ids:  # a history read, by campaign id
+            asked.append(meta_ids)
+            raise MetaError(THROTTLED, 503)
+        return real(*args, meta_ids=meta_ids, **kw)
+
+    monkeypatch.setattr(meta, "daily_insights", paused)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert len(asked) == 1  # not one more read once Meta asked for a pause
+    assert [e["status"] for e in out["errors"]] == [503]
+
+
 def test_run_links_done_requests(team):
     store, meta, fake, clinic, _ = team
     r = store.create_request(

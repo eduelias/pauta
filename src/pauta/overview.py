@@ -122,12 +122,12 @@ def balance(accounts: list[dict]) -> dict | None:
     balance belongs to one account, so each is divided by its own spend. Only an account
     with something live counts: one at zero is out today whatever it spent, one Meta gives
     no balance for, or that spent nothing, has no day count and hides no other. When none
-    has one: what is left on all of them, and no days. None when Meta gives no balance."""
-    known = [a["remaining_cents"] for a in accounts if a["remaining_cents"] is not None]
+    has one: what is left on the live ones (on all, when nothing is live), and no days.
+    None when Meta gives no balance."""
+    live = [a for a in accounts if a["active"]]  # elsewhere nothing is running out
+    known = [a["remaining_cents"] for a in live or accounts if a["remaining_cents"] is not None]
     timed = []
-    for a in accounts:
-        if not a["active"]:  # nothing runs there: its balance is not what runs out
-            continue
+    for a in live:
         days = 0 if a["remaining_cents"] == 0 else days_left(a["remaining_cents"], a)
         if days is not None:
             timed.append((days, a["remaining_cents"]))
@@ -190,7 +190,7 @@ def flags(
             # at the same spend this is the cost rising too: one sentence says both
             text = f"{what} caíram {-ch['volume_pct']}% com o mesmo investimento"
             out.append({"key": "volume", "level": WATCH, "text": text})
-        elif ch["kind"] == "result" and ch["volume_pct"] == -100 and (ch["spend_pct"] or 0) > 0:
+        elif ch["kind"] == "result" and not last["results"] and (ch["spend_pct"] or 0) > 0:
             # more money and nothing back: there is no cost per result left to compare
             text = "resultados caíram a zero com mais investimento"
             out.append({"key": "volume", "level": WATCH, "text": text})

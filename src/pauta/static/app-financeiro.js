@@ -83,12 +83,12 @@ async function viewFinance() {
     </div>
     ${body}
   </div>`;
-  // the panel asks for its data again: when that fails the choice goes back and is said
-  const sel = $("#finmonth");
+  // the panel asks for its data again: when that fails the choice goes back to what is
+  // drawn (whatever was tapped since) and is said
+  const sel = $("#finmonth"), drawn = { ...finState };
   const again = (change) => {
-    const was = { ...finState };
     change();
-    viewFinance().catch((e) => { Object.assign(finState, was); if (sel) sel.value = was.month; toast(e.message, true); });
+    viewFinance().catch((e) => { Object.assign(finState, drawn); if (sel) sel.value = drawn.month; toast(e.message, true); });
   };
   $$("[data-filter]").forEach((b) => b.addEventListener("click", () => again(() => {
     finState.filter = finState.filter === b.dataset.filter ? null : b.dataset.filter;
