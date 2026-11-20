@@ -180,8 +180,9 @@ def install(route, store, auth, drive, meta):
         how cost and volume moved against the period of the same length before (`change`:
         by result when both count the same thing, else by link click; `partial` and no
         percentages when the client's numbers start after that period did), one entry per day
-        of the last 14 (`days`), what is left on its accounts and for how many days at the
-        last 7 days' pace (`balance`, null when Meta gives none), `seen_today` and its
+        of the last 14 (`days`), what is left on its ad account that runs out first and for
+        how many days at that account's last 7 days' pace (`balance`, null when Meta gives
+        none; without a pace, what is left on all of them), `seen_today` and its
         `flags` ([{key, level, text}], rules over the last 7 full days against the 7
         before). Read from the stored daily numbers and Meta's cached account list: never
         a wait on Meta. Why a client has no fresh numbers is spelled out to admins only."""
@@ -202,15 +203,20 @@ def install(route, store, auth, drive, meta):
             for c in store.connections()
             if c["state"] != "ok" or c["error"]
         }
-        remaining: dict[int, int | None] = {}
+        spent: dict[str, int] = {}  # per ad account, in the flags' last window
+        for c in store.campaign_rows(*last):
+            for k in c["campaigns"]:
+                spent[k["account_id"]] = spent.get(k["account_id"], 0) + k["spend_cents"]
+        accounts: dict[int, list[dict]] = {}
         problems: dict[int, str] = {}
         for a in store.meta_accounts():
             if not a["client"]:
                 continue
             cid = a["client"]["id"]
             left = ((live.get(a["id"]) or {}).get("balance") or {}).get("remaining_cents")
-            if left is not None:
-                remaining[cid] = (remaining.get(cid) or 0) + left
+            accounts.setdefault(cid, []).append(
+                {"remaining_cents": left, "spend_cents": spent.get(a["id"], 0)}
+            )
             why = troubled.get(a["business_id"]) if meta.connected else NOT_CONNECTED
             if why:
                 problems[cid] = (
@@ -220,7 +226,7 @@ def install(route, store, auth, drive, meta):
             clients,
             today,
             windows["previous"][0],
-            remaining,
+            {cid: overview.balance(mine) for cid, mine in accounts.items()},
             problems,
             store.seen_on(today),
             store.reviews_used(),

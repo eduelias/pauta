@@ -5,9 +5,10 @@ flags; open to members, the reason numbers aren't arriving spelled out to admins
 from datetime import date, timedelta
 
 import pytest
-from test_campaigns_api import last_30_days, synced, today_in_sao_paulo
+from test_campaigns_api import last_30_days, sync_now, synced, today_in_sao_paulo
+from test_meta_api import connected
 
-from fakemeta import BUSINESS, expected
+from fakemeta import BALANCE, BUSINESS, expected
 from pauta import overview
 from softpasskey import call
 
@@ -86,6 +87,26 @@ def test_a_member_sees_every_client_on_one_row(team, fake_meta):
     for c in doc["clients"]:
         assert {f["key"] for f in c["flags"]} <= KEYS - {"no_data", "unseen", "balance"}
         assert all(f["text"] and f["level"] in (0, 1, 2) for f in c["flags"])
+
+
+def test_days_of_balance_are_per_ad_account_the_smallest_for_the_client(
+    team, fake_meta, monkeypatch
+):
+    """Two ad accounts of one client: R$ 10,00 left on the one that spends about R$ 20 a
+    day, R$ 1.000,00 on the other. Summed it reads as weeks of balance; the first account
+    stops today, and that is what the row says (with that account's balance)."""
+    monkeypatch.setitem(BALANCE, "111", {"spend_cap": "1000", "amount_spent": "0"})
+    monkeypatch.setitem(BALANCE, "222", {"spend_cap": "100000", "amount_spent": "0"})
+    base, nato, piero = connected(team, fake_meta)
+    client = call(f"{base}/api/clients", {"name": "Cliente A"}, nato)[1]
+    call(f"{base}/api/meta", cookie=nato)  # reads the accounts into meta_account
+    for account in ("111", "222"):
+        url = f"{base}/api/meta/accounts/{account}"
+        assert call(url, {"client": client["id"]}, nato, method="PATCH")[0] == 200
+    sync_now(base, nato)
+    (row,) = get(base, piero)["clients"]
+    assert row["balance"] == {"remaining_cents": 1000, "days_left": 0}
+    assert {"key": "balance", "level": overview.ACT, "text": "saldo acaba hoje"} in row["flags"]
 
 
 def test_a_custom_period_and_its_previous_one(team, fake_meta):
