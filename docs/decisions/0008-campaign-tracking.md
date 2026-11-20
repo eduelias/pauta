@@ -10,6 +10,78 @@
   shape: a settings block per module, statuses derived, never stored).
 - **Changes:** adds an `Acompanhamento` tab, a `Campanhas` card on the client page and an
   `Acompanhamento` panel on Equipe; phase 2 adds a Meta connection on Equipe and a sync.
+- **Amended by:** decision 10 (1.7.0): Equipe is Configurações.
+
+## As built (1.15.1)
+
+Checked against the code on 2026-11-20. Where the plan below differs from this list, this
+list is what runs.
+
+**Built** (in 1.7.0 unless a release is named):
+
+- The **Campanhas** tab, only when the server has Meta configured: one block per client,
+  its tracked campaigns with Resultados, Custo por resultado, Valor gasto, Impressões,
+  Alcance and Orçamento for the period, and each account's Saldo.
+- Campaigns come from Meta alone. The sync makes a `campaign` row for every ACTIVE campaign
+  of a linked ad account, ends it when Meta stops delivering and reopens it when Meta does.
+  A person only sets **Não acompanhar** (`skipped`) or **Acompanhar** again:
+  `PATCH /api/campaigns/{id}` takes `state` and, for admins, `request`.
+- The sync: a scheduler inside the serve process (hourly for two days, nightly for 28),
+  `pauta meta sync`, and **Atualizar agora** (`POST /api/meta/sync`, admins, once per 15
+  minutes).
+- One connection per business portfolio (`meta_connection`, one token file each) and its
+  history in a table of its own, `meta_log` (`GET /api/meta/log`). A connection is marked
+  revoked only when a read gets Graph error 190; `debug_token` is never called.
+- **Visto hoje** per client (`POST /api/clients/{id}/reviews`: one `review` per active
+  campaign, with the numbers as a snapshot) and the count of clients seen today.
+- The period picker with Ads Manager's presets, default "Últimos 30 dias". The server's
+  own default goes by the ad account's day; the picker's dates come from the browser's day.
+- The campaign page: a metric picker (Resultados, Custo por resultado, Valor gasto, Cliques
+  no link, Custo por clique no link, Alcance, Impressões, CTR, CPM, Frequência, and the
+  actions Meta reports), each with a chart per day.
+- A done request of a tracking kind is linked to its campaign by the id in its
+  `campaign_url`, or by hand. Only that link writes an `event` on the request.
+- The client page's **Meta** card: the tracked campaigns of the last 30 days and the
+  balance of each linked account. `GET /api/clients/{id}` gains `meta_accounts`.
+- Settings under `campaigns` (`GET|PATCH /api/campaigns/settings`, 1.10.0): `tracking_kinds`
+  and seven alert thresholds.
+
+**In this record, never built:**
+
+- Phase 1 as a list that works without Meta: `/api/tracking`, `/api/tracking/start` and
+  `/api/tracking/settings`, the "Para acompanhar" inbox, **Nova campanha**, the nav counter.
+- A cadence and its statuses (`never`, `overdue`, `due`, `done`): the column
+  `campaign.every_days` exists and nothing reads or writes it. A check on one campaign;
+  deleting a check.
+- Pausar, Reativar and Encerrar buttons; editing a campaign's name or note.
+- The `tracking` settings block (`enabled`, `kinds`, `every_days`) and `lead_metric`. A
+  lead is fixed as a link click; since 1.8.0 the labels are "Cliques no link" and "Custo por
+  clique no link".
+- The Painel stat "Clientes para ver hoje" and the toast "Vai para Acompanhamento".
+- Timeline events for starting, pausing and ending tracking.
+- The AI text: "Gerar análise", the Claude API call, `ai_text`, `pauta.db.ai-key`.
+- Of the suggested metrics: Saldo as a metric, Taxa de conversão, Ritmo de gasto, hook
+  rate, ROAS, the best and worst ads.
+- Resultados falling back on the optimization goal: the fallback map is by objective only.
+
+**Built, and not in this record:**
+
+- The client's report, `#/relatorio/<id>`: **Gerar relatório**, **Copiar imagem** and
+  **Abrir conversa** (1.8.0). Its public link is decision 12.
+- **Visto hoje: todos** (`POST /api/reviews/today`, 1.9.0).
+- The chooser "Qual campanha o pedido criou?", shown to an admin who marks a tracking-kind
+  request done.
+- **Visão geral**, its alerts and the messages to the client (from 1.10.0;
+  `docs/campaign-overview-spec.md`).
+- The period's reach is kept for an hour, and then still answered, up to a day old, while
+  Meta is read again.
+- An unlinked account is linked to the client with the same `ad_account` only the first
+  time Meta lists it, so an admin's unlink stays.
+- On the phone, Campanhas takes the tab-bar slot that decision 7 gave Financeiro.
+
+**Reading the rest:** the campaign tables are schema v9 (phase 1's Data row says v7); the
+spike listed under "Still open" was done (see "Spike result"); the login configuration asks
+for MANAGE (the "Saldo" row), where "Consequences" and "Open questions" still say ANALYZE.
 
 ## Context
 
