@@ -11,6 +11,9 @@
   all three jobs.
 - **2026-11-20:** the code differs: that third job runs in a third environment, `acc`, which
   `scripts/repo-settings.sh` does not set up.
+- **2026-11-20:** "Published releases only" became "This run's build only" (below): the
+  release page cannot be read without a login while the repository is private, so the
+  script that fetched `SHA256SUMS` from it could never be installed on du7.
 
 ## Context
 
@@ -64,8 +67,14 @@ On du7 (`deploy/provision-du7.sh`):
   on a `vX.Y.Z` tag and `du7` of `deploy.yml` or `deploy-branch.yml` (decision 9) run by
   hand on `main`, each only when the owner started the run and, for a run started again,
   did that too. A branch, a pull request or a fork gets a failed job before any step runs.
-- **Published releases only**: `pauta-deploy` fetches the release's `SHA256SUMS` from GitHub
-  itself and refuses a wheel or lockfile that doesn't match it.
+- **This run's build only**: the release run takes the sha256 of the wheel and of the
+  lockfile when it builds them and hands both to `pauta-deploy`, which installs that run's
+  own artifact and refuses a wheel or lockfile that doesn't hash to them. Nothing is fetched
+  from the release page. A Deploy run by hand installs nothing: it only switches to a
+  release already on du7. The trade: root on du7 no longer checks the files against
+  anything outside the caller's reach. The hashes come from the workflow run, so they only
+  bind a deploy to that run's build; what keeps anyone else's files out is the job guard
+  above (only the owner's release and deploy runs reach the runner).
 
 ## Consequences
 
@@ -74,6 +83,8 @@ On du7 (`deploy/provision-du7.sh`):
   updated, the runner is unguarded: approve no fork runs and add nobody in between.
 - `pauta-deploy` needs the release downloadable without a token, so du7 is updated *after*
   the repo is public (while private, deploys would stop with "can't fetch SHA256SUMS").
+  2026-11-20: no longer; du7 is updated first, private or public (deploy/README.md,
+  "Collaborators").
 - The owner's own releases are unchanged (`make release`); every release still needs the
   owner, by design.
 - Without Pro, going private again would switch the rulesets off.

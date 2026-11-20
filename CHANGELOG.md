@@ -7,6 +7,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Changed
+
+- du7: o `pauta-deploy` instala o que o próprio release construiu. O CI calcula o sha256
+  do wheel e do `requirements.lock` logo depois de construí-los e entrega os dois ao du7,
+  que instala os arquivos dessa mesma execução e recusa o que não bater. Nada mais é
+  buscado na página do release: com o repositório privado ela responde 404 sem login, e
+  por isso a conferência anterior nunca pôde ser instalada no du7. O Deploy disparado à
+  mão não instala mais nada: só troca para uma versão que já está no du7
+  (`pauta-deploy --activate`). Vale depois de rodar `deploy/provision-du7.sh` no du7; até
+  lá o deploy de um release para no primeiro passo, sem instalar.
+
 ## [1.16.0] - 2026-11-20
 
 ### Fixed
