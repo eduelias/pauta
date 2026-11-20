@@ -1,6 +1,7 @@
 # 3. Files on requests, stored in OneDrive
 
-- **Status:** proposed (2026-10-29), built in the PR that adds this file
+- **Status:** shipped in 1.4.0 (2026-10-29). Proposed the same day, in the PR that added this
+  file; "What an upload costs" was added on 2026-11-15
 - **Asked by:** Piero, who runs the campaigns
 
 ## Context

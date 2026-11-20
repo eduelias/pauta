@@ -1,12 +1,12 @@
 # 1. An acceptance environment on du7
 
-- **Status:** accepted, not built yet (decided 2026-10-28; build it when needed)
-- **Depends on:** the domain choice. If Pauta moves off `genic.dev`, build acceptance on the
-  new domain directly.
-- **Amended by:** decision 9 (proposed): acceptance takes builds of any branch, started by
+- **Status:** accepted (decided 2026-10-28). Built by hand on 2026-10-29, outside a release;
+  on `acc.pauta.cc` since 2026-10-31. Builds reach it through decision 9 (announced in 1.7.0).
+- **Depends on:** the domain choice, settled by decision 4: `acc.pauta.cc`.
+- **Amended by:** decision 9: acceptance takes builds of any branch, started by
   hand by the owner, through `pauta-deploy-branch` instead of `pauta-deploy`; deploying `main`
   on every merge is not built.
-- **Amended by:** decision 8 (proposed): one real client's ad account, unnamed and with no
+- **Amended by:** decision 8: one real client's ad account, unnamed and with no
   contacts, may live on acceptance for testing the Meta integration.
 
 ## Context

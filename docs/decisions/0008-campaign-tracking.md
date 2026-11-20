@@ -1,7 +1,9 @@
 # 8. Acompanhamento: a daily check of every live campaign, then its numbers from Meta
 
-- **Status:** proposed (2026-10-31), nothing built. Revised twice the same day with Piero's
-  answers to the open questions.
+- **Status:** shipped in 1.7.0 (2026-11-01) as the Campanhas tab, with Meta only; later
+  releases changed it. Proposed 2026-10-31 and revised twice the same day with Piero's
+  answers to the open questions. The text below is the plan and the spike notes, kept as
+  written; "As built (1.15.1)" says what the code does today.
 - **Asked by:** Piero, who runs the campaigns (WhatsApp, 2026-10-31)
 - **Depends on:** nothing for phase 1. **Fits:** decision 5 (one database per team: the
   tables are in the team's file, the Meta token is a file next to it) and decision 7 (same

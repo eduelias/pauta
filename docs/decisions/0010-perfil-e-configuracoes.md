@@ -1,6 +1,6 @@
 # 10. Perfil for the person, Configurações for the team
 
-- **Status:** proposed (2026-11-01), built in this PR
+- **Status:** shipped in 1.7.0 (2026-11-01). Proposed the same day, in the PR that built it
 - **Depends on:** nothing. **Fits:** decision 4 (the one-time link that makes a passkey for an
   existing account; decision 8 (the Meta connection is the team's, so it stays on the team's
   page).

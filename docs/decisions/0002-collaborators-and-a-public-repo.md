@@ -1,7 +1,8 @@
 # 2. Collaborators, and a public repository
 
-- **Status:** accepted (decided 2026-10-29). The repo-side parts are built; the du7 parts
-  apply the next time du7 is reachable (deploy/README.md, "Collaborators").
+- **Status:** accepted (decided 2026-10-29). Shipped in 1.3.0; du7's parts (the job guard,
+  the deploy script that installs published releases only) are in place (deploy/README.md,
+  "Collaborators"; 1.7.0 fixed the guard's file name).
 - **Amended by:** decision 12 (2026-11-04, lifetime cut to 5 days on 2026-11-05): one read-only page, `/r/<token>`, opens
   without an account, for 5 days, showing one campaign's report card and nothing else.
 

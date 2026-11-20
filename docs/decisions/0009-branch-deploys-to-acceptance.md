@@ -1,6 +1,6 @@
 # 9. Any branch on acceptance, by hand, as its own user
 
-- **Status:** proposed (2026-10-31)
+- **Status:** shipped and in use; announced in 1.7.0 (2026-11-01). Proposed 2026-10-31
 - **Amends:** decision 1 (acceptance was to be deployed from `main` only, by `pauta-deploy`
   taking the environment as an argument). **Fits:** decision 2 (the runner's job guard, the
   sudo rule as the only way to root).

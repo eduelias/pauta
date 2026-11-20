@@ -1,9 +1,9 @@
 # 12. A public link to one campaign report
 
-- **Status:** proposed (2026-11-04), built in this PR for the owner's review. It is the first
+- **Status:** shipped in 1.8.2 (2026-11-05). Proposed 2026-11-04. It is the first
   exception to decision 2's rule that everything in Pauta needs a signed-in account.
-- **Amended 2026-11-05:** the lifetime went from 30 days (as released in 1.8.2) to 5. Links
-  made before keep the expiry stored on their row.
+- **Amended 2026-11-05:** the lifetime went from 30 days (as released in 1.8.2) to 5
+  (1.8.3). Links made before keep the expiry stored on their row.
 - **Depends on:** PR 35 (the client's report, `#/relatorio/<id>`). **Amends:** decision 2
   (one read-only, expiring, unguessable page is open; nothing else changes).
 - **Changes:** schema v14 (a `report_link` table, additive), `POST`/`DELETE

@@ -1,8 +1,8 @@
 # Campanhas, "Visão geral": every client at once, the ones that need a look first
 
-- **Status:** phases A and B built with this document (2026-11-12), at the owner's word
-  ("whatever we can now"); see "What was built" at the end for what differs from the
-  sketch. Phase C and the questions for Piero are open.
+- **Status:** phases A and B built with this document (2026-11-12, shipped in 1.10.0), at
+  the owner's word ("whatever we can now"); see "What was built" at the end for what differs
+  from the sketch. Phase C and the questions for Piero are open.
 - **Asked by:** Piero, in a voice note of 2026-11-11, thinking aloud about the day he has 50
   or 60 clients instead of 12.
 - **Builds on:** decision 8 (Acompanhamento: the daily check, the numbers from Meta) and

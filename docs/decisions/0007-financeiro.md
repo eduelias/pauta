@@ -1,6 +1,6 @@
 # 7. Financeiro: a receivables ledger per client
 
-- **Status:** proposed (2026-10-30)
+- **Status:** shipped in 1.5.0 (2026-10-30), fixed in 1.5.1. Proposed the same day
 - **Depends on:** nothing. **Fits:** decision 5 (one database per team: everything here is
   in the team's file) and decision 6 (plans live in `control.db`; nothing here touches them).
 - **Changes:** adds a `Financeiro` tab, a `Pagamentos` card on the client page and a

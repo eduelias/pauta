@@ -3,7 +3,7 @@
 - **Status:** accepted (2026-10-31). The owner bought **`pauta.cc`** and **`pauta.team`** at
   Cloudflare on 2026-10-31; both are delegated to the same Cloudflare account as `du7.dev`.
   Revised the same day: the app on `app.pauta.cc`, the public site on `www.pauta.cc`.
-  1.6.0 put the app on the apex; the hosts below come with 1.6.1 (eduelias/pauta#18).
+  Shipped: 1.6.0 put the app on the apex; the hosts below came with 1.6.1 (eduelias/pauta#18).
   Acceptance is on `acc.pauta.cc` since 2026-10-31. The team is moving.
 - **Blocks:** decision 5 (other teams) and decision 6 (billing). Decision 1 (acceptance)
   moves with it (`acc.pauta.cc`).

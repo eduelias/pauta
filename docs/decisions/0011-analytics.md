@@ -1,6 +1,6 @@
 # 11. Analytics: a usage log inside the app, Plausible on the public site
 
-- **Status:** accepted for the app part (2026-11-03): the `usage` table, `POST /api/usage`,
+- **Status:** the app part is accepted (2026-11-03) and shipped in 1.8.1: the `usage` table, `POST /api/usage`,
   `track()` with the events below and `pauta usage` are in the app (retention 90 days, pruned
   by the nightly `pauta backup`; `pauta usage --disable` switches a team's log off). The owner
   confirmed the signals from the production journal and the `event` table by hand: screens
