@@ -4,11 +4,15 @@
   exception to decision 2's rule that everything in Pauta needs a signed-in account.
 - **Amended 2026-11-05:** the lifetime went from 30 days (as released in 1.8.2) to 5
   (1.8.3). Links made before keep the expiry stored on their row.
+- **2026-11-20:** the code differs: "5 dias" is fixed text in the link preview's description
+  and in the app's two captions, whatever expiry the link's row holds (`report.LINK_DAYS` is
+  not used for them). The public page itself prints the row's date ("Este link vale até …").
 - **Depends on:** PR 35 (the client's report, `#/relatorio/<id>`). **Amends:** decision 2
   (one read-only, expiring, unguessable page is open; nothing else changes).
-- **Changes:** schema v14 (a `report_link` table, additive), `POST`/`DELETE
-  /api/campaigns/{id}/links`, `links` on `GET /api/campaigns/{id}`, two open routes
-  (`GET /r/<token>` and `GET /api/r/<token>`), `static/report.html`, `static/app-report.js`.
+- **Changes:** schema v14 (a `report_link` table, additive), `POST
+  /api/campaigns/{id}/links`, `DELETE /api/campaigns/{id}/links/{token}`, `links` on
+  `GET /api/campaigns/{id}`, two open routes (`GET /r/<token>` and `GET /api/r/<token>`),
+  `static/report.html`, `static/report-gone.html` (the 404 page), `static/app-report.js`.
 
 ## Context
 
@@ -31,15 +35,15 @@ only what the card shows.
 
 | Topic | Decision |
 |---|---|
-| What is public | One campaign's report card as the team saw it: the campaign's name, the client's name (with the initials avatar), the period, whether the campaign is active, paused or ended (and when), one tile per metric chosen when the link was made (the period's value, Ads Manager's label for Resultados, the plain line, a bar per day), the date of Meta's numbers and the first name of the teammate who prepared it. Nothing else: no phone, contact or address, no ad account or Meta campaign ids, no budgets, notes, requests or other campaigns |
+| What is public | One campaign's report card as the team saw it: the campaign's name, the client's name (with the initials avatar), the period, whether the campaign is active, paused or ended (and when), one tile per metric chosen when the link was made (the period's value, Ads Manager's label for Resultados, the plain line, a bar per day), the date of Meta's numbers, the first name of the teammate who prepared it, the ad account's currency and the day the link ends. Nothing else: no phone, contact or address, no ad account or Meta campaign ids, no budgets, notes, requests or other campaigns |
 | Only the chosen metrics | `GET /api/r/<token>` returns the period sums and the daily rows **filtered to the fields the chosen metrics need** (`report.py`, `METRIC_FIELDS`). A link for "Resultados" alone does not carry the spend; one for "Cliques no link" does not carry the Resultados. The period's reach (a live number from Meta) is read once, when the link is made, and stored on the link: an anonymous page never calls Meta |
 | The token | `secrets.token_urlsafe(32)` (43 characters, 256 bits): not guessable, not enumerable. Stored as is, not hashed, so the campaign page can show the link again and the person can revoke it by its address; a copy of the database already holds everything a link shows, so hashing would protect nothing here. The route patterns keep tokens out of the request log (`/r/{param}`) |
 | Lifetime | 5 days (`report.LINK_DAYS`) from creation, then 404: long enough for the client to open it the week it was sent, short enough that a forwarded link goes dead soon. Not renewable: a new link is made instead |
 | Revoking | From the campaign page ("Links do relatório": period, metrics, who made it, until when, **Revogar**). A revoked link is a 404 from then on; the row stays as history |
 | One link per card | Asking for a link to the same campaign, period and metrics while one is still live returns that one, so a report shared twice has one address and one Revogar |
 | The period is fixed | A link holds `since` and `until` as dates. "Este mês" on 4 November becomes 1–4 November for good: the client sees the report that was sent, not a page that keeps moving |
-| The page | `/r/<token>` serves `static/report.html` with the title and `og:` tags filled in server-side (WhatsApp's preview crawler runs no JS): "Relatório da campanha X · Cliente Y · período", the campaign and client names in the preview as on the card. The page loads `app.js` and `app-campanhas.js` (the same `reportCard` the team's screen draws) and `app-report.js`, which fetches `GET /api/r/<token>`. CSP stays `'self'`; `noindex` stays on every response; `og:image` is Pauta's static one |
-| Not available | Unknown, expired and revoked tokens get a 404 with a plain page, "Este relatório não está mais disponível", not the app shell and not a JSON error |
+| The page | `/r/<token>` serves `static/report.html` with the title and `og:` tags filled in server-side (WhatsApp's preview crawler runs no JS): "Relatório da campanha X · Cliente Y · período", the campaign and client names in the preview as on the card. The page loads `app.js` and `app-campanhas.js` (the same `reportCard` the team's screen draws) and `app-report.js`, which fetches `GET /api/r/<token>` (since 1.15.0 the three are served as one file, `/report.bundle.js`). CSP stays `'self'`; `noindex` stays on every response; `og:image` is Pauta's static one |
+| Not available | Unknown, expired and revoked tokens get a 404 with a plain page, "Este relatório não está mais disponível", not the app shell and not a JSON error. That is `/r/<token>`; the data route `GET /api/r/<token>` answers them with a JSON 404, which the page shows in the same words |
 | Making a link | `POST /api/campaigns/{id}/links` with `{since, until, metrics}` needs a session (any member, as the report does), validates the period like `GET /api/campaigns/{id}` and the metrics against the card's keys (the ten fixed ones and `act:<type>`, 12 at most), and answers `{url, expires}` with the rest of the row. The address is the one the app is open on (`Origin`, else `Host`), so acceptance makes `acc.pauta.cc` links and production `app.pauta.cc` ones |
 | Abuse limits | Making a link counts in the existing `invite` bucket (30 an hour per address); opening `/r/...` or `/api/r/...` counts in the `login` bucket (120 a quarter hour per address), as the Meta callback does: a guess is a login attempt. Both are matched by pattern in `server.py` (`RATE_PATTERNS`), so `ratelimit.py` is untouched. A bucket of its own for the public page would be cleaner; that is the owner's file |
 | On the report screen | **Copiar link** makes the link on the first tap (and reuses it after) and copies it; "Link do relatório válido até <date>: <url>" is the one line under the buttons once a link exists (PR 35 removed the explanations there, at Piero's ask). **Abrir conversa** sends "Veja o relatório aqui: <url>" at the end of the WhatsApp message: when the link already exists the button is a plain link, when it does not the tap makes it first and opens WhatsApp in a new tab (on an iPhone that first time may land on wa.me's page with its own "Continuar" button, since a navigation from script is not a tap) |
