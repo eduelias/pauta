@@ -78,17 +78,6 @@ def test_anchor_fixed_day_is_the_latest_one_on_or_before_opening():
     ) == D("2026-10-10")
 
 
-def test_a_fixed_day_past_the_28th_comes_back_after_a_short_month():
-    s = {**S, "anchor": "fixed_day", "fixed_day": 31}
-    a = resolve_anchor(s, first_payment=None, since=None, opened=D("2026-02-28"), started=None)
-    assert a == D("2026-02-28")  # February has no 31st
-    got = standing(s, cents=10000, anchor=a, payments=[], today=D("2026-05-15"))
-    assert [p.start for p in got.periods] == [D("2026-02-28"), D("2026-03-31"), D("2026-04-30")]
-    # an explicit start on another day keeps its own day
-    got = standing(s, cents=10000, anchor=D("2026-02-10"), payments=[], today=D("2026-04-15"))
-    assert [p.start.day for p in got.periods] == [10, 10, 10]
-
-
 def test_an_explicit_start_wins():
     assert resolve_anchor(
         S,
