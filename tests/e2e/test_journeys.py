@@ -186,7 +186,8 @@ def test_keyboard_and_screen_reader_reach_a_request(live, device):
     clinic = store.save_client({"name": "Clínica Bem Estar"})
     store.create_request({"client": clinic["id"], "what": "Limpeza de pele"}, None)
     page.goto(f"{base}/#/pedidos")
-    page.get_by_role("link", name="#1", exact=True).press("Enter")
+    page.set_viewport_size({"width": 390, "height": 840})  # a phone: no Nº column
+    page.get_by_role("link", name="Limpeza de pele", exact=True).press("Enter")
     expect(page.get_by_label("O que precisa ser feito")).to_have_value("Limpeza de pele")
     for name in ("Tipo", "Objetivo", "Região", "Prazo", "Responsável", "Verba", "O que falta"):
         expect(page.get_by_label(name, exact=True)).to_have_count(1)

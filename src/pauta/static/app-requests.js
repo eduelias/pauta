@@ -79,7 +79,10 @@ async function viewBoard() {
         </div>`;
       }).join("")}
     </div></div></div>`;
-  $("#showc").addEventListener("change", (e) => { showCancelled = e.target.checked; viewBoard(); });
+  $("#showc").addEventListener("change", (e) => {
+    showCancelled = e.target.checked;
+    viewBoard().catch((err) => { showCancelled = e.target.checked = !showCancelled; toast(err.message, true); });
+  });
   let dragId = null;
   $$(".rcard[draggable]").forEach((c) => {
     c.addEventListener("dragstart", (e) => { dragId = c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
@@ -158,10 +161,10 @@ async function viewList(query) {
       (!needle || [r.client_name, r.kind, r.what, r.goal, r.missing, `#${r.id}`].join(" ").toLowerCase().includes(needle)));
     rows = ["done", "cancelled", "all"].includes(f) ? rows.sort((a, b) => b.id - a.id) : rows.sort(sortOpen);
     $("#rows").innerHTML = rows.length ? `<table class="table"><thead><tr><th>Nº</th><th>Cliente</th><th>Tipo</th><th>O que fazer</th><th>Prazo</th><th>Status</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr data-id="${r.id}"><td class="num"><a href="#/pedido/${r.id}">#${r.id}</a></td>
+      ${rows.map((r) => `<tr data-id="${r.id}"><td class="num">#${r.id}</td>
         <td><span class="cl">${avatar(r.client_name)}${esc(r.client_name)}</span></td>
         <td class="kind-cell"><span class="tag">${esc(r.kind || "—")}</span></td>
-        <td class="what-cell"><div>${esc(r.what)}</div></td>
+        <td class="what-cell"><div><a href="#/pedido/${r.id}">${esc(r.what)}</a></div></td>
         <td class="nowrap">${dueBadge(r) || '<span class="faint">—</span>'} ${prio(r.priority)}</td>
         <td>${statusBadge(r)}</td></tr>`).join("")}
       </tbody></table>` : `<div class="panel empty"><span class="big">🔎</span>Nenhum pedido aqui.</div>`;
@@ -467,8 +470,8 @@ async function viewRequest(_q, id) {
     show(b.dataset.v);
     if (f === "status" && b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
     save({ [f]: b.dataset.v }).then((ok) => {
-      if (!ok) { show(from); return; }
-      if (f !== "status") return;
+      show(r[f]);  // what the server has now, whatever another tap lit meanwhile
+      if (!ok || f !== "status") return;
       toast(`Status: ${STATUS()[b.dataset.v]}`);
       track("request_status", { from, to: b.dataset.v, via: "page" });
       // which campaign did it create? The timeline then says so, if the page is still up

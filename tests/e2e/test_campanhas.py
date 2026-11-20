@@ -941,6 +941,9 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
     period = label(date.fromisoformat(doc["since"]), date.fromisoformat(doc["until"]))
     row = page.locator(".orow[data-client]").filter(has_text="Clínica Bem Estar")
     c = rows["Clínica Bem Estar"]
+    # the account's pace: all it spent in the last seven days, the campaign set to "Não
+    # acompanhar" further down included (it draws on the same balance)
+    week = sum(d["spend_cents"] for d in c["days"][-7:])
     # plenty of balance: nothing to warn about, the summary only. Two campaigns that count
     # different things: no results line
     expect(row.locator(".oacts a")).to_have_text(["Enviar resumo"])
@@ -982,7 +985,6 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
     )
 
     # the balance runs low: what is left covers two days at the last seven days' pace
-    week = sum(d["spend_cents"] for d in c["days"][-7:])
     assert week > 0
 
     def leave(cents: int):

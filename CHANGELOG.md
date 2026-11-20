@@ -12,7 +12,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 - **"1.500" digitado como valor agora é mil e quinhentos.** Antes virava R$ 1,50: o ponto
   era lido como vírgula. Agora o ponto seguido de três dígitos é separador de milhar
   ("1.500", "R$ 2.000", "1.500.000") e a vírgula é a casa decimal. Vale para o valor do
-  cliente, os pagamentos, o valor padrão e a verba do pedido.
+  cliente, os pagamentos, o valor padrão e a verba do pedido (que deixou de ser um campo
+  "de número", onde o navegador descartava "1.500,50"). Um valor na ordem inglesa
+  ("2,500.00") é recusado com aviso, em vez de virar 2,50.
 - **"Hoje" é o dia do time (horário de Brasília).** O servidor usava o próprio relógio: a
   partir do começo da noite no Brasil, uma mensalidade que vencia hoje já aparecia em
   atraso e um pedido concluído na sexta à noite ficava com a data de sábado.
@@ -71,10 +73,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   fica no campo, para tentar de novo). Sem conexão, o aviso é "a conexão caiu; tente de
   novo" em vez do texto em inglês do navegador, a tela de erro ganhou o botão "Tentar de
   novo", e "Excluir pedido", "Exportar dados", "Sair" e os botões do OneDrive passaram a
-  avisar quando falham.
+  avisar quando falham. O mesmo vale para trocar o período em Campanhas, marcar
+  "Cancelados" no Quadro e filtrar o Financeiro: se a busca falha, a escolha volta e a
+  tela avisa.
 - **O link do WhatsApp funciona com dois números no campo do cliente.** Dois números no
   mesmo campo viravam um link só, com os dois grudados, que o WhatsApp recusava. Agora o
-  link usa o primeiro número completo; sem nenhum número completo, não há link.
+  link usa o primeiro número completo; sem nenhum número completo (um celular sem DDD,
+  por exemplo), não há link.
 - **O registro de uso guarda o tipo do pedido novo.** O tipo ficava sempre vazio.
 - **Convites e links param de valer junto com a conta.** Desativar uma pessoa, ou tirar
   dela o papel de administrador, cancela na hora os convites e os links de nova passkey
@@ -100,9 +105,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   qualquer valor diferente de `passkeys` iniciava no modo aberto (o de desenvolvimento).
   Agora vale `passkeys`, `open` ou vazio; outro valor para na largada com uma mensagem que
   diz qual. Sem a variável continua sendo o modo aberto.
-- **Teclado e leitor de tela nos pedidos.** O número de cada linha em Pedidos é um link (dá
-  para chegar com Tab e abrir com Enter), os campos do pedido têm nome para o leitor de
-  tela, e Esc fecha as janelas de confirmação.
+- **Teclado e leitor de tela nos pedidos.** O texto de cada linha em Pedidos é um link (dá
+  para chegar com Tab e abrir com Enter, também no celular), os campos do pedido têm nome
+  para o leitor de tela, e Esc fecha as janelas de confirmação.
 - du7: o `pauta-deploy` roda o Python isolado (`-I`) a partir de `/` e lê o wheel e o
   `requirements.lock` uma vez só, para uma pasta do root; a conferência com o release
   publicado e a instalação usam essas cópias.

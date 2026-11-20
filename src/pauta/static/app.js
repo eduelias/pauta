@@ -335,7 +335,7 @@ function waUrl(n) {
     const intl = raw.trim().startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
     d = d.replace(/^00/, "");  // the international prefix
     if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
-    if (!intl && d.length <= 11) d = "55" + d;
+    if (!intl && /^\d{10,11}$/.test(d)) d = "55" + d;  // a whole national number, area code and all
     if (/^[1-9]\d{10,14}$/.test(d)) return `https://wa.me/${d}`;
   }
   return "";

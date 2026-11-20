@@ -74,7 +74,8 @@ def test_a_whatsapp_link_is_one_whole_number_or_nothing(gate):
     assert wa("(11) 90000-0000 / (11) 90000-0001") == "https://wa.me/5511900000000"
     assert wa("loja 11 3000-0000, cel 11 90000-0001") == "https://wa.me/551130000000"
     assert wa("11 90000-0000 11 90000-0001") == ""
-    for nothing in ("", None, "sem número", "3000-0000", "123", "0000 0000 0000", "+0 000 000 000"):
+    odd = ("", None, "sem número", "3000-0000", "90000-0000", "123")
+    for nothing in (*odd, "0000 0000 0000", "+0 000 000 000"):
         assert wa(nothing) == "", nothing
     # 3,000 made-up fields, the same ones every run
     links = gate.evaluate(

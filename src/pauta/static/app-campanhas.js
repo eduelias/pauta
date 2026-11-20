@@ -77,16 +77,21 @@ function bindPeriod(st, onChange) {
     const b = e.target.closest("[data-p]");
     if (!b || b.dataset.p === st.p) return;
     const [since, until] = periodDates(st.p, st);  // Personalizado starts from the range shown
+    const was = { ...st };
     st.p = b.dataset.p;
     if (st.p === "custom") { st.since = since; st.until = until; }
-    onChange();
+    change(was);
   });
+  // the screen draws itself again with the new period; when that fails the period goes back
+  // (the buttons still show it) and the person is told, instead of a tap that did nothing
+  const change = (was) => Promise.resolve(onChange()).catch((e) => { Object.assign(st, was); toast(e.message, true); });
   const custom = () => {
     const a = $("#psince").value, b = $("#puntil").value;
     if (!isISO(a) || !isISO(b)) return;
+    const was = { ...st };
     [st.since, st.until] = a <= b ? [a, b] : [b, a];
     st.p = "custom";
-    onChange();
+    change(was);
   };
   $("#psince").addEventListener("change", custom);
   $("#puntil").addEventListener("change", custom);

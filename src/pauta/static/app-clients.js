@@ -226,7 +226,8 @@ async function viewClient(_q, id) {
     const b = e.target.closest("button");
     if (!b || b.classList.contains("on")) return;
     segOn(s, b.dataset.v);
-    if (!await save({ [s.dataset.seg]: b.dataset.v })) segOn(s, c[s.dataset.seg]);
+    await save({ [s.dataset.seg]: b.dataset.v });
+    segOn(s, c[s.dataset.seg]);  // what the server has now, saved or not
   }));
   $("#del")?.addEventListener("click", () => deleteClient(c));
   bindCopy(app);

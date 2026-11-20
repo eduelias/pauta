@@ -224,6 +224,18 @@ def test_offline_the_buttons_say_so_and_the_error_screen_tries_again(desk):
     page.get_by_role("button", name="Tentar de novo").click()
     expect(page.get_by_role("heading", name="Configurações")).to_be_visible()
 
+    # a screen asking for its own data again: the tick goes back and the reason is said
+    page.goto(f"{base}/#/quadro")
+    box = page.locator("#showc")
+    expect(box).not_to_be_checked()
+    d.context.set_offline(True)
+    box.click()
+    expect(toast).to_have_text(OFFLINE)
+    expect(box).not_to_be_checked()
+    d.context.set_offline(False)
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.get_by_role("heading", name="Configurações")).to_be_visible()
+
     d.context.set_offline(True)
     toast.evaluate("t => { t.hidden = true; }")
     page.get_by_role("button", name="Exportar dados").click()
