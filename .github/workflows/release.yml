@@ -66,7 +66,7 @@ jobs:
           echo "$LOCK_SHA256  dist/requirements.lock" | sha256sum -c -
           # a release someone else made for this tag would carry their files: refuse it
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            echo "::error::a release for $GITHUB_REF_NAME already exists; only this run makes one"
+            echo "::error::a release for $GITHUB_REF_NAME already exists; only this run makes one (a draft left by a failed attempt of this run: delete it, then re-run)"
             exit 1
           fi
           # releases are immutable once published: attach everything to a draft, then publish
@@ -74,7 +74,11 @@ jobs:
             --verify-tag --title "Pauta $VERSION" --notes-file notes.md
           gh release edit "$GITHUB_REF_NAME" --draft=false
           # published (immutable from here): what anyone downloads is what was built
-          gh release download "$GITHUB_REF_NAME" --dir published
+          # (asked a few times: a release just published may not answer in its first second)
+          for _ in 1 2 3; do
+            gh release download "$GITHUB_REF_NAME" --dir published --clobber && break
+            sleep 5
+          done
           (cd dist && sha256sum -- *) | sort -k2 > built.sums
           (cd published && sha256sum -- *) | sort -k2 > published.sums
           diff built.sums published.sums || { echo "::error::the published files are not the build's"; exit 1; }

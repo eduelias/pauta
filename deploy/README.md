@@ -124,6 +124,8 @@ database (the `passkey.rp_id` column is additive) and the old address still work
   again if it isn't healthy. A Deploy started by hand installs nothing: a version that is no
   longer on du7 is refused with the list of the ones that are, and the only way to put code
   on du7 is a release (to get older code back, release it again under a new version).
+- A release whose du7 job failed (an older `pauta-deploy` there, PyPI not answering): *Re-run
+  failed jobs* on that release run. It installs the same build (the artifact is kept 30 days).
 - Straight on du7, to the release before the current one: `sudo pauta-deploy --rollback`;
   to another installed one: `sudo pauta-deploy --activate X.Y.Z`.
 - What's live and what's installed: `sudo pauta-deploy --status`.
