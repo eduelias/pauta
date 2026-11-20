@@ -592,7 +592,7 @@ async function viewNew(_q, clientId) {
     const data = Object.fromEntries(new FormData(f));
     try {
       const r = await api("POST", "/api/requests", { ...data, ...segs });
-      track("request_created", { kind: data.kind || "", has_deadline: Boolean(data.due) });
+      track("request_created", { kind: segs.kind, has_deadline: Boolean(data.due) });
       toast(`Pedido #${r.id} enviado`);
       location.hash = `#/pedido/${r.id}`;
     } catch (err) { toast(err.message, true); btn.disabled = false; }
