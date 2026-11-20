@@ -67,7 +67,7 @@ class Standing:
     status: str
     anchor: date | None
     periods: tuple[Period, ...]  # up to and including the one that contains `today`
-    next_due: date | None  # first unpaid period, or the one after today's when all is paid
+    next_due: date | None  # the first period the payments do not cover
     owed: int  # cents, over the periods up to today
     paid: int  # cents, every live payment in the cycle
     months_active: int  # the current period's index (0 before the anchor)
@@ -166,11 +166,11 @@ def standing(
         next_due = unpaid.start
         status = "late" if today > unpaid.start + timedelta(days=grace) else "due"
     else:
-        next_due = period_start(anchor, len(starts), cadence)
+        # what is left over pays the following periods in advance (at most a hundred years
+        # of months, like the loop above); anchored ahead of today, that starts at the anchor
+        ahead = min(pool // cents, 1200) if cents > 0 else 0
+        next_due = period_start(anchor, len(starts) + ahead, cadence)
         status = "due_soon" if (next_due - today).days <= soon else "paid"
-    if not starts:  # anchored ahead of today
-        next_due = anchor
-        status = "due_soon" if (anchor - today).days <= soon else "paid"
     return Standing(
         status=status,
         anchor=anchor,
