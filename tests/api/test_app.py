@@ -163,6 +163,18 @@ def test_admin_tools(team):
     assert opts["kind"] == ["A", "B"]
 
 
+def test_boot_has_the_finance_settings_only_for_who_sees_money(team):
+    base, nato, piero, _ = team
+    assert call(f"{base}/api/boot", cookie=piero)[1]["finance"]["amount"] == 100
+    for change in ({"visibility": "admins"}, {"enabled": False}):
+        assert call(f"{base}/api/finance/settings", change, nato, "PATCH")[0] == 200
+        fin = call(f"{base}/api/boot", cookie=piero)[1]["finance"]
+        # the currency stays: a request's card shows its budget in it, to everyone
+        assert fin == {"enabled": "enabled" not in change, "visible": False, "currency": "BRL"}
+        # an admin keeps them all, also with the Financeiro off: Configurações shows them
+        assert call(f"{base}/api/boot", cookie=nato)[1]["finance"]["amount"] == 100
+
+
 def test_gravatar(team):
     base, nato, piero, _ = team
     assert call(f"{base}/api/me", {"email": "nope"}, nato, "PATCH")[0] == 400
