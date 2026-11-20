@@ -242,6 +242,30 @@ def test_python_runs_isolated_and_from_the_root_directory(tmp_path):
     assert r.stdout.splitlines()[-1] == "/"
 
 
+def test_the_wheel_and_lockfile_are_read_once(release, tmp_path):
+    wheel, lock, sums = release
+    root = tmp_path / "opt"
+    # an install_release stand-in: the caller's file changes after the check, and it shows
+    # what it was handed. The files are named as deploy.yml names them, from its directory
+    script = (
+        'fetch_sums() { cat "$SUMS"; }; backup_db() { :; }; activate() { :; }; prune() { :; }; '
+        f'install_release() {{ echo changed > "{wheel}"; ls -ld "${{2%/*}}" | cut -c1-10; '
+        'echo "$2 $3"; cat "$2"; }; '
+        f"main 1.2.3 {wheel.name} {lock.name}"
+    )
+    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
+    assert r.returncode == 0, r.stderr
+    mode, paths, content = r.stdout.splitlines()
+    assert mode == "drwx------"  # root only
+    assert all(path.startswith(f"{root}/.incoming.") for path in paths.split())
+    assert content == "the published wheel"
+    assert not list(root.glob(".incoming.*"))  # gone when the deploy ends
+    # and when it is refused (the caller's wheel is the changed one now)
+    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
+    assert r.returncode == 1 and "is not the published one" in r.stderr
+    assert not list(root.glob(".incoming.*"))
+
+
 @pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])
 def test_the_guard_is_installed_where_the_runner_will_run_it(script):
     # the runner fails every job when the hook's name doesn't end in .sh, .ps1 or .js

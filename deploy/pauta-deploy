@@ -14,6 +14,7 @@
 #          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
 #          /opt/pauta/previous          -> the one before, for --rollback
 #          /opt/pauta/deploy.log        one line per deploy, switch and rollback
+#          /opt/pauta/.incoming.*       a running deploy's copy of its wheel and lockfile
 set -euo pipefail
 umask 022
 
@@ -38,6 +39,15 @@ record() {  # deploy.log, and the journal (journalctl -t pauta-deploy); FAILED i
     logger -t pauta-deploy -p "user.$([[ $* == FAILED* ]] && echo err || echo notice)" -- "$*" || true
 }
 as_user() { runuser -u "$SERVICE_USER" -- "$@"; }
+read_input() {
+    # A file the caller handed us, read with the caller's own rights: a path swapped for a
+    # symlink to a root-only file after our checks gets the caller nothing it couldn't read
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        runuser -u "$SUDO_USER" -- cat -- "$1"
+    else
+        cat -- "$1"
+    fi
+}
 version_of() { basename "$(readlink -e "$1" 2>/dev/null || echo none)"; }
 
 health_version() {
@@ -193,7 +203,7 @@ main() {
             ;;
         *)
             [ $# -eq 3 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCKFILE | --rollback | --status"
-            local version=$1 wheel=$2 lock=$3
+            local version=$1 wheel=$2 lock=$3 staged
             # deploy.yml names them from the directory it runs in
             [[ $wheel == /* ]] || wheel=$from/$wheel
             [[ $lock == /* ]] || lock=$from/$lock
@@ -202,6 +212,13 @@ main() {
             [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
             [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
             [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
+            # Read each once into a folder only root can open; what is checked below is
+            # what gets installed. We hold the lock: any .incoming is this run's, or a dead one's
+            trap 'rm -rf "$ROOT"/.incoming.*' EXIT
+            staged=$(mktemp -d "$ROOT/.incoming.XXXXXX")
+            read_input "$wheel" > "$staged/$(basename -- "$wheel")"
+            read_input "$lock" > "$staged/requirements.lock"
+            wheel=$staged/$(basename -- "$wheel") lock=$staged/requirements.lock
             verify_release "$version" "$wheel" "$lock"
             log "installing $version"
             install_release "$version" "$wheel" "$lock"
