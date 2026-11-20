@@ -26,9 +26,16 @@ class Stale extends Error {}
 // and the router would follow it, so the tap is lost. So a screen only rewrites the
 // address while the address is still its own (the same path, whatever the query).
 const hashPath = (hash) => (hash || "#/").slice(1).split("?")[0] || "/";
+const onScreen = (hash) => hashPath(location.hash) === hashPath(hash);
 function keepHash(hash) {
-  if (hashPath(location.hash) === hashPath(hash)) history.replaceState(null, "", hash);
+  if (onScreen(hash)) history.replaceState(null, "", hash);
 }
+// The same goes for what a screen draws when an answer comes late. A screen that asks for
+// its data again by itself (another period, the board after a drop) is outside the
+// router's numbering: it draws only while the address is still its own (`onScreen`). A
+// part of a screen redrawn after a save or an upload keeps a node from when the screen
+// was drawn and stops once that node is off the page (`isConnected`): looked up by id, the
+// answer would land on the next request's timeline, or on nothing at all.
 
 async function api(method, path, body) {
   const nav = LOADING && method === "GET" ? NAV_SEQ : null;

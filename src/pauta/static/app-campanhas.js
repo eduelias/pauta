@@ -102,10 +102,12 @@ async function waitForSync(previous, since, until) {
   // is still the previous one with no error: the server restarted mid-pass (the lock is
   // fresh, `last_sync` comes back from the database), so nothing was synced. SYNC_LEFT
   // when the person has left the screen; null when it is still running after the last poll.
+  const here = () => onScreen("#/campanhas") && $("#syncline");  // Visão geral has that line too
   for (let i = 0; i < SYNC_POLL_MAX; i++) {
     await new Promise((r) => setTimeout(r, i ? SYNC_POLL_MS : 1000));
-    if (!document.contains($("#syncline"))) return SYNC_LEFT;
+    if (!here()) return SYNC_LEFT;
     const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}`);
+    if (!here()) return SYNC_LEFT;
     if (doc.syncing && doc.last_sync === previous) continue;
     $("#syncline").textContent = syncLine(doc.last_sync);
     if (doc.last_sync === previous && !doc.sync_error) return SYNC_LOST;
@@ -430,6 +432,7 @@ async function viewOverview(query) {
   const st = readPeriod(query);
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns/overview?since=${since}&until=${until}`);
+  if (!onScreen("#/campanhas/geral")) return;
   savePeriod(st);
   trackPeriod(st);
   keepHash(`#/campanhas/geral?${periodQuery(st)}`);
@@ -493,6 +496,7 @@ async function viewCampaigns(query) {
   const [since, until] = periodDates(st.p, st);
   const url = `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`;
   const doc = await api("GET", url);
+  if (!onScreen("#/campanhas")) return;
   savePeriod(st);
   trackPeriod(st);  // after the call: an api_slow row sits next to the period that cost it
   keepHash(`#/campanhas?${periodQuery(st)}`);
@@ -550,7 +554,7 @@ async function viewCampaigns(query) {
     // the server answers 202 at once and syncs on its own thread: poll the list until the
     // pass ends, keeping the "Dados da Meta" line honest meanwhile. 409 "busy" means one
     // is already running (another admin's tap, the hourly one): wait for that one instead
-    const btn = e.currentTarget;
+    const btn = e.currentTarget, line = $("#syncline");
     btn.disabled = true;
     try {
       let previous = doc.last_sync;
@@ -559,8 +563,7 @@ async function viewCampaigns(query) {
       } catch (err) {
         if (err.reason !== "busy") throw err;
       }
-      const line = $("#syncline");
-      if (line) line.textContent = previous ? `Sincronizando com a Meta… (dados de ${ago(previous)})` : "Sincronizando com a Meta…";
+      line.textContent = previous ? `Sincronizando com a Meta… (dados de ${ago(previous)})` : "Sincronizando com a Meta…";
       const done = await waitForSync(previous, since, until);
       if (done === SYNC_LEFT) return;
       if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
@@ -772,6 +775,7 @@ async function viewCampaign(query, id) {
   const st = readPeriod(query);
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  if (!onScreen(`#/campanha/${id}`)) return;
   const k = doc.campaign;
   savePeriod(st);
   trackPeriod(st);
@@ -824,14 +828,15 @@ async function viewCampaign(query, id) {
   </div>`;
   bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
   // Revogar: the link is a 404 from then on; the row stays in the list as history
-  $("#links").addEventListener("click", async (e) => {
+  const links = $("#links");  // this campaign's, wherever the person is when Revogar answers
+  links.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-revoke]");
     if (!b) return;
     b.disabled = true;
     try {
       const row = await api("DELETE", `/api/campaigns/${id}/links/${b.dataset.revoke}`);
       doc.links = doc.links.map((l) => l.token === row.token ? row : l);
-      $("#links").innerHTML = linksPanel(doc.links);
+      links.innerHTML = linksPanel(doc.links);
       toast("Link desativado");
     } catch (err) { toast(err.message, true); b.disabled = false; }
   });
@@ -988,6 +993,7 @@ async function viewReport(query, id) {
   async function ensureLink() {
     if (!link) {
       link = await api("POST", `/api/campaigns/${id}/links`, { since, until, metrics: shown });
+      if (!root.isConnected) return link;
       if (wa) $("#share").href = waHref();
       $("#linkinfo").innerHTML = linkInfo();
     }
@@ -1009,6 +1015,7 @@ async function viewReport(query, id) {
     </div>
     ${reportCard(k, { since, until, keys: shown, defs, lastSync: doc.last_sync, by: firstName(ME.name) })}
   </div>`;
+  const root = app.firstElementChild;  // off the page once the person leaves the report
   // Copiar link: the link is made on the first tap. Safari only writes the clipboard inside
   // the tap, but a ClipboardItem takes a promise, so the address can still be made first.
   $("#copylink").addEventListener("click", async (e) => {

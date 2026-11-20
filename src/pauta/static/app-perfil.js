@@ -29,6 +29,7 @@ function startOptions() {
 
 async function viewProfile() {
   const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
+  if (!onScreen("#/perfil")) return;
   app.innerHTML = `<div style="max-width:760px">
     <div class="head"><div><h1>Perfil</h1><p>Como você aparece para o time e como entra na Pauta.</p></div></div>
     <section class="panel" id="me">

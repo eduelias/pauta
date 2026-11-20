@@ -199,12 +199,14 @@ async function viewClient(_q, id) {
         <div id="paybox">${payBox(c)}</div>
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
     </div></div>`;
-  const drawPay = () => { $("#paybox").innerHTML = payBox(c); bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); }); };
+  const root = app.firstElementChild;  // off the page once the person leaves this client
+  const drawPay = () => { if (!root.isConnected) return; $("#paybox").innerHTML = payBox(c); bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); }); };
   bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); });
   const save = async (patch, el) => {
     try {
       c = { ...c, ...(await api("PATCH", `/api/clients/${c.id}`, patch)) };
       track("client_saved", { new: false });
+      if (!root.isConnected) return;
       $("#cname").innerHTML = `${esc(c.name)} <span class="state ${esc(c.state)}">${esc(c.state)}</span>`;
       $(".clientbox").innerHTML = `<div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}`;
       bindCopy($(".clientbox"));

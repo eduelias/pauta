@@ -135,3 +135,37 @@ def test_a_batch_goes_up_three_at_a_time(live, device, fake, drive):
     )
     expect(page.locator("#filelist .file")).to_have_count(11, timeout=20_000)
     expect(page.locator("#toast")).to_have_text("capa.png enviado")
+
+
+def test_an_upload_that_ends_on_another_request_is_not_listed_there(live, device, fake, drive):
+    """A big file is still going up when the person opens another request. Its answer used to
+    redraw "the" file list, by then the other request's, with a Remover that took the file
+    off the first one."""
+    base, auth, store = live
+    drive.start_connect()
+    fake.approved = True
+    assert drive.poll() == "connected"
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    page.goto(f"{base}/#/entrar/{token}")
+    page.fill("#join input[name=name]", "Renato Lima")
+    page.get_by_role("button", name="Criar passkey e entrar").click()
+    expect(page.locator("#mechip")).to_contain_text("Renato Lima")
+    c = store.save_client({"name": "Clínica Bem Estar"})
+    store.create_request({"client": c["id"], "what": "Fotos da campanha"}, None)
+    store.create_request({"client": c["id"], "what": "Vídeo da campanha"}, None)
+    page.goto(f"{base}/#/pedido/1")
+    expect(page.locator("#filelist")).to_contain_text("Nenhum arquivo ainda")
+    fake.upload_delay = 1.0
+    page.set_input_files(
+        "#pick", files=[{"name": "foto.png", "mimeType": "image/png", "buffer": PNG}]
+    )
+    expect(page.locator("#uploads .upl")).to_have_count(1)
+    page.goto(f"{base}/#/pedido/2")
+    expect(page.locator(".req-title")).to_have_value("Vídeo da campanha")
+    # the file did go up, and the person hears of it wherever they are
+    expect(page.locator("#toast")).to_have_text("foto.png enviado", timeout=20_000)
+    expect(page.locator("#filelist")).to_contain_text("Nenhum arquivo ainda")
+    expect(page.locator("#tl")).not_to_contain_text("anexou")
+    page.goto(f"{base}/#/pedido/1")
+    expect(page.locator("#filelist .file")).to_have_count(1)

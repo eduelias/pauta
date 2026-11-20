@@ -1235,3 +1235,26 @@ def test_sync_now_within_the_second_of_the_previous_pass(synced, monkeypatch):
     page.get_by_role("button", name="Atualizar agora").click()
     expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
     assert store.sync_state()["last_sync"] != previous
+
+
+def test_a_sync_that_ends_on_visao_geral_does_not_draw_the_list_there(synced):
+    """Atualizar agora, then the Visão geral tab. It has a "Dados da Meta" line too, so the
+    poll took it for its own screen and, when the pass ended, drew the per-client list over
+    it under Visão geral's address."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    previous = store.sync_state()["last_sync"]
+    page.get_by_role("button", name="Atualizar agora").click()
+    page.locator(".ctabs a", has_text="Visão geral").click()
+    expect(page.locator("#overview .orow[data-client]")).to_have_count(2)
+    for _ in range(200):
+        if store.sync_state()["last_sync"] != previous:
+            break
+        time.sleep(0.05)
+    assert store.sync_state()["last_sync"] != previous
+    page.wait_for_timeout(3300)  # past the poll's next look (every 3 s) after the pass ended
+    expect(page.locator("#overview .orow[data-client]")).to_have_count(2)
+    expect(page.locator("#cblocks")).to_have_count(0)
+    expect(page.locator("#toast")).to_be_hidden()

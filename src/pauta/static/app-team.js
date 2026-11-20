@@ -8,6 +8,7 @@
 // past the team. What is about the person signed in lives on Perfil (viewProfile).
 async function viewSettings(query) {
   const members = await api("GET", "/api/members");
+  if (!onScreen("#/configuracoes")) return;
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
     <div class="head"><div><h1>Configurações</h1><p>O time, as integrações e as listas da Pauta.</p></div>

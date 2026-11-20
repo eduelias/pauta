@@ -62,6 +62,7 @@ async function viewDash() {
 let showCancelled = false;
 async function viewBoard() {
   const reqs = await loadReqs();
+  if (!onScreen("#/quadro")) return;
   const since = addDays(todayISO(), -30);
   const cols = ["todo", "doing", "waiting", "done", ...(showCancelled ? ["cancelled"] : [])];
   const inCol = (s) => reqs.filter((r) => r.status === s && (s !== "done" || (r.done_on || "") >= since)).sort(sortOpen);
@@ -294,6 +295,7 @@ function bindFiles(get, set) {
   const panel = $("#files");
   if (!panel) return;
   const redraw = () => {
+    if (!panel.isConnected) return;  // the upload ended on another screen
     const r = get();
     $("#filelist").innerHTML = fileList(r);
     $("#tl").innerHTML = timeline(r);
@@ -353,6 +355,7 @@ function bindFiles(get, set) {
     try {
       const { url } = await api("POST", `/api/requests/${get().id}/share`);
       track("request_sent");
+      if (!panel.isConnected) return;
       const msg = `Os arquivos do seu pedido estão aqui: ${url}`;
       $("#sharebox").innerHTML = `<div class="sharebox"><code class="invlink">${esc(url)}</code>
         <div class="row-gap"><button class="btn small" data-copy="${esc(url)}">${icon("link")}Copiar link</button>
@@ -428,10 +431,12 @@ async function viewRequest(_q, id) {
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir pedido</button></div>` : ""}
       </aside>
     </div></div>`;
+  const root = app.firstElementChild;  // off the page once the person leaves this request
 
   const save = async (patch, el) => {
     try {
       r = await api("PATCH", `/api/requests/${r.id}`, patch);
+      if (!root.isConnected) return true;
       $("#tl").innerHTML = timeline(r);
       $("#duebadge").innerHTML = dueBadge(r);
       const done = $('[data-f="done_on"]');
@@ -463,7 +468,7 @@ async function viewRequest(_q, id) {
       // which campaign did it create? The timeline then says so, if the page is still up
       if (b.dataset.v === "done") offerCampaignLink(r, async () => {
         const fresh = await api("GET", `/api/requests/${r.id}`);
-        if ($("#tl")) { r = fresh; $("#tl").innerHTML = timeline(r); }
+        if (root.isConnected) { r = fresh; $("#tl").innerHTML = timeline(r); }
       });
     });
   }));
@@ -477,7 +482,7 @@ async function viewRequest(_q, id) {
       track("comment_added");
       t.value = "";
       autosize(t);
-      $("#tl").innerHTML = timeline(r);
+      if (root.isConnected) $("#tl").innerHTML = timeline(r);
     } catch (e) { toast(e.message, true); }
   };
   $("#send").addEventListener("click", send);
