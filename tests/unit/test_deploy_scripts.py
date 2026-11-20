@@ -3,6 +3,7 @@
 import hashlib
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -209,6 +210,36 @@ def test_sourcing_does_not_deploy():
         text=True,
     )
     assert r.returncode == 0 and r.stdout.strip() == "sourced"
+
+
+def deploy(root, script, cwd=None, **env):
+    """Source pauta-deploy with /opt/pauta in a temporary folder and stand-ins for root and
+    the lock, then run `script`."""
+    stubs = (
+        f'source "{DEPLOY / "pauta-deploy"}"; ROOT="{root}"; RELEASES="{root}/releases"; '
+        f'PYTHON="{sys.executable}"; id() {{ echo 0; }}; flock() {{ :; }}; '
+    )
+    full = {"PATH": os.environ["PATH"], **env}
+    return subprocess.run(
+        ["bash", "-c", stubs + script], env=full, cwd=cwd, capture_output=True, text=True
+    )
+
+
+def test_python_runs_isolated_and_from_the_root_directory(tmp_path):
+    # a module of the same name in the caller's directory is never the one imported
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "json.py").write_text("raise SystemExit('json.py of the current directory')\n")
+    health = 'curl() { echo \'{"status": "ok", "version": "1.2.3"}\'; }; '
+    r = deploy(tmp_path / "opt", health + "health_version", cwd=here)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "1.2.3"
+    text = (DEPLOY / "pauta-deploy").read_text()
+    assert text.count('"$PYTHON"') == text.count('"$PYTHON" -I ') > 0  # every call, not just this
+    r = deploy(tmp_path / "opt", health + "main --status; pwd", cwd=here)
+    assert r.returncode == 0, r.stderr
+    assert "(healthz: 1.2.3)" in r.stdout
+    assert r.stdout.splitlines()[-1] == "/"
 
 
 @pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])
