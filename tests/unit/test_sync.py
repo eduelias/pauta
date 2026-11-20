@@ -481,6 +481,46 @@ def test_a_permanent_orphan_is_read_once_and_reported_quietly_after(team, caplog
     assert meta.orphans == {"333"}
 
 
+def test_the_pass_remembers_which_accounts_got_no_new_numbers(team):
+    """What Visão geral's "sem dados novos da Meta" goes by: the linked accounts the last
+    pass has nothing new for, each with why and the failing account named, and no other
+    (one account in trouble used to mark every client of its portfolio)."""
+    store, meta, fake, *_ = team
+    assert meta.unsynced == {}
+    fake.fail_campaigns.add("111")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {"111": f"conta 111: {out['errors'][0]['error']}"}
+    fake.fail_campaigns.clear()
+    sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {}
+    # a throttle ends the pass: the accounts it never reached have nothing new either
+    fake.throttle = True
+    sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {"111": f"conta 111: {THROTTLED}", "222": THROTTLED}
+
+
+def test_an_account_whose_portfolio_was_disconnected_is_reported_not_skipped(team):
+    """Desconectar forgets a portfolio's token; its linked accounts keep that portfolio's
+    id on their rows. It matches no connection any more, so the pass used to skip them
+    without a word, their campaigns "active" with frozen numbers. They are nobody's now:
+    reported like any account no portfolio lists."""
+    store, meta, fake, *_ = team
+    meta.on_read = store.sync_meta_accounts
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake)
+    fake.business = BUSINESS
+    sync.run(store, meta, days=2, today=TODAY)  # the read tags every row with its portfolio
+    store.link_meta_account("444", store.save_client({"name": "Cliente A"})["id"])
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 3 and out["errors"] == [] and meta.unsynced == {}
+    meta.disconnect(OTHER_BUSINESS)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    msg = ORPHAN.format(id="444")
+    assert out["accounts"] == 2
+    assert out["errors"] == [{"account": "444", "business_id": "", "error": msg, "status": 0}]
+    assert meta.unsynced == {"444": msg} and meta.sync_error == msg
+
+
 def test_one_pass_at_a_time(team):
     """Atualizar agora and the scheduler's tick at the same moment: one pass runs, the other
     is told "já está sincronizando" at once, and Meta is read once, not twice."""

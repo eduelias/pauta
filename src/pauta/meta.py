@@ -365,6 +365,9 @@ class Meta:
         # (gone from Meta, or their portfolio disconnected): the sync reads again only
         # when this set changes, and reports these at INFO after the first time
         self.orphans: frozenset[str] = frozenset()
+        # linked account id -> why the sync's last pass has no new numbers for it (Meta's
+        # error with the account named, the orphan's advice, or what ended the pass)
+        self.unsynced: dict[str, str] = {}
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
         self.on_read: Callable[[list[dict]], None] | None = None

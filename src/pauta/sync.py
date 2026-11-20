@@ -19,7 +19,9 @@ doesn't toast the same problem on every Atualizar agora. A revoked token stops o
 own connection's accounts (the other
 portfolios still sync); a throttle stops the pass (nothing retries in a loop: the next
 scheduled pass tries again). Each connection gets its
-`last_sync` and the first error met under it. `Scheduler` runs it in a daemon
+`last_sync` and the first error met under it; `meta.unsynced` says which linked accounts
+the pass has no new numbers for and why (Visão geral marks their clients, no others).
+`Scheduler` runs it in a daemon
 thread from `pauta serve`: a first pass a minute after start, then hourly over today and
 yesterday, and nightly after 03:10 over the last 28 days (conversions keep arriving for up
 to 28 days after a click). "Today" is each ad account's own day (`timezone_name` from
@@ -150,6 +152,9 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
     accounts, placed = _linked(store, meta, conns)
     first_error = ""  # what `sync_error` says: Meta's errors, and an orphan the first time
     throttled = False
+    done: set[str] = set()  # the accounts this pass has new numbers for
+    why: dict[str, str] = {}  # account id -> what kept the pass from its numbers
+    stopped = ""  # what ended a connection's part (a revoked token) or the pass (a throttle)
     for conn in conns:
         bid = conn["business_id"]
         mine = [a for a in accounts if _business(a, meta, conns) == bid]
@@ -161,16 +166,19 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
             since = day - timedelta(days=days - 1)
             try:
                 _sync_account(store, meta, aid, bid, since, day, fetched, out)
+                done.add(aid)
             except MetaError as e:
                 out["errors"].append(
                     {"account": aid, "business_id": bid, "error": str(e), "status": e.status}
                 )
+                why[aid] = f"conta {aid}: {e}"
                 conn_error = conn_error or str(e)
                 first_error = first_error or str(e)
                 obs.event("meta_sync_account_failed", logging.WARNING, status=e.status)
                 if e.status == 503:  # Meta asked for a pause: stop the whole pass
                     throttled = True
                 if e.status in (409, 503):  # revoked: the rest of this connection would too
+                    stopped = str(e)
                     break
         store.set_connection_sync(bid, fetched, conn_error)
         if throttled:
@@ -183,12 +191,15 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
         repeat = aid in known
         msg = ORPHAN.format(id=aid) if repeat or placed else UNCLAIMED
         out["errors"].append({"account": aid, "business_id": "", "error": msg, "status": 0})
+        why[aid] = msg
         level = logging.INFO if repeat else logging.WARNING
         obs.event("meta_account_unclaimed", level, account=aid, repeat=repeat)
         if not repeat:
             first_error = first_error or msg
     if placed or not unplaced:  # a failed read decides nothing: the next pass reads again
         meta.orphans = frozenset(a["id"] for a in unplaced)
+    # an account the pass never reached has nothing new either, for the reason it stopped
+    meta.unsynced = {a["id"]: why.get(a["id"], stopped) for a in accounts if a["id"] not in done}
     out["linked"] = store.link_requests_to_campaigns()
     if not throttled:
         _warm_reach(store, meta, accounts, today)
@@ -273,12 +284,13 @@ def _warm_reach(store: Store, meta: Meta, accounts: list[dict], today: date | No
 
 def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
     """Which connection reads an account: the one its row says, else the one the last Meta
-    read saw it under, else (rows from before v10, one connection) the only one."""
-    return (
-        account.get("business_id")
-        or meta.business_of.get(account["id"])
-        or (conns[0]["business_id"] if len(conns) == 1 else "")
-    )
+    read saw it under, else (rows from before v10, one connection) the only one. A
+    portfolio that is no longer connected reads nothing: its accounts are nobody's ("")."""
+    known = [b for b in (account.get("business_id"), meta.business_of.get(account["id"])) if b]
+    if known:
+        current = {c["business_id"] for c in conns}
+        return next((b for b in known if b in current), "")
+    return conns[0]["business_id"] if len(conns) == 1 else ""
 
 
 def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:

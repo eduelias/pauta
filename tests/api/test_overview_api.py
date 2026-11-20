@@ -10,6 +10,8 @@ from test_meta_api import connected
 
 from fakemeta import BALANCE, BUSINESS, expected
 from pauta import overview
+from pauta import server as server_mod
+from pauta.meta import REVOKED, UNAVAILABLE
 from softpasskey import call
 
 CLINIC, BAKERY = "Clínica Bem Estar", "Padaria Trigo de Ouro"
@@ -143,18 +145,30 @@ def test_visto_hoje_shows_and_then_an_old_one_is_flagged(team, fake_meta, store)
     ]["flags"]
 
 
-def test_why_numbers_stopped_is_the_admins_to_read(team, fake_meta, store):
+def test_why_numbers_stopped_is_the_admins_to_read(team, fake_meta, monkeypatch):
+    """An ad account the last pass got nothing new for marks its own client, not every
+    client of its portfolio; the reason, with the account named, is the admin's to read.
+    A revoked portfolio still marks all of its clients."""
     base, nato, piero, _ = synced(team, fake_meta)
-    store.set_connection_sync(BUSINESS, "2026-10-20T10:00:00Z", "a Meta recusou o acesso")
+    monkeypatch.setattr(server_mod, "MANUAL_SYNC_SECONDS", 0)
+    fake_meta.fail_campaigns.add("111")
+    sync_now(base, nato)
     for cookie, text in (
-        (nato, "sem dados novos da Meta: a Meta recusou o acesso"),
+        (nato, f"sem dados novos da Meta: conta 111: {UNAVAILABLE}"),
         (piero, "sem dados novos da Meta"),
     ):
         doc = get(base, cookie)
-        assert doc["flagged"] == 2
-        for c in doc["clients"]:
-            assert c["flags"][0] == {"key": "no_data", "level": overview.ACT, "text": text}
-            assert "stopped" not in {f["key"] for f in c["flags"]}
+        rows = by_name(doc)
+        assert doc["flagged"] == 1
+        assert rows[CLINIC]["flags"][0] == {"key": "no_data", "level": overview.ACT, "text": text}
+        assert "stopped" not in {f["key"] for f in rows[CLINIC]["flags"]}
+        assert rows[BAKERY]["flags"] == []
+    fake_meta.revoke(BUSINESS)
+    sync_now(base, nato)
+    doc = get(base, nato)
+    assert doc["flagged"] == 2
+    for c in doc["clients"]:
+        assert c["flags"][0]["text"] == f"sem dados novos da Meta: {REVOKED}"
 
 
 def test_nothing_tracked_is_an_empty_list_and_strangers_get_nothing(team):

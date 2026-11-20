@@ -198,10 +198,10 @@ def install(route, store, auth, drive, meta):
         for c in clients:
             c["sums"] = {name: overview.sums(rows) for name, rows in c.pop("rows").items()}
         live = _live_accounts(self)
-        troubled = {
+        revoked = {  # a connection out of use: every account under it
             c["business_id"]: c["error"] or c["state"]
             for c in store.connections()
-            if c["state"] != "ok" or c["error"]
+            if c["state"] != "ok"
         }
         spent: dict[str, int] = {}  # per ad account, in the flags' last window
         for c in store.campaign_rows(*last):
@@ -217,7 +217,10 @@ def install(route, store, auth, drive, meta):
             accounts.setdefault(cid, []).append(
                 {"remaining_cents": left, "spend_cents": spent.get(a["id"], 0)}
             )
-            why = troubled.get(a["business_id"]) if meta.connected else NOT_CONNECTED
+            # else the account's own trouble in the last pass, never its neighbours'
+            why = revoked.get(a["business_id"]) or meta.unsynced.get(a["id"])
+            if not meta.connected:
+                why = NOT_CONNECTED
             if why:
                 problems[cid] = (
                     f"{overview.NO_DATA}: {why}" if viewer["is_admin"] else overview.NO_DATA
