@@ -484,6 +484,12 @@ def units():
     return {name: (DEPLOY / name).read_text() for name in ("pauta.service", "pauta-backup.service")}
 
 
+def test_acceptance_sees_no_home_and_no_other_drive():
+    lines = (DEPLOY / "pauta-acc.service").read_text().splitlines()
+    assert "User=pauta-acc" in lines and "ProtectHome=yes" in lines
+    assert "InaccessiblePaths=-/media -/mnt" in lines
+
+
 def test_production_runs_as_its_own_user_out_of_everyones_home():
     for name, text in units().items():
         lines = text.splitlines()

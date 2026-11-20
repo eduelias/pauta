@@ -173,7 +173,8 @@ acceptance's own: if a branch's schema change breaks the build before, restore t
 `/var/lib/pauta-acc/pauta.db` as `pauta-acc`, start it).
 
 **Setting it up** (re-runnable; it never starts, restarts or reads into acceptance's state):
-from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. It installs
+from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. A changed
+unit file takes effect at the next deploy or `sudo systemctl restart pauta-acc`. It installs
 `pauta-deploy-branch`, the sudo rule `/etc/sudoers.d/gh-runner-pauta-branch`, the
 `pauta-acc` user and unit (`deploy/pauta-acc.service`; settings for one environment, like the
 Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the

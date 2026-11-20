@@ -31,10 +31,12 @@ ExecStart=/opt/pauta-acc/current/bin/pauta serve --host 127.0.0.1 --port 8089
 Restart=on-failure
 RestartSec=5
 
-# sandbox: read-only system, no /home at all, write access only to its state dir
+# sandbox: read-only system, no /home at all, none of the other drives (it needs nothing
+# there), write access only to its state dir
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
+InaccessiblePaths=-/media -/mnt
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
