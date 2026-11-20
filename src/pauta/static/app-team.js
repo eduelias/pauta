@@ -80,7 +80,8 @@ async function viewSettings(query) {
     } catch (e) { toast(e.message, true); }
   });
   $("#export")?.addEventListener("click", async () => {
-    const doc = await api("GET", "/api/export");
+    let doc;
+    try { doc = await api("GET", "/api/export"); } catch (e) { toast(e.message, true); return; }
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -231,8 +232,10 @@ async function addPasskey() {
 }
 
 async function logout() {
-  await api("POST", "/api/logout", {});
-  ME = await api("GET", "/api/me");
+  try {
+    await api("POST", "/api/logout", {});
+    ME = await api("GET", "/api/me");
+  } catch (e) { toast(e.message, true); return; }
   location.hash = "#/";
   showGate();
 }

@@ -1,11 +1,14 @@
-"""Calls that answer late or are sent twice, as on a phone with a bad connection: an answer
-for a screen the person has left is not drawn on the one they are on, and a second tap
-while the first call is on its way sends nothing."""
+"""Calls that answer late, twice or not at all, as on a phone with a bad connection: an
+answer for a screen the person has left is not drawn on the one they are on, a second tap
+while the first call is on its way sends nothing, and a call that fails says so and leaves
+the screen as the server has it."""
 
 import pytest
 from playwright.sync_api import expect
 
 pytestmark = pytest.mark.e2e
+
+OFFLINE = "a conexão caiu; tente de novo"
 
 
 @pytest.fixture()
@@ -143,3 +146,92 @@ def test_a_second_tap_sends_nothing(desk):
     expect(page.locator("#modal")).to_be_hidden()
     assert [c["name"] for c in store.clients()].count("Ótica Boa Vista") == 1
     assert [c["name"] for c in store.clients()].count("Açougue Bom de Corte") == 1
+
+
+def test_a_choice_that_did_not_save_goes_back(desk):
+    """Concluído used to say "Status: Concluído" before the save and stay lit when the save
+    failed, and a second tap on it did nothing. Now the buttons and the lists go back to
+    what the server has, the toast says why, and the same tap works once the call does."""
+    base, store, d = desk
+    page = d.page
+    d.expected.add((500, "/api/requests/1"))
+    d.expected.add((500, "/api/clients/1"))
+    broken = '{"error": "erro interno; tente de novo"}'
+
+    def fail(route):
+        if route.request.method == "PATCH":
+            route.fulfill(status=500, content_type="application/json", body=broken)
+        else:
+            route.continue_()
+
+    toast = page.locator("#toast")
+    page.goto(f"{base}/#/pedido/1")
+    statuses = page.locator(".statuses")
+    expect(statuses.locator("button.on")).to_have_text("A fazer")
+    page.route("**/api/requests/1", fail)
+    statuses.get_by_role("button", name="Concluído").click()
+    expect(toast).to_have_text("erro interno; tente de novo")
+    expect(toast).to_have_class("toast err")
+    expect(statuses.locator("button.on")).to_have_text("A fazer")
+    statuses.get_by_role("button", name="Aguardando").click()
+    expect(statuses.locator("button.on")).to_have_text("A fazer")
+    expect(page.locator("#missingbox")).to_be_hidden()  # nothing is waiting, after all
+    page.locator('[data-f="goal"]').select_option(index=1)
+    expect(page.locator('[data-f="goal"]')).to_have_value("")
+    typed = page.locator('[data-f="region"]')
+    typed.fill("Zona sul")
+    typed.blur()
+    expect(toast).to_have_class("toast err")
+    expect(typed).to_have_value("Zona sul")  # typed text stays, to try again
+    page.unroute("**/api/requests/1")
+    statuses.get_by_role("button", name="Concluído").click()
+    expect(toast).to_have_text("Status: Concluído")
+    expect(statuses.locator("button.on")).to_have_text("Concluído")
+    assert store.request(1)["status"] == "done"
+
+    page.goto(f"{base}/#/cliente/1")
+    state = page.locator('[data-seg="state"]')
+    expect(state.locator("button.on")).to_have_text("Ativo")
+    page.route("**/api/clients/1", fail)
+    state.get_by_role("button", name="Encerrado").click()
+    expect(toast).to_have_class("toast err")
+    expect(state.locator("button.on")).to_have_text("Ativo")
+    page.unroute("**/api/clients/1")
+    state.get_by_role("button", name="Encerrado").click()
+    expect(toast).to_have_text("Salvo")
+    expect(state.locator("button.on")).to_have_text("Encerrado")
+
+
+def test_offline_the_buttons_say_so_and_the_error_screen_tries_again(desk):
+    """Without a connection Excluir, Exportar and Sair did nothing and said nothing, and a
+    screen that could not load showed the browser's English text with no way to ask again
+    (the menu item of the screen you are on does not navigate)."""
+    base, store, d = desk
+    page = d.page
+    toast = page.locator("#toast")
+    page.goto(f"{base}/#/pedido/1")
+    expect(page.locator(".req-title")).to_have_value("Limpeza de pele")
+    d.context.set_offline(True)
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Excluir pedido").click()
+    expect(toast).to_have_text(OFFLINE)
+    expect(toast).to_have_class("toast err")
+    expect(page.locator(".req-title")).to_have_value("Limpeza de pele")  # still on the request
+
+    page.goto(f"{base}/#/configuracoes")
+    expect(page.locator("#app .empty")).to_contain_text(OFFLINE)
+    d.context.set_offline(False)
+    page.get_by_role("button", name="Tentar de novo").click()
+    expect(page.get_by_role("heading", name="Configurações")).to_be_visible()
+
+    d.context.set_offline(True)
+    toast.evaluate("t => { t.hidden = true; }")
+    page.get_by_role("button", name="Exportar dados").click()
+    expect(toast).to_have_text(OFFLINE)
+    toast.evaluate("t => { t.hidden = true; }")
+    page.locator("#mechip").click()
+    page.get_by_role("button", name="Sair").click()
+    expect(toast).to_have_text(OFFLINE)
+    expect(page.locator("#shell")).to_be_visible()  # still in
+    d.context.set_offline(False)
+    assert store.request(1)["what"] == "Limpeza de pele"

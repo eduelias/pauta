@@ -102,15 +102,16 @@ async function loadDrive(doc) {
     try { loadDrive(await api("POST", "/api/onedrive/connect")); track("settings_changed", { section: "arquivos" }); } catch (e) { toast(e.message, true); }
   });
   $("#drivecancel")?.addEventListener("click", async () => {
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    await refreshBoot();
+    try { loadDrive(await api("DELETE", "/api/onedrive")); await refreshBoot(); } catch (e) { toast(e.message, true); }
   });
   $("#driveoff")?.addEventListener("click", async () => {
     if (!confirm("Desconectar o OneDrive? Os arquivos continuam lá, mas a Pauta deixa de enviar e abrir arquivos até alguém reconectar.")) return;
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    track("settings_changed", { section: "arquivos" });
-    await refreshBoot();
-    toast("OneDrive desconectado");
+    try {
+      loadDrive(await api("DELETE", "/api/onedrive"));
+      track("settings_changed", { section: "arquivos" });
+      await refreshBoot();
+      toast("OneDrive desconectado");
+    } catch (e) { toast(e.message, true); }
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
   // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect

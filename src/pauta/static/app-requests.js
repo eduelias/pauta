@@ -192,6 +192,7 @@ async function viewList(query) {
 function seg(name, values, current, labels = null, cls = "") {
   return `<div class="seg ${cls}" data-seg="${name}">${values.map((v) => `<button type="button" data-v="${esc(v)}" class="${v === current ? "on" : ""}">${esc(labels ? labels[v] : v)}</button>`).join("")}</div>`;
 }
+const segOn = (s, v) => $$("button", s).forEach((x) => x.classList.toggle("on", x.dataset.v === v));
 function selectOpts(values, current, blank = "—") {
   const list = current && !values.includes(current) ? [current, ...values] : values;
   return `<option value="">${blank}</option>` + list.map((v) => `<option ${v === current ? "selected" : ""}>${esc(v)}</option>`).join("");
@@ -283,9 +284,7 @@ function sendFile(rid, file, onProgress) {
     });
     x.addEventListener("error", () => {
       trackApi("POST", `/api/requests/${rid}/files`, 0, 0);
-      const err = new Error("a conexão caiu; tente de novo");
-      err.status = 0;
-      reject(err);
+      reject(offline());
     });
     x.send(file);
   });
@@ -445,25 +444,30 @@ async function viewRequest(_q, id) {
       return true;
     } catch (e) { toast(e.message, true); return false; }
   };
-  $$("[data-f]").forEach((el) => el.addEventListener("change", () => {
+  // A save that fails leaves the page as the server has it: a list, a date or a row of
+  // buttons goes back (lit, it would say something that isn't so, and a second tap on a lit
+  // button does nothing); typed text stays in its field, to try again.
+  $$("[data-f]").forEach((el) => el.addEventListener("change", async () => {
     const f = el.dataset.f;
     let v = el.value;
     if (f === "assignee") v = v ? Number(v) : null;
-    save({ [f]: v }, el);
+    if (!await save({ [f]: v }, el) && el.matches("select, [type=date]")) el.value = r[f] ?? "";
   }));
+  const missingbox = $("#missingbox");
   $$("[data-seg]").forEach((s) => s.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || b.classList.contains("on")) return;
-    $$("button", s).forEach((x) => x.classList.toggle("on", x === b));
-    const f = s.dataset.seg;
-    if (f === "status") {
-      $("#missingbox").hidden = !(b.dataset.v === "waiting" || r.missing);
-      if (b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
-      toast(`Status: ${STATUS()[b.dataset.v]}`);
-    }
-    const from = r.status;
+    const f = s.dataset.seg, from = r[f];
+    const show = (v) => {
+      segOn(s, v);
+      if (f === "status") missingbox.hidden = !(v === "waiting" || r.missing);
+    };
+    show(b.dataset.v);
+    if (f === "status" && b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
     save({ [f]: b.dataset.v }).then((ok) => {
-      if (!ok || f !== "status") return;
+      if (!ok) { show(from); return; }
+      if (f !== "status") return;
+      toast(`Status: ${STATUS()[b.dataset.v]}`);
       track("request_status", { from, to: b.dataset.v, via: "page" });
       // which campaign did it create? The timeline then says so, if the page is still up
       if (b.dataset.v === "done") offerCampaignLink(r, async () => {
@@ -491,9 +495,11 @@ async function viewRequest(_q, id) {
   $("#comment").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); });
   $("#del")?.addEventListener("click", async () => {
     if (!confirm(`Excluir o pedido #${r.id}? Para desistir de um pedido, prefira marcar Cancelado.`)) return;
-    await api("DELETE", `/api/requests/${r.id}`);
-    toast(`Pedido #${r.id} excluído`);
-    location.hash = "#/pedidos";
+    try {
+      await api("DELETE", `/api/requests/${r.id}`);
+      toast(`Pedido #${r.id} excluído`);
+      location.hash = "#/pedidos";
+    } catch (e) { toast(e.message, true); }
   });
   bindCopy(app);
   bindFiles(() => r, (doc) => { r = doc; });

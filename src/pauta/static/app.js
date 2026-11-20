@@ -37,6 +37,10 @@ function keepHash(hash) {
 // was drawn and stops once that node is off the page (`isConnected`): looked up by id, the
 // answer would land on the next request's timeline, or on nothing at all.
 
+// No answer at all (no signal, the server away). The browser's own error is in English
+// ("Failed to fetch", "Load failed"): every toast and the error screen say this one.
+const offline = () => Object.assign(new Error("a conexão caiu; tente de novo"), { status: 0 });
+
 async function api(method, path, body) {
   const nav = LOADING && method === "GET" ? NAV_SEQ : null;
   const opts = { method, headers: {} };
@@ -47,7 +51,7 @@ async function api(method, path, body) {
   const t0 = performance.now();
   let res;
   try { res = await fetch(path, opts); }
-  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
+  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw offline(); }
   const doc = await res.json().catch(() => ({}));
   trackApi(method, path, res.status, performance.now() - t0);
   noteServer(res.headers, nav !== null);
