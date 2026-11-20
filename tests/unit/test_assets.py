@@ -79,4 +79,8 @@ def test_only_files_under_static_are_served():
     for rel in ("../server.py", "vendor", "nope.js", "vendor/../../db.py", ""):
         assert assets.content(rel) is None and assets.tag(rel) == "", rel
     assert assets.url("nope.js") == "/nope.js"
+    kept = len(assets._kept)
+    for i in range(100):
+        assert assets.content(f"nope-{i}.js") is None
+    assert len(assets._kept) == kept  # a miss is not remembered, however many are asked for
     assert assets.content("vendor/qrcode.js").startswith(b"//")

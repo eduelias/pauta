@@ -7,6 +7,13 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **O servidor não guarda mais na memória os endereços que não existem.** Desde a 1.15.0
+  cada endereço pedido ficava guardado até o próximo lançamento, inclusive os que não
+  levam a arquivo nenhum, e a memória do serviço crescia com eles. Agora só o que existe é
+  guardado.
+
 ## [1.15.0] - 2026-11-19
 
 ### Added
