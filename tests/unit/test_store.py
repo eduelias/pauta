@@ -34,6 +34,42 @@ def test_fresh_database(store):
     assert opts["status"]["done"] == "Concluído"
 
 
+def test_the_schema_number_never_goes_down(tmp_path):
+    path = tmp_path / "x.db"
+    with Store(path).db() as conn:  # a newer release was here, then a rollback to this one
+        conn.execute("UPDATE meta SET value=? WHERE key='schema'", (str(SCHEMA_VERSION + 3),))
+    with Store(path).db() as conn:
+        version = conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+    assert version == str(SCHEMA_VERSION + 3)
+
+
+def test_this_release_runs_on_a_database_a_newer_one_added_to(tmp_path):
+    """The rollback promise: later releases only add, so this one must not mind a column it
+    does not know on every table, nor a table it does not know."""
+    path = tmp_path / "x.db"
+    with Store(path).db() as conn:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        for (table,) in tables:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN from_later TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE TABLE from_later (id INTEGER PRIMARY KEY, note TEXT)")
+    store = Store(path)  # starts again on it
+    c = store.save_client({"name": "Padaria Pão Quente", "since": "2026-01-05"})
+    store.set_billing(c["id"], {"amount": "250"}, None)
+    store.add_payment(c["id"], {"paid_on": "2026-10-29", "amount": "1.500,00"}, None)
+    r = store.create_request({"client": c["id"], "what": "Campanha"}, None)
+    store.comment(r["id"], "Feito", None)
+    assert store.update_request(r["id"], {"status": "done"}, None)["status"] == "done"
+    assert [e["kind"] for e in store.request(r["id"])["events"]] == ["created", "comment", "status"]
+    assert store.client(c["id"])["billing"]["amount"] == 250
+    assert store.finance()["received_total"] == 1500
+    assert store.clients() and store.requests() and store.members() == []
+    assert store.set_options("kind", ["Só isso"]) and store.table("billing")
+    store.delete_request(r["id"])
+    store.delete_client(c["id"])
+
+
 def test_reopening_keeps_data_and_edited_lists(tmp_path):
     s1 = Store(tmp_path / "x.db")
     s1.save_client({"name": "Kept"})

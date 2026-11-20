@@ -708,8 +708,11 @@ class Store:
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
+            # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
+                "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "
+                "SET value=excluded.value "
+                "WHERE CAST(meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
                 (str(SCHEMA_VERSION),),
             )
             if not db.execute("SELECT 1 FROM option LIMIT 1").fetchone():
