@@ -2,7 +2,7 @@
 
 - **Status:** phases A and B built with this document (2026-11-12, shipped in 1.10.0), at
   the owner's word ("whatever we can now"); see "What was built" at the end for what differs
-  from the sketch. Phase C and the questions for Piero are open.
+  from the sketch. Phase C and the questions for the person who asked are open.
 - **2026-11-20:** the code differs: "Sem números" covers fewer cases than the rule below. It
   is raised when the account's portfolio still has a connection that is not ok, or when
   nothing is connected. An account whose portfolio was disconnected while others remain,
@@ -11,12 +11,12 @@
 - **2026-11-20:** the code differs: the route can wait for Meta. The balance comes from
   Meta's account list as the server keeps it in memory; with none kept yet, or one over a
   day old, the route reads Meta before it answers.
-- **Asked by:** Piero, in a voice note of 2026-11-11, thinking aloud about the day he has 50
-  or 60 clients instead of 12.
+- **Asked by:** the person who runs the campaigns ("the campaign runner" below), in a voice note
+  of 2026-11-11, thinking aloud about the day he has 50 or 60 clients instead of 12.
 - **Builds on:** decision 8 (Acompanhamento: the daily check, the numbers from Meta) and
   decision 12 (the client's report link, which this view is *not*).
 
-## What Piero asked for
+## What was asked for
 
 With 12 clients, scrolling the Campanhas list and reading each client's numbers is fine, and
 he says so. With 50 or 60 he would want an internal dashboard tab, never sent to a client,
@@ -56,7 +56,7 @@ about a flagged client; it should not decide who is flagged.
   Every rule needs a floor (a minimum spend and count in both windows) or it cries wolf.
 - **Different objectives.** Cost per result compares within a client over time, not between
   a lead campaign and a traffic campaign. The one figure that compares across everything is
-  the one Piero defined as a lead in decision 8: a click through to the destination.
+  the one the campaign runner defined as a lead in decision 8: a click through to the destination.
 
 ## Sketch
 
@@ -124,7 +124,7 @@ class, so the operator's masked support view would show the flags and the shapes
 the money. A natural slot is right after refactor step R2, which gives the team something
 visible during a stretch of releases that otherwise change nothing on screen.
 
-## Questions for Piero
+## Questions for the campaign runner
 
 1. When you say a client is "baixando", which number do you look at first: cost per
    result, the volume of results, or the spend? Default assumed: cost first, then volume.
@@ -186,23 +186,23 @@ for two days under "saldo acaba hoje"): the alert reads "saldo acabou", absorbs 
 desde ontem" when both hold, is raised even with nothing spent in the last 7 days, and the
 message says the balance ran out and the campaigns stay paused without it.
 
-Both are plain `wa.me` links to the client's registered number with the text in the
-address, so WhatsApp opens with the message in the box and nothing is sent until the person
-sends it. The greeting takes the first name of the client's contact. A client without a
-number gets `wa.me/?text=…`, where WhatsApp asks for the conversation. The other alerts
-(cost, volume, delivery, no data, unseen) are the team's own work and get no message. The
-texts are fixed in `app-campanhas.js` (`balanceText`, `summaryText`); a team's own wording
-on Configurações is the next step if Piero wants it. A report link in the summary is not
-there because links are per campaign (decision 12) and a client may have several.
+Both are plain `wa.me` links to the client's registered number with the text in the address, so
+WhatsApp opens with the message in the box and nothing is sent until the person sends it. The
+greeting takes the first name of the client's contact. A client without a number gets
+`wa.me/?text=…`, where WhatsApp asks for the conversation. The other alerts (cost, volume,
+delivery, no data, unseen) are the team's own work and get no message. The texts are fixed in
+`app-campanhas.js` (`balanceText`, `summaryText`); a team's own wording on Configurações is the
+next step if the campaign runner wants it. A report link in the summary is not there because
+links are per campaign (decision 12) and a client may have several.
 
 ### Saldo acabando on the Painel (added 2026-11-13)
 
-Piero asked for the balance alert on the first screen he opens, "pra gente se antecipar e
-informar ao cliente"; Renato had not found the alerts at all, being on "Por cliente". The
-Painel now has a card, **Saldo acabando**, under the counters: the clients whose row here
-carries the balance alert (at zero, or lasting less than the team's "Saldo acabando" days),
-the one with the least time first, each with what is left, the alert's words, a link to the
-client and the same **Avisar do saldo** draft. It links to this screen.
+The campaign runner asked for the balance alert on the first screen he opens, "pra gente se
+antecipar e informar ao cliente"; a teammate had not found the alerts at all, being on "Por
+cliente". The Painel now has a card, **Saldo acabando**, under the counters: the clients whose
+row here carries the balance alert (at zero, or lasting less than the team's "Saldo acabando"
+days), the one with the least time first, each with what is left, the alert's words, a link to
+the client and the same **Avisar do saldo** draft. It links to this screen.
 
 - **The same document, no second rule.** The card reads `GET /api/campaigns/overview` and
   keeps the rows with a `balance` flag, so it can't disagree with this screen, and the

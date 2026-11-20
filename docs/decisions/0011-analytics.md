@@ -118,17 +118,17 @@ DPA clause), Fathom, Simple Analytics, Pirsch (similar to Plausible, nothing ext
 
 ### Session replay and heatmaps: no, for now
 
-Replay in the app records the team's clients' names, phones, briefs and amounts: data the
-team controls and Du7 only processes on instruction. Recording it for Du7's own purpose
-(usability) changes Du7's role for that data and needs the team's written agreement in the
-DPA, masking of every text and input (PostHog: `maskTextSelector: "*"`, which also hides what
-you wanted to see), and a privacy text that says screens are recorded. For a product with
-one team and one developer who can watch Piero use it over WhatsApp, that is a lot of
-machinery and risk for little. What replaces it in this proposal: error toasts and slow
-calls as events (where people get stuck), a "screen → next screen" count (where they
-wander), and usability sessions on **acceptance with demo data**, where replay would be
-harmless. If a question ever needs replay, PostHog Cloud EU on acceptance only, demo data
-only, is the cheap experiment, and this decision is revisited.
+Replay in the app records the team's clients' names, phones, briefs and amounts: data the team
+controls and Du7 only processes on instruction. Recording it for Du7's own purpose (usability)
+changes Du7's role for that data and needs the team's written agreement in the DPA, masking of
+every text and input (PostHog: `maskTextSelector: "*"`, which also hides what you wanted to
+see), and a privacy text that says screens are recorded. For a product with one team and one
+developer who can watch the person who runs the campaigns ("the campaign runner" below) use it
+over WhatsApp, that is a lot of machinery and risk for little. What replaces it in this
+proposal: error toasts and slow calls as events (where people get stuck), a "screen → next
+screen" count (where they wander), and usability sessions on **acceptance with demo data**,
+where replay would be harmless. If a question ever needs replay, PostHog Cloud EU on acceptance
+only, demo data only, is the cheap experiment, and this decision is revisited.
 
 ## Decision (proposed)
 
@@ -138,9 +138,9 @@ without touching the other.
 | Topic | Decision |
 |---|---|
 | **App: option A**, the home-grown usage log | Events are first-party, stay in the team's own SQLite file, need no CSP change, no account, no consent, and the questions we have (which screens, which actions, where it errors, how slow, which devices) are counts and percentiles SQLite answers in a line. A hosted product-analytics tool would give nicer charts at the cost of a script from another origin inside a passkey-protected app, a second copy of the team's usage data outside the team file, and a policy text naming a third party |
-| **Site: option B**, Plausible Cloud Starter ($9/month) | EU-only, cookieless, no banner, a 1 KB script, outbound-link and UTM reports and tagged events out of the box, a public shareable dashboard for Piero. GoatCounter (H) is the cheaper runner-up; Umami Cloud (C) is free but its hosting region must be confirmed first; Cloudflare (G) can't count the CTA or campaigns. If $9/month is not wanted, H or C' on du7 |
+| **Site: option B**, Plausible Cloud Starter ($9/month) | EU-only, cookieless, no banner, a 1 KB script, outbound-link and UTM reports and tagged events out of the box, a public shareable dashboard for the campaign runner. GoatCounter (H) is the cheaper runner-up; Umami Cloud (C) is free but its hosting region must be confirmed first; Cloudflare (G) can't count the CTA or campaigns. If $9/month is not wanted, H or C' on du7 |
 | Session replay, heatmaps | **No** (see above). Revisit only for acceptance with demo data |
-| Who sees what | The owner: `pauta usage` (CLI) and Plausible. Piero: Plausible's shared dashboard link for the site (he runs the campaigns). Team members: nothing new; the privacy policy says what is logged |
+| Who sees what | The owner: `pauta usage` (CLI) and Plausible. The campaign runner: Plausible's shared dashboard link for the site. Team members: nothing new; the privacy policy says what is logged |
 | Data kept | App: 90 days of `usage` rows, pruned by the nightly backup unit's run; aggregates (`pauta usage --save`) kept as monthly JSON next to the backups if wanted. Site: whatever Plausible keeps (aggregates; no raw IP or UA) |
 | What never enters the log | Names, phones, request text, client ids as free text, URLs with ids beyond the route pattern (`/api/requests/{id}` style, like `obs.route_label`), IP addresses, exact user agents. Props are from a fixed enum per event; the server drops unknown keys and truncates values at 64 chars |
 | Opt-out | App: none per person (the data is the team's own, pseudonymous, and the purpose is the service); the policy says so and a team may ask Du7 to disable logging for its file (`setting usage.enabled=false`). Site: Plausible honours no cookie but the policy links Plausible's data policy; a `localStorage.plausible_ignore=true` opt-out line is in the policy |
@@ -189,7 +189,7 @@ The events (name, props): 15 in the first release, 19 names in `usage.EVENTS` to
 | CSP on the site | GitHub Pages sets no headers. Optional: a `<meta http-equiv="Content-Security-Policy">` with `default-src 'self'; script-src 'self' 'sha256-<hash of the redirect line>' https://plausible.io; connect-src https://plausible.io; img-src 'self' data:; style-src 'self'`. The Paddle page would add `https://cdn.paddle.com` and `frame-src https://*.paddle.com` (decision 6). Not required for Plausible to work; `tools/check.py` would then fail on any violation, as the app's tests do |
 | UTM conventions | `utm_source` = where the link was posted (`whatsapp`, `instagram`, `google`, `email`, `linkedin`); `utm_medium` = how (`chat`, `bio`, `story`, `post`, `cpc`, `email`); `utm_campaign` = `YYYYMM-<slug>` (`202611-beta`, `202612-lancamento`); `utm_content` = the variant (`story1`, `post-etapas`, `link-rodape`). Always as a query string, never in the `#fragment` (the redirect line only acts on `#/`). The `campaign/README.md` in `pauta-site` keeps the list of links in use |
 | Connecting www to the app, without cross-site tracking | The site's own JS copies `utm_campaign` (if present) into the WhatsApp button's prefilled text as a short code in brackets: "Oi! Quero entrar no beta do Pauta. [202611-beta]". Nothing is sent anywhere; the lead chooses to send that message. famulus's lead intake already forwards the message to the owner, so the code arrives with the lead. When the owner creates the team (`pauta team create --source 202611-beta`, decision 5), the code lands on the `team` row; decision 6's checkout passes the team id (and so its source) in Paddle's `custom_data`. `pauta team list --by-source` then gives **leads → teams → paying teams per campaign** from `control.db` alone. Plausible knows the click, Pauta knows the team; nothing links a browser to a person |
-| Piero's view | Plausible's shared link (read-only, optionally password-protected): sources, campaigns, goals, countries, devices. His weekly question: which campaign brought WhatsApp clicks |
+| The campaign runner's view | Plausible's shared link (read-only, optionally password-protected): sources, campaigns, goals, countries, devices. His weekly question: which campaign brought WhatsApp clicks |
 
 ## Texts that must change
 
@@ -260,13 +260,13 @@ CSP changes: **app: none.** Site: optional meta policy above; nothing today.
 | 1 | **App:** `usage` table, `/api/usage`, `track()`, the 15 events, `pauta usage`, tests, privacy bullet, release note. Ships in a normal release; first look at the numbers after two weeks | After the Configurações/Perfil and Meta branches land, so the screen names are final |
 | 2 | **Site:** Plausible account (owner), script tag, goals, UTM list in `campaign/README.md`, the WhatsApp campaign code, privacy section 2, `make check` green | Before the next campaign push (`campaign/` is ready) |
 | 3 | **Chain:** `team.source` and `pauta team create --source`, `--by-source` report; Paddle `custom_data` and the `Assinar`/`Checkout` goals on `/assinar` | With decisions 5 and 6 |
-| 4 | **Weekly habit:** the owner reads `pauta usage --days 7` and Plausible on Mondays (reps-triage's slot); Piero gets the shared Plausible link. After two months: delete events nobody reads, add the ones a question needs, decide on the `#/uso` page | From stage 1 on |
+| 4 | **Weekly habit:** the owner reads `pauta usage --days 7` and Plausible on Mondays (reps-triage's slot); the campaign runner gets the shared Plausible link. After two months: delete events nobody reads, add the ones a question needs, decide on the `#/uso` page | From stage 1 on |
 | 5 | Revisit: replay on acceptance with demo data if a usability question can't be answered; self-hosting the site's analytics when production moves to Hetzner | When needed |
 
 The weekly look, for the owner (`pauta usage`): active accounts per day; screens and actions
 of the week versus the week before; the top five error toasts and the top five slow routes;
-open → done median days by kind; Visto hoje coverage per day; device mix. For Piero
-(Plausible): visitors by source and campaign, the "Chamar no WhatsApp" goal by campaign, top
+open → done median days by kind; Visto hoje coverage per day; device mix. For the campaign
+runner (Plausible): visitors by source and campaign, the "Chamar no WhatsApp" goal by campaign, top
 countries and devices.
 
 ## Questions for the owner
@@ -281,7 +281,8 @@ countries and devices.
 5. **Retention:** 90 days of raw usage rows, or shorter?
 6. **Telling the team:** a line in the release note plus the policy, or also a message to the
    team before the release?
-7. **Piero and Plausible:** the shared dashboard link, or a weekly summary from the owner?
+7. **The campaign runner and Plausible:** the shared dashboard link, or a weekly summary from
+   the owner?
 8. **The campaign code in the WhatsApp text:** fine, or does a visible code in the lead's
    message look odd? (Alternative: none, and the owner asks "como chegou até nós?".)
 9. **Site CSP meta tag:** add it with Plausible (and later Paddle) allowed, or leave the site
@@ -304,8 +305,8 @@ countries and devices.
 - **Only the journal (`obs.py`) and `/metrics`:** zero code, but route counts per day say
   nothing about screens, toasts, devices or paths, and the journal is rotated by systemd.
   The usage table is the smallest step that answers the questions.
-- **Google Analytics 4 / Meta Pixel on the site:** Piero knows them, and the Pixel would let
-  Meta optimise ads for site conversions. Both need a consent banner in Brazil and the EU
-  and send visitor data to advertisers; not now. If Meta ad optimisation becomes necessary,
+- **Google Analytics 4 / Meta Pixel on the site:** the campaign runner knows them, and the Pixel
+  would let Meta optimise ads for site conversions. Both need a consent banner in Brazil and the
+  EU and send visitor data to advertisers; not now. If Meta ad optimisation becomes necessary,
   Meta's Conversions API (server-side, from famulus's lead intake, hashed phone) is the
   privacy-preserving route and would be its own decision.

@@ -2,12 +2,12 @@
 
 - **Status:** shipped in 1.4.0 (2026-10-29). Proposed the same day, in the PR that added this
   file; "What an upload costs" was added on 2026-11-15
-- **Asked by:** Piero, who runs the campaigns
+- **Asked by:** the person who runs the campaigns
 
 ## Context
 
 Creatives reach Pauta as links: the client's Drive folder (`drive_url`) and the request's
-`creatives_url`, pointing at Google Drive and other drives. Piero wanted to upload files on
+`creatives_url`, pointing at Google Drive and other drives. He wanted to upload files on
 the request itself, keep them in the request's history, and use the 1 TB of OneDrive storage
 he already pays for (Microsoft 365 Personal) instead of du7's disk or someone else's drive.
 His answers to the open questions: a personal plan; mostly images of about 2.5 MB and a few
@@ -19,7 +19,7 @@ short videos; files belong to a request; clients may see them too.
 |---|---|
 | Where the bytes live | That OneDrive, under `Apps/Pauta/<cliente>/Pedido <n>/`. du7 keeps each file's OneDrive id, name, size, type, uploader and date (`file` table) and, since 1.8.4, a copy of its thumbnail in a folder next to the database (a cache, not in the backups) |
 | Permission | `Files.ReadWrite.AppFolder`: Pauta sees only its own app folder, never the rest of the drive. `PAUTA_ONEDRIVE_ROOT` can point it elsewhere, which asks for the whole drive instead |
-| App registration | "Pauta" in du7@msn.com's own Entra directory, personal Microsoft accounts only. Not a work directory (it would belong to the employer) and not Piero's account (he only approves access) |
+| App registration | "Pauta" in du7@msn.com's own Entra directory, personal Microsoft accounts only. Not a work directory (it would belong to the employer) and not the OneDrive owner's account (he only approves access) |
 | Sign-in | Device code flow: an admin clicks Conectar on Configurações → Arquivos (the Equipe page until 1.7.0), the OneDrive's owner types the code at microsoft.com/link. No client secret to store or rotate, no redirect URL |
 | Token | A file next to the DB (`pauta.db.onedrive-token`, mode 600), like the session key: never in the DB, so never in its backups. Refreshed on use; Microsoft rotates it |
 | Uploads | Through Pauta: the browser posts the file and Pauta passes it on. Up to 4 MiB it goes whole, in one `PUT …:/content`; above that, through a Graph upload session in 5 MiB chunks. The page sends three files at a time (a request's first one alone: it makes the folder). With files this small the extra hop is cheap, the CSP stays `'self'`, and no browser-to-Microsoft CORS setup is needed. Limit `PAUTA_UPLOAD_MAX_MB` (200). See "What an upload costs" below |
@@ -30,7 +30,7 @@ short videos; files belong to a request; clients may see them too.
 
 ## Consequences
 
-- The files depend on one person's account. If Piero stops paying, closes the account or
+- The files depend on one person's account. If that person stops paying, closes the account or
   leaves the team, the files go with it; Pauta's backups don't cover them. Moving to another
   OneDrive means copying the `Apps/Pauta` folder and reconnecting (the ids in the DB would
   then point at the old drive: a migration script, if it ever comes to that).

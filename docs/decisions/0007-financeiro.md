@@ -22,11 +22,12 @@
 
 ## Context
 
-Piero gets paid per active client, as each client pays: R$ 100 in the first month, a little
-more later. The partner who pays doesn't wait for the month to close, so Piero needs to know,
-per client, when he was last paid, which month that covered, who is late and who is due this
-week. The deal counts months from the client's first payment (paid on the 29th: the month
-turns on the 29th), and a client that pauses or closes and comes back starts counting again.
+The person who runs the campaigns gets paid per active client, as each client pays: R$ 100 in
+the first month, a little more later. The partner who pays doesn't wait for the month to close,
+so he needs to know, per client, when he was last paid, which month that covered, who is late
+and who is due this week. The deal counts months from the client's first payment (paid on the
+29th: the month turns on the 29th), and a client that pauses or closes and comes back starts
+counting again.
 
 Pauta is going to be sold to other teams (decision 6), and most agencies have a version of
 this: a monthly fee per client, paid by Pix or card, tracked today in a spreadsheet. What
@@ -39,22 +40,22 @@ A **receivables ledger**: each billed client carries a recurring fee; the team r
 payments as they arrive; the app derives who is paid, late, due soon or still waiting for a
 first payment. Pauta records money that already moved. It does not invoice, charge, send
 Pix, reconcile bank statements or compute taxes: those are products of their own, none of
-them is needed to answer Piero's question, and keeping away from them means no card data,
+them is needed to answer that question, and keeping away from them means no card data,
 no bank credentials and nothing of ours touching a customer's money.
 
 | Topic | Decision |
 |---|---|
 | Data | Three additive tables in the team's database: `setting` (per-team configuration, JSON per module), `billing` (one **cycle** per stretch of a client being Ativo and billed: fee in cents, currency, optional explicit start, `ended` when closed) and `payment` (client, cycle, date, cents, method, note, who recorded it, and `voided_by/voided_at`). A `billed` flag on `client`. Schema v6 |
 | Money | **Integer cents**, never floats; the currency code is stored on the cycle so a team changing its currency later doesn't rewrite history. The browser formats with `Intl` |
-| Cycles | A cycle opens when a billed client becomes Ativo (or is created Ativo) and closes when it leaves Ativo or stops being billed. Coming back opens a **new** cycle: the month count restarts and the day is set again by the next payment, which is what Piero asked for. The cycle's age is the "4º mês ativo" |
+| Cycles | A cycle opens when a billed client becomes Ativo (or is created Ativo) and closes when it leaves Ativo or stops being billed. Coming back opens a **new** cycle: the month count restarts and the day is set again by the next payment, which is what was asked for. The cycle's age is the "4º mês ativo" |
 | Ledger | Payments are **voided, never deleted**: the list is an audit trail. The person who recorded a payment, or an admin, may void it |
 | The engine | `finance.py`, pure functions with no SQLite: from a cycle, its live payments and today, it generates the expected periods (monthly, weekly or yearly; the day of month clamps to the month's last day and comes back after a short month), allocates payments **oldest-first** against them, and derives the status, next due date, amount owed and months active. Nothing derived is stored, so a configuration change recalculates everything consistently; partial and double payments and future price steps need no special cases |
 | Statuses | For Ativo, billed clients only, in this order on the panel: `late` (a period's due date plus the grace days has passed unpaid), `due` (a period is due, inside the grace days), `due_soon` (the next period starts within the configured window), `awaiting_first` (no payment yet, with the first-payment anchor), `paid` (everything up to today covered) |
-| Anchor | How a cycle's first period starts is a team setting: `first_payment` (Piero: the first recorded payment sets the day), `client_since` (the "cliente desde" date), `fixed_day` (everyone on the same day of the month). A client without a "cliente desde" date counts from the day its cycle opened |
+| Anchor | How a cycle's first period starts is a team setting: `first_payment` (this team: the first recorded payment sets the day), `client_since` (the "cliente desde" date), `fixed_day` (everyone on the same day of the month). A client without a "cliente desde" date counts from the day its cycle opened |
 | Settings (per team, admins, Configurações → Financeiro) | `enabled`, `currency`, `amount` (the default fee new clients get), `cadence`, `anchor`, `fixed_day` (1 to 28, for the `fixed_day` anchor), `due_soon_days` (7), `grace_days` (0), `visibility` (`all` or `admins`), `bill_new_clients`. Validated like `CLIENT_FIELDS`; sent in the boot data so the UI never guesses |
 | Visibility | `visibility` is enforced in the routes, not only hidden in the UI: with `admins`, members get 403 on every finance route and the client payload carries no money. With `enabled` off the routes answer 404 and the tab is gone; the two settings routes still answer admins |
 | API | `GET /api/finance` (summary and one row per client; with `?month=YYYY-MM`, also that month's payments and what was received in it and in total); `GET|PATCH /api/finance/settings` (admin); `PATCH /api/clients/{id}/billing` (fee, billed); `POST /api/clients/{id}/payments`; `DELETE /api/payments/{id}` (void). `GET /api/clients/{id}` gains `billing` and `payments`; `/api/export` includes both |
-| UI | **Financeiro** tab after Clientes (on the phone it takes Quadro's slot: Piero filters Pedidos instead); summary numbers, which are also filters ("Recebido" opens the month's payments, with a month picker), then the groups above, each row with the client, months active, due date, last payment and a **Registrar pagamento** button (date defaults to today, amount to the fee). A **Pagamentos** card under Atalhos on the client page with the fee, the list and the form |
+| UI | **Financeiro** tab after Clientes (on the phone it takes Quadro's slot: the person who runs the campaigns filters Pedidos instead); summary numbers, which are also filters ("Recebido" opens the month's payments, with a month picker), then the groups above, each row with the client, months active, due date, last payment and a **Registrar pagamento** button (date defaults to today, amount to the fee). A **Pagamentos** card under Atalhos on the client page with the fee, the list and the form |
 | Multi-team | Everything is in the team's file and keyed by nothing global, so decision 5 picks it up unchanged. `/metrics` stays counts only, never amounts |
 
 ## Consequences

@@ -12,10 +12,10 @@
 
 ## Context
 
-Piero's remark, looking at the tab: "Equipe" is really the settings screen. The team is one
-of its parts, next to the OneDrive, the Meta connection, the Financeiro conventions and the
-option lists; the name undersold it, and an admin looking for "where do I change how we
-bill" didn't think of a tab called Equipe.
+A remark from the person who runs the campaigns, looking at the tab: "Equipe" is really the
+settings screen. The team is one of its parts, next to the OneDrive, the Meta connection, the
+Financeiro conventions and the option lists; the name undersold it, and an admin looking for
+"where do I change how we bill" didn't think of a tab called Equipe.
 
 The same screen also carried a "Você" block (your name, your e-mail, add a passkey, sign
 out) in the middle of team administration: things about one person mixed with things about
@@ -50,7 +50,7 @@ had, or to retire the one on the phone that is gone.
 ## Alternatives considered
 
 - **Keep Equipe and add a Perfil tab:** two tabs where one tab and one page do; the name
-  problem Piero pointed at stays, and the mobile tab bar has no room for either.
+  problem that remark pointed at stays, and the mobile tab bar has no room for either.
 - **Perfil inside Configurações** (the "Você" block, grown): mixes the person's things with
   the team's again, and a member would open a page mostly about things they can't touch
   to find their own passkeys.
