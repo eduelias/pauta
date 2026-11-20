@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from ledger import a_day_passes
-from pauta import db as dbm
+from pauta import meta
 from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store, team_today
 from pauta.finance import add_months
 
@@ -461,12 +461,8 @@ def test_panel_rows_carry_the_client_id_not_the_cycle_id(store):
 
 
 def test_today_is_the_teams_day_not_the_servers(store, client, monkeypatch):
-    class Evening(datetime):  # 22:30 on 9 March in São Paulo: UTC and du7 are on the 10th
-        @classmethod
-        def now(cls, tz=None):
-            return datetime(2031, 3, 10, 1, 30, tzinfo=UTC).astimezone(tz)
-
-    monkeypatch.setattr(dbm, "datetime", Evening)
+    # 22:30 on 9 March in São Paulo: UTC and du7 are on the 10th
+    monkeypatch.setattr(meta, "_now", lambda: datetime(2031, 3, 10, 1, 30, tzinfo=UTC))
     assert team_today() == date(2031, 3, 9)
     assert new_request(store, client, status="done")["done_on"] == "2031-03-09"
     r = new_request(store, client)

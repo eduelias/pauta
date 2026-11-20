@@ -64,6 +64,8 @@ def test_date():
         ("1.500", 1500.0),  # the Brazilian way: a dot before three digits marks thousands
         ("R$ 2.000", 2000.0),
         ("1.500.000", 1500000.0),
+        ("1500.500", 1500.5),  # not grouped in threes from the left: a decimal point
+        ("0.250", 0.25),
         ("1.500,00", 1500.0),
         (1.5, 1.5),  # a JSON number is taken as it is
         (12.345, 12.35),

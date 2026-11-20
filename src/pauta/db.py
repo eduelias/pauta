@@ -23,9 +23,8 @@ import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from . import finance, obs
+from . import finance, meta, obs
 
 SCHEMA_VERSION = 15
 
@@ -35,8 +34,6 @@ SCHEMA_VERSION = 15
 RELOAD_EPOCH = 1
 # how long the server trusts its copy of the mark before reading the file again
 RELOAD_RECHECK_SECONDS = 2.0
-# where the team's day turns: never the server's own zone (du7 runs on CET) nor UTC
-TEAM_TZ = ZoneInfo("America/Sao_Paulo")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -355,7 +352,7 @@ def _money(v, _db):
         v = v.replace("R$", "").strip()
         # the Brazilian way: in 1.500,50 and in 1.500 the dots mark thousands; a dot that is
         # not before three digits is a decimal point (1500.5, what the page puts back)
-        if "," in v or re.fullmatch(r"\d+(\.\d{3})+", v):
+        if "," in v or re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", v):
             v = v.replace(".", "").replace(",", ".")
     try:
         n = round(float(v), 2)
@@ -625,9 +622,10 @@ def _utcnow() -> str:
 
 
 def team_today() -> date:
-    """Today's date where the team is: what "due today", "late" and "done on" go by. In the
-    evening in Brazil the server's clock and UTC are already on tomorrow."""
-    return datetime.now(TEAM_TZ).date()
+    """Today's date where the team is (`meta.local_today`: PAUTA_TZ, else São Paulo): what
+    "due today", "late" and "done on" go by. In the evening in Brazil the server's clock
+    and UTC are already on tomorrow."""
+    return meta.local_today("")
 
 
 def gravatar(email: str | None) -> str:
@@ -1779,7 +1777,7 @@ class Store:
         payments = self._cycle_payments(db, cycle["id"])
         # `created` is a UTC instant; the day the cycle opened is the team's
         created = datetime.fromisoformat(cycle["created"]).replace(tzinfo=UTC)
-        opened = created.astimezone(TEAM_TZ).date()
+        opened = meta.local_today("", created)
         anchor = finance.resolve_anchor(
             settings,
             first_payment=payments[0][0] if payments else None,
