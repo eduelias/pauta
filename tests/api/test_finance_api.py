@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from ledger import a_day_passes
 from pauta.db import team_today
 from softpasskey import call
 
@@ -130,13 +131,14 @@ def test_the_panel_by_month(team):
     assert call(f"{base}/api/finance?month=nope", cookie=nato)[0] == 400
 
 
-def test_panel_rows_point_at_the_client_even_when_cycles_drift(team):
+def test_panel_rows_point_at_the_client_even_when_cycles_drift(site, team):
     """1.5.0 regression: the panel's row id was the billing cycle's, so Registrar posted to
     the wrong client once someone had been paused and brought back."""
     base, nato, piero, _ = team
     old = client(base, nato, "Cliente antigo")
     for state in ("Pausado", "Ativo", "Pausado"):  # cycles 1 and 2, both closed
         assert call(f"{base}/api/clients/{old['id']}", {"state": state}, nato, "PATCH")[0] == 200
+        a_day_passes(site[2])  # a real pause each time: the same day would reopen the cycle
     delta = client(base, nato, "Delta")  # client 2, cycle 3
     isabel = client(base, nato, "Isabel")  # client 3, cycle 4
     assert isabel["billing"]["id"] != isabel["id"]

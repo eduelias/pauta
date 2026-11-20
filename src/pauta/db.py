@@ -1697,8 +1697,15 @@ class Store:
 
     @staticmethod
     def _open_cycle(db, cid: int, by: int | None) -> None:
-        """One open cycle per client: a no-op when there is one already."""
+        """One open cycle per client: a no-op when there is one already. A cycle closed today
+        is reopened: un-ticking "Cobrado" and ticking it again is a slip, not a pause."""
         if db.execute("SELECT 1 FROM billing WHERE client=? AND ended IS NULL", (cid,)).fetchone():
+            return
+        if db.execute(
+            "UPDATE billing SET ended=NULL WHERE id="
+            "(SELECT MAX(id) FROM billing WHERE client=? AND ended=?)",
+            (cid, team_today().isoformat()),
+        ).rowcount:
             return
         settings = Store._settings(db)
         db.execute(
@@ -1714,8 +1721,8 @@ class Store:
         )
 
     def _sync_cycle(self, db, cid: int, by: int | None) -> None:
-        """Ativo and billed means an open cycle; anything else closes it. Coming back opens a
-        new one, so the month count and the day restart (decision 7)."""
+        """Ativo and billed means an open cycle; anything else closes it. Coming back on a
+        later day opens a new one, so the month count and the day restart (decision 7)."""
         row = db.execute("SELECT state, billed FROM client WHERE id=?", (cid,)).fetchone()
         if row["state"] == "Ativo" and row["billed"]:
             self._open_cycle(db, cid, by)

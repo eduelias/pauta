@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from ledger import a_day_passes
 from pauta import db as dbm
 from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store, team_today
 from pauta.finance import add_months
@@ -290,11 +291,22 @@ def test_pausing_closes_the_cycle_and_coming_back_restarts_it(store, client):
     assert first["billing"]["anchor"] == "2026-10-29" and first["billing"]["months_active"] >= 1
     store.save_client({"state": "Pausado"}, cid)
     assert store.client(cid)["billing"] is None
+    a_day_passes(store)
     back = store.save_client({"state": "Ativo"}, cid)
     # a new cycle: the old payment stays in the ledger but no longer anchors anything
     assert back["billing"]["status"] == "awaiting_first" and len(back["payments"]) == 1
     with store.db() as db:
         assert db.execute("SELECT COUNT(*) FROM billing WHERE client=?", (cid,)).fetchone()[0] == 2
+
+
+def test_a_slip_on_cobrado_keeps_the_cycle_and_its_count(store, client):
+    cid = client["id"]
+    store.add_payment(cid, {"paid_on": "2026-10-29", "amount": 100}, None)
+    assert store.set_billing(cid, {"billed": False}, None)["billing"] is None
+    back = store.set_billing(cid, {"billed": True}, None)  # the same day: not a pause
+    assert back["billing"]["anchor"] == "2026-10-29" and back["billing"]["months_active"] >= 1
+    with store.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM billing WHERE client=?", (cid,)).fetchone()[0] == 1
 
 
 def test_not_billed_means_no_cycle_and_no_panel_row(store, client):
@@ -400,6 +412,7 @@ def test_panel_rows_carry_the_client_id_not_the_cycle_id(store):
     # brought back (or one is deleted), and the panel's Registrar posted to the cycle's id
     first = store.save_client({"name": "Delta"})
     store.save_client({"name": "Delta", "state": "Pausado"}, first["id"])  # closes cycle 1
+    a_day_passes(store)
     store.save_client({"name": "Delta", "state": "Ativo"}, first["id"])  # opens cycle 2
     isabel = store.save_client({"name": "Isabel"})  # client 2, cycle 3
     rows = {r["name"]: r for r in store.finance()["clients"]}
