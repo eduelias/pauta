@@ -209,6 +209,32 @@ def test_volume_falling_at_the_same_spend_says_it_once():
     assert overview.flags(client(total(2500, 30), total(5000, 60)), TODAY) == []
 
 
+def test_results_falling_to_zero_at_the_same_spend_raise_the_volume_alert():
+    """14 conversations in the earlier week and none in the last, clicks and spend
+    unchanged (a broken link, form or pixel): the one drop that used to be silent,
+    because with no results now the comparison went to the clicks, which hadn't moved."""
+    gone = {
+        "key": "volume",
+        "level": WATCH,
+        "text": "resultados caíram 100% com o mesmo investimento",
+    }
+    before = total(5000, 50, 14, CHATS)
+    assert overview.flags(client(total(5000, 50), before), TODAY) == [gone]
+    # the days still name what they count, without a count ("—" in Ads Manager), or with 0
+    assert overview.flags(client(total(5000, 50, None, CHATS), before), TODAY) == [gone]
+    assert overview.flags(client(total(5000, 50, 0, CHATS), before), TODAY) == [gone]
+    assert overview.compare(total(5000, 50), before) == {
+        "kind": "result",
+        "cost_pct": None,
+        "volume_pct": -100,
+        "spend_pct": 0,
+    }
+    # under the minimum count before, the clicks still decide (4 results → 0 says little)
+    assert overview.flags(client(total(5000, 50), total(5000, 50, 4, CHATS)), TODAY) == []
+    # the last week counts something else: not the same thing, the click compares
+    assert overview.compare(total(5000, 50, 3, LEADS), before, min_count=5)["kind"] == "click"
+
+
 def test_the_floors_keep_small_numbers_quiet():
     # under R$ 20 in a window: no claim, whatever the percentages
     assert overview.flags(client(total(1900, 5), total(1900, 50)), TODAY) == []

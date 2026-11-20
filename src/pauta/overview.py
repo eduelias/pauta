@@ -73,17 +73,18 @@ def pct(now, before) -> int | None:
 
 
 def compare(now: dict, before: dict, min_count: int = 1) -> dict:
-    """How cost and volume moved between two windows' `sums`. By result when both windows
-    count the same thing (and the earlier one at least `min_count` of it); otherwise by
-    link click, the one figure that compares across objectives."""
+    """How cost and volume moved between two windows' `sums`. By result when the earlier
+    window counted at least `min_count` of one thing and the newer one counts nothing
+    else: no results now is zero of it, the fall that matters most (a broken link, form
+    or pixel). Otherwise by link click, the one figure that compares across objectives."""
     by_result = bool(
-        now["results"]
-        and (before["results"] or 0) >= min_count
-        and now["result_indicator"] == before["result_indicator"]
+        (before["results"] or 0) >= min_count
+        and not now["mixed"]
+        and now["result_indicator"] in ("", before["result_indicator"])
     )
     if by_result:
         cost = pct(now["cost_per_result_cents"], before["cost_per_result_cents"])
-        volume = pct(now["results"], before["results"])
+        volume = pct(now["results"] or 0, before["results"])
     else:
         enough = before["link_clicks"] >= min_count
         cost = pct(now["cpl_cents"], before["cpl_cents"]) if enough else None
