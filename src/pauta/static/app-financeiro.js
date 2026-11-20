@@ -36,6 +36,7 @@ const monthName = (m, year = false) => new Date(m + "-15T12:00:00").toLocaleDate
 async function viewFinance() {
   if (!finVisible()) { location.hash = "#/"; return; }
   const f = await api("GET", `/api/finance${finState.month ? `?month=${finState.month}` : ""}`);
+  if (!onScreen("#/financeiro")) return;  // asked again by itself, answered on another screen
   finState.month = f.month;
   const cur = f.currency;
   const on = finState.filter;

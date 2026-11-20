@@ -672,7 +672,7 @@ const ACTION_LABELS = {
   "onsite_conversion.purchase": "Compras (loja da Meta)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
   initiate_checkout: "Finalizações de compra iniciadas",
-  // the ones on Piero's campaigns (2026-11-04)
+  // the ones on the team's campaigns (2026-11-04)
   "onsite_conversion.lead": "Cadastros na Meta", onsite_web_lead: "Cadastros no site",
   offsite_complete_registration_add_meta_leads: "Cadastros concluídos (site + Meta)",
   offsite_content_view_add_meta_leads: "Visualizações de conteúdo (site + Meta)",
@@ -929,7 +929,7 @@ async function cardImage(node, scale = 3) {
 const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 40) || "campanha";
 // the clipboard takes one PNG, to paste in the conversation (the phone's share sheet was
 // tried first: its own "Copiar" put the file there as two items and WhatsApp pasted two
-// photos, so Piero asked for this one button); a browser whose clipboard takes no image
+// photos, so the team asked for this one button); a browser whose clipboard takes no image
 // gets the PNG as a download instead
 const canCopyImage = () => Boolean(navigator.clipboard?.write && window.ClipboardItem);
 
@@ -1004,7 +1004,7 @@ async function viewReport(query, id) {
   const share = wa
     ? `<a class="btn" id="share" href="${esc(waHref())}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
     : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
-  // no explanation under the buttons (Piero's ask); only the missing number is worth a line,
+  // no explanation under the buttons (the team's ask); only the missing number is worth a line,
   // and the link's "válido até" once there is one
   const hint = wa ? "" : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`;
   app.innerHTML = `<div class="report">
