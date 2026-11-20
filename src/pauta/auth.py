@@ -78,7 +78,7 @@ def _under(host: str, rp_id: str) -> bool:
 def clean_name(name) -> str:
     """A display name: no control or invisible format characters, single spaces, 40 max."""
     name = "".join(c for c in str(name or "") if unicodedata.category(c) not in ("Cc", "Cf"))
-    return " ".join(name.split())[:40]
+    return " ".join(name.split())[:40].rstrip()
 
 
 def _fold(name: str) -> str:

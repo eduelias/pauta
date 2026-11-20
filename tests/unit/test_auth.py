@@ -236,6 +236,8 @@ def test_rename_and_email(store, auth):
     auth.rename(aid, "  Ana   Paula " + "x" * 60)
     name = store.members()[0]["name"]
     assert name.startswith("Ana Paula x") and len(name) == 40
+    auth.rename(aid, "x" * 39 + " y")  # the cut at 40 falls after a space
+    assert store.members()[0]["name"] == "x" * 39
     with pytest.raises(AuthError):
         auth.rename(aid, "   ")
     for bad in ("nope", "a@b", "a b@c.d", "x@" + "y" * 260 + ".com"):
