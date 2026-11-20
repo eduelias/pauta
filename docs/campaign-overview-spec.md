@@ -3,6 +3,14 @@
 - **Status:** phases A and B built with this document (2026-11-12, shipped in 1.10.0), at
   the owner's word ("whatever we can now"); see "What was built" at the end for what differs
   from the sketch. Phase C and the questions for Piero are open.
+- **2026-11-20:** the code differs: "Sem números" covers fewer cases than the rule below. It
+  is raised when the account's portfolio still has a connection that is not ok, or when
+  nothing is connected. An account whose portfolio was disconnected while others remain,
+  one Meta no longer lists, or one whose own numbers Meta refuses gets no such flag (at
+  most "sem entrega desde ontem"). The words are "sem dados novos da Meta".
+- **2026-11-20:** the code differs: the route can wait for Meta. The balance comes from
+  Meta's account list as the server keeps it in memory; with none kept yet, or one over a
+  day old, the route reads Meta before it answers.
 - **Asked by:** Piero, in a voice note of 2026-11-11, thinking aloud about the day he has 50
   or 60 clients instead of 12.
 - **Builds on:** decision 8 (Acompanhamento: the daily check, the numbers from Meta) and
@@ -110,11 +118,11 @@ campaign that stopped delivering and a balance about to run out. C can wait unti
 
 **Against the multi-tenant work:** it neither needs it nor gets in its way. It is one
 read-only route and one screen, so it can land before, between or after the refactor steps
-of `docs/multi-tenant-spec.md` section 12. Under that spec it is an ordinary tenant route
-needing `campaigns.read`; its amounts are in the "financial" class, so the operator's masked
-support view would show the flags and the shapes without the money. A natural slot is right
-after refactor step R2, which gives the team something visible during a stretch of
-releases that otherwise change nothing on screen.
+of `docs/multi-tenant-spec.md` section 12 (not on `main` as of 1.15.1). Under that spec it
+is an ordinary tenant route needing `campaigns.read`; its amounts are in the "financial"
+class, so the operator's masked support view would show the flags and the shapes without
+the money. A natural slot is right after refactor step R2, which gives the team something
+visible during a stretch of releases that otherwise change nothing on screen.
 
 ## Questions for Piero
 
@@ -153,7 +161,12 @@ tab at `#/campanhas/geral`, which shares the list's period. Against the sketch:
 - **The balance is what is left before the account's spending limit**, the only figure
   Meta gives; an account without a limit shows a dash and never the flag.
 - **Filters:** "só com alerta", segment, and what the trend line draws. No portfolio
-  filter yet. The row opens the client's page, where its campaigns are.
+  filter yet, and no portfolio on the row. The row opens the client's page, where its
+  campaigns are.
+- **The sort has a middle key:** the highest alert level first, then the number of alerts,
+  then spend.
+- **"Parou de entregar" has two more conditions:** the campaign must have started before
+  yesterday, and the flag gives way to "sem números" when that one is raised.
 
 ### Avisar o cliente (added the same day)
 
