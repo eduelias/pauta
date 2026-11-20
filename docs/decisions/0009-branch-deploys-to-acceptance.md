@@ -2,7 +2,7 @@
 
 - **Status:** shipped and in use; announced in 1.7.0 (2026-11-01). Proposed 2026-10-31
 - **2026-11-20:** the unit's sandbox also leaves out `/media` and `/mnt` (acceptance needs
-  no other drive); on du7 once `provision-branch-env.sh acc` has run and `pauta-acc` restarted.
+  no other drive); on du7 since that day.
 - **Amends:** decision 1 (acceptance was to be deployed from `main` only, by `pauta-deploy`
   taking the environment as an argument) and decision 2 (a third job passes the runner's
   job guard, and the runner gets a second sudo rule; sudo stays the only way to root).

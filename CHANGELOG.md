@@ -19,8 +19,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   rodar `deploy/provision-du7.sh` lá, que faz a mudança uma única vez (segundos fora do
   ar, ninguém precisa entrar de novo) e guarda a cópia antiga. Passo a passo e como
   desfazer: `deploy/README.md`, "Production's own user".
-- du7: a aceitação também deixa de enxergar os outros discos (`/media`, `/mnt`). Vale
-  depois de `deploy/provision-branch-env.sh acc` e de reiniciar o `pauta-acc` no du7.
+- du7: a aceitação também deixa de enxergar os outros discos (`/media`, `/mnt`). Já
+  aplicado no du7 em 2026-11-20 (`deploy/provision-branch-env.sh acc` e reinício do
+  `pauta-acc`).
 
 ## [1.16.1] - 2026-11-20
 
