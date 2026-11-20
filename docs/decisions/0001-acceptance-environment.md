@@ -8,6 +8,12 @@
   on every merge is not built.
 - **Amended by:** decision 8: one real client's ad account, unnamed and with no
   contacts, may live on acceptance for testing the Meta integration.
+- **Amended by:** decision 5 (proposed): the "separate host" alternative below becomes the
+  plan for production; acceptance stays on du7.
+- **2026-11-20:** not built as of 1.15.1: the release gate (a tag deploys to production only
+  if that commit is healthy on acceptance); the "ACEITAÇÃO" ribbon, title and theme colour
+  (`PAUTA_ENV`); production's own `pauta` user (it runs as `esaleh`); and, in this repo, any
+  watching of acceptance (the uptime check probes production only).
 
 ## Context
 
@@ -23,7 +29,7 @@ Run an acceptance environment on du7, next to production, deployed from `main`:
 
 | Topic | Decision |
 |---|---|
-| Address | `acc.pauta.genic.dev` (or `acc.<new domain>`): a CNAME to `du7.sytes.net` and its own Caddy block |
+| Address | `acc.pauta.cc` (decision 4; first planned as `acc.pauta.genic.dev`): a CNAME to `du7.sytes.net` and its own Caddy block |
 | Process | A second sandboxed unit, `pauta-acc`, on `127.0.0.1:8089`, with its own state dir and `/opt/pauta-acc`. It runs as a dedicated `pauta-acc` user so code that isn't released yet can't read production data. Production moves to its own `pauta` user at the same time (it runs as `esaleh` today) |
 | Deploys | `pauta-deploy` takes the environment as an argument, with the sudo rule updated to match. A merge to `main` → CI → deploy to acceptance. A tag `vX.Y.Z` deploys to production only if that commit is deployed and healthy on acceptance (checked through GitHub Deployments). A manual approval click would need GitHub Pro for a private repo; until then the gate is "green on acceptance" plus a person running `make release` |
 | Data | Demo data (`pauta demo`), never a plain copy of production: production holds the team's clients' contacts (LGPD). If realistic volume is needed, add a refresh that copies production and anonymises names, phones, links and comments first |
@@ -37,7 +43,9 @@ The working agreement it enables: merge → the person who asked checks it on ac
 
 - About a day of work: a templated unit, an environment-aware `pauta-deploy`, a `deploy.yml`
   job for `main`, the release gate, the ribbon, Caddy and DNS (the Squarespace record needs the
-  owner's passkey).
+  owner's passkey). What exists instead (decision 9): a unit file of its own
+  (`deploy/pauta-acc.service`), an installer of its own (`deploy/pauta-deploy-branch`) and a
+  workflow started by hand; no job for `main`.
 - du7 runs two copies of Pauta: a little more memory (about 30 MB), and two of everything to
   keep healthy.
 - Production's deploys get one more prerequisite, so a broken acceptance deploy blocks
