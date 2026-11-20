@@ -145,9 +145,7 @@ def standing(
     i = 0
     while True:
         s = period_start(anchor, i, cadence)
-        if s > today and i > 0:
-            break
-        if s > today and i == 0:  # anchored in the future (a "cliente desde" ahead of today)
+        if s > today:  # also the first one: anchored ahead (a "cliente desde" in the future)
             break
         starts.append(s)
         i += 1

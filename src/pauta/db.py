@@ -311,7 +311,7 @@ def _not_a_script(limit):
 def _id(v) -> int | None:
     try:
         n = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return n if 0 < n <= MAX_ID else None
 
@@ -351,7 +351,10 @@ def _money(v, _db):
     if isinstance(v, str):
         v = v.replace("R$", "").strip()
         # the Brazilian way: in 1.500,50 and in 1.500 the dots mark thousands; a dot that is
-        # not before three digits is a decimal point (1500.5, what the page puts back)
+        # not before three digits is a decimal point (1500.5, what the page puts back). The
+        # other order (2,500.00) is refused, not guessed: read this way it would be 2,50
+        if "," in v and not re.fullmatch(r"(\d{1,3}(\.\d{3})+|\d*),\d*", v):
+            raise Invalid("verba precisa ser um número")
         if "," in v or re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", v):
             v = v.replace(".", "").replace(",", ".")
     try:
@@ -375,7 +378,7 @@ def _int_range(lo, hi, label):
     def check(v, _db):
         try:
             n = int(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise Invalid(f"{label} precisa ser um número") from None
         if not lo <= n <= hi:
             raise Invalid(f"{label} fora do intervalo ({lo} a {hi})")

@@ -419,7 +419,7 @@ async function viewRequest(_q, id) {
             <div class="k">Prazo</div><div class="v"><input class="input" type="date" data-f="due" value="${esc(r.due || "")}"></div>
             <div class="k">Prioridade</div><div class="v">${seg("priority", o.priority, r.priority)}</div>
             <div class="k">Responsável</div><div class="v"><select class="input" data-f="assignee">${memberOpts(r.assignee)}</select></div>
-            <div class="k">Verba</div><div class="v"><div class="money" style="width:100%"><span>R$</span><input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-f="budget" value="${r.budget ?? ""}"></div></div>
+            <div class="k">Verba</div><div class="v"><div class="money" style="width:100%"><span>R$</span><input class="input" inputmode="decimal" data-f="budget" value="${r.budget ?? ""}"></div></div>
             <div class="k">Saldo</div><div class="v"><select class="input" data-f="balance">${selectOpts(o.balance, r.balance)}</select></div>
           </div>
         </div>
@@ -556,7 +556,7 @@ async function viewNew(_q, clientId) {
         <div class="field"><label>Objetivo</label><select class="input" name="goal">${selectOpts(o.goal, "")}</select></div>
         <div class="field"><label>Região</label><input class="input" name="region" placeholder="Ex.: raio de 8 km da clínica"></div>
         <div class="field wide"><label>Público-alvo</label><input class="input" name="audience" placeholder="Ex.: mulheres de 25 a 50 anos, interesse em estética"></div>
-        <div class="field"><label>Verba</label><div class="money"><span>R$</span><input class="input" name="budget" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></div></div>
+        <div class="field"><label>Verba</label><div class="money"><span>R$</span><input class="input" name="budget" inputmode="decimal" placeholder="0"></div></div>
         <div class="field"><label>Saldo na conta</label>${seg("balance", o.balance, "")}</div>
         <div class="field wide"><label>Link dos criativos</label><input class="input" name="creatives_url" placeholder="https://drive.google.com/…"></div>
         <div class="field"><label>Prazo</label><input class="input" type="date" name="due">

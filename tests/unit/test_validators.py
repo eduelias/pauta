@@ -79,6 +79,7 @@ def test_money(given, value):
 @pytest.mark.parametrize(
     "bad",
     ["muito", "-1", -5, 100_000_001, [1], "nan", "inf", float("nan"), float("inf")]
+    + ["2,500.00", "1,500.50", "1.5,00"]  # the other order is refused, never read as 2,50
     + [pytest.param(10**400, id="too big for a float")],
 )
 def test_money_refuses(bad):

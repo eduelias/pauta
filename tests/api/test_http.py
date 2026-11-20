@@ -152,6 +152,10 @@ def test_body_rules(team):
     assert raw(base, "POST", "/api/clients", b"[1]", json_hdr)[0] == 400
     status, _, body = raw(base, "POST", "/api/clients", b"{}", json_hdr)
     assert status == 400 and "nome" in json.loads(body)["error"]
+    # values JSON can carry and the store cannot: half a character pair, a number past any id
+    assert raw(base, "POST", "/api/clients", b'{"name": "\\ud800"}', json_hdr)[0] == 400
+    odd = b'{"client": 1e400, "what": "x"}'
+    assert raw(base, "POST", "/api/requests", odd, json_hdr)[0] == 400
 
 
 def test_rate_limit_on_login(store):

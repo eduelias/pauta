@@ -340,6 +340,20 @@ def test_a_body_has_a_total_time_however_it_arrives(tight, monkeypatch):
     assert reply.startswith(b"HTTP/1.0 408")
 
 
+def test_a_body_in_two_pieces_is_read_whole(tight):
+    body = b'{"name": "Alfa"}'
+    head = (
+        f"POST /api/logout HTTP/1.0\r\nOrigin: {ORIGIN}\r\n"
+        f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n"
+    )
+    u = urlparse(tight)
+    with socket.create_connection((u.hostname, u.port), timeout=5) as s:
+        s.sendall(head.encode() + body[:8])
+        time.sleep(0.1)
+        s.sendall(body[8:])
+        assert s.recv(4096).startswith(b"HTTP/1.0 200")
+
+
 def test_connections_are_capped(tight):
     u = urlparse(tight)
     hog = socket.create_connection((u.hostname, u.port))  # says nothing, holds the one slot

@@ -261,7 +261,7 @@ def make_handler(
 
         def _body(self) -> dict:
             length = (self.headers.get("Content-Length") or "0").strip()
-            if not length.isdigit():
+            if not (length.isascii() and length.isdigit()):
                 raise Reply(400, {"error": "pedido inválido"})
             n = int(length)
             if n > MAX_BODY:
@@ -392,6 +392,8 @@ def make_handler(
                 self._json(r.status, r.doc)
             except (Invalid, AuthError) as e:
                 self._json(400, {"error": str(e)})
+            except UnicodeEncodeError:  # half a character pair in a text: SQLite won't keep it
+                self._json(400, {"error": "texto inválido"})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
             except DriveError as e:
