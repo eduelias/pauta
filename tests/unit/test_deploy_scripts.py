@@ -368,6 +368,9 @@ def test_capabilities_needs_no_lock(tmp_path):
     assert r.returncode == 0, r.stderr
     assert r.stdout == "pinned activate\n"
     assert not root.exists()
+    # deploy.yml asks for exactly this before it hands du7 anything
+    workflow = DEPLOY.parent / ".github" / "workflows" / "deploy.yml"
+    assert 'pauta-deploy --capabilities | grep -qx "pinned activate"' in workflow.read_text()
 
 
 WHEEL = "/x/pauta-1.2.3-py3-none-any.whl"
