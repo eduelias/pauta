@@ -86,9 +86,9 @@ Never deploy by copying files to du7. Describe changes under `## [Unreleased]` i
 `CHANGELOG.md`, then `make release V=X.Y.Z` (on a clean, pushed main): the tag runs CI,
 publishes the GitHub release and deploys it through the self-hosted runner on du7, which
 can only run `/usr/local/sbin/pauta-deploy` as root. Rollback: Actions → Deploy → an older
-version, or `sudo pauta-deploy --rollback` on du7. Details: `deploy/README.md`. Never run
-`pauta demo` against du7's DB. Keep schema changes additive so an older release can run on
-a newer database.
+version still installed on du7, or `sudo pauta-deploy --rollback` there. Details:
+`deploy/README.md`. Never run `pauta demo` against du7's DB. Keep schema changes additive
+so an older release can run on a newer database.
 
 Decisions (what was decided and why, including things not built yet) are in `docs/decisions/`.
 

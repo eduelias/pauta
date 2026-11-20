@@ -10,7 +10,7 @@
 # did that too):
 #   - job `du7` of release.yml, run by pushing a release tag vX.Y.Z
 #   - job `du7` of deploy.yml, run by hand (workflow_dispatch) from main, to redeploy or
-#     roll back to a published release
+#     roll back to a release installed on du7
 #   - job `du7` of deploy-branch.yml, run by hand from main, to put a build of
 #     any branch on a test environment (acc.pauta.cc) through pauta-deploy-branch, which
 #     can't reach production (decision 9)

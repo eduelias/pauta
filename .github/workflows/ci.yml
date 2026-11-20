@@ -7,6 +7,12 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    # what a release deploys: du7 installs the wheel and lockfile with these hashes, no others
+    outputs:
+      wheel_sha256:
+        value: ${{ jobs.build.outputs.wheel_sha256 }}
+      lock_sha256:
+        value: ${{ jobs.build.outputs.lock_sha256 }}
 
 permissions:
   contents: read
@@ -143,6 +149,9 @@ jobs:
     needs: [lint, test, e2e, audit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      wheel_sha256: ${{ steps.sums.outputs.wheel }}
+      lock_sha256: ${{ steps.sums.outputs.lock }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -154,6 +163,13 @@ jobs:
         run: >-
           uv export --no-dev --no-emit-project --format requirements-txt
           -o dist/requirements.lock
+      - name: Checksums
+        id: sums
+        # here, before the wheel is installed or run: the smoke test can't change what they say
+        run: |
+          cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+          echo "wheel=$(sha256sum pauta-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "lock=$(sha256sum requirements.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - name: The wheel carries the web app
         run: |
           wheel=$(ls dist/pauta-*.whl)
@@ -172,8 +188,8 @@ jobs:
           test "$(curl -fsS localhost:8099/healthz | jq -r .version)" = "$version"
           curl -fsS localhost:8099/ | grep -q 'og:image'
           echo "pauta $version: installs, starts and answers" >> "$GITHUB_STEP_SUMMARY"
-      - name: Checksums
-        run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: What is uploaded is what was hashed
+        run: cd dist && sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
