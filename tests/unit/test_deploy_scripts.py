@@ -31,7 +31,6 @@ def guard(**env):
     [
         (f"{WF}/release.yml@refs/tags/v1.2.3", "push"),
         (f"{WF}/release.yml@refs/tags/v10.0.12", "push"),
-        (f"{WF}/deploy.yml@refs/heads/main", "workflow_dispatch"),
     ],
 )
 def test_guard_allows_the_deploy(ref, event):
@@ -91,18 +90,30 @@ def test_guard_refuses_everything_else(env, why):
     assert "refusing this job on du7" in r.stderr and why in r.stderr
 
 
+BY_HAND = f"{WF}/deploy.yml@refs/heads/main"
 BRANCH = f"{WF}/deploy-branch.yml@refs/heads/main"
 
 
-def test_guard_lets_the_owner_deploy_a_branch():
+@pytest.mark.parametrize("ref", [BY_HAND, BRANCH])
+def test_guard_lets_the_owner_deploy_by_hand(ref):
     r = guard(
-        GITHUB_WORKFLOW_REF=BRANCH,
+        GITHUB_WORKFLOW_REF=ref,
         GITHUB_EVENT_NAME="workflow_dispatch",
         GITHUB_ACTOR="eduelias",
         GITHUB_TRIGGERING_ACTOR="eduelias",
     )
     assert r.returncode == 0, r.stderr
     assert "may deploy" in r.stdout
+
+
+@pytest.mark.parametrize(
+    "env", [{}, {"GITHUB_ACTOR": "eduelias"}, {"GITHUB_TRIGGERING_ACTOR": "eduelias"}]
+)
+def test_guard_refuses_a_deploy_by_hand_from_anyone_else(env):
+    # started, or re-run, by someone who is not the owner
+    r = guard(GITHUB_WORKFLOW_REF=BY_HAND, GITHUB_EVENT_NAME="workflow_dispatch", **env)
+    assert r.returncode == 1
+    assert "refusing this job on du7: only eduelias may redeploy production" in r.stderr
 
 
 @pytest.mark.parametrize(
