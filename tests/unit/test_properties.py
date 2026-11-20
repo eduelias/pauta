@@ -145,13 +145,13 @@ def test_f_start():
 def test_f_anchor():
     """An explicit start wins; the first-payment rule waits for a payment; the fixed-day
     rule anchors on or before the opening, less than 31 days back, and every monthly or
-    yearly period of that cycle falls on the fixed day clamped to the month's last day."""
+    yearly period of that cycle falls on the fixed day (1 to 28, all the settings take)."""
     rng = random.Random(20261125)
     for _ in range(N):
         opened, first, since = any_day(rng), any_day(rng), any_day(rng)
         kw = {"first_payment": first, "since": since, "opened": opened}
         rule = rng.choice(["first_payment", "client_since", "fixed_day"])
-        day = rng.randint(1, 31)
+        day = rng.randint(1, 28)
         s = {
             **DEFAULTS,
             "anchor": rule,
@@ -174,7 +174,7 @@ def test_f_anchor():
             cycle = standing(s, cents=10000, anchor=r, payments=[], today=today)
             assert cycle.periods and cycle.periods[0].start == r
             for p in cycle.periods:
-                assert p.start.day == min(day, last_day(p.start)), (opened, day, p.start)
+                assert p.start.day == day, (opened, day, p.start)
 
 
 def test_f_conserve():
