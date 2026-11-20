@@ -313,7 +313,7 @@ def install(route, store, auth, drive, meta):
     @route("POST", "/api/reviews/today")
     def review_all(self, viewer, body):
         """Visto hoje: todos. One check per active campaign of every client with one that
-        nobody has seen today (Piero goes through them all and marked them one by one, seven
+        nobody has seen today (the campaign runner went through them all one by one, seven
         taps in thirty seconds). The optional `note` goes on every check. Answers how many
         clients and campaigns were marked and the day's count; nothing to mark is 0, not
         an error (a second tap is harmless)."""

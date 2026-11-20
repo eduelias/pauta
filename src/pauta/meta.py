@@ -133,7 +133,7 @@ OBJECTIVE_RESULTS = {
     "MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
     "OUTCOME_MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
 }
-# "today" is the ad account's day, not the server's (du7 runs on CET; Piero's accounts are
+# "today" is the ad account's day, not the server's (du7 runs on CET; the team's accounts are
 # in São Paulo): the team's default when an account doesn't say, PAUTA_TZ overrides it
 DEFAULT_TZ = "America/Sao_Paulo"
 DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default period: "Últimos 30 dias", yesterday back

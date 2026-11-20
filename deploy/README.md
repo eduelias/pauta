@@ -80,7 +80,7 @@ order (steps 1–5 done 2026-10-31):
    steps 2 and 3 come first.
 5. **Move the team**: send each person their own link, which is one tap and Face ID. From
    the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
-   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link NAME`).
    A link works once, for 3 days, for that account only: send it to that person only.
    Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
    Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
