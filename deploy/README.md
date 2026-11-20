@@ -185,8 +185,8 @@ and `systemctl reload caddy`.
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
 shell and no groups, and keeps itself updated. Its job-started hook,
 `/usr/local/lib/pauta/runner-job-guard.sh`, refuses every job except `du7` of `release.yml` on a
-`vX.Y.Z` tag, and `du7` of `deploy.yml` or `deploy-branch.yml` run by hand on `main` by the
-owner; refusals are in
+`vX.Y.Z` tag, and `du7` of `deploy.yml` or `deploy-branch.yml` run by hand on `main`, each only
+when the owner started the run and, for a run started again, did that too; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
 

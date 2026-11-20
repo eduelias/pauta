@@ -7,7 +7,8 @@
   without an account, for 5 days, showing one campaign's report card and nothing else.
 - **Amended by:** decision 9: the job guard lets a third job through (`du7` of
   `deploy-branch.yml`, run by hand on `main` by the owner), and the runner has a second sudo
-  rule, for `pauta-deploy-branch`. "Job guard" below still describes the first two.
+  rule, for `pauta-deploy-branch`. Since 2026-11-20 the guard checks who started the run for
+  all three jobs.
 - **2026-11-20:** the code differs: that third job runs in a third environment, `acc`, which
   `scripts/repo-settings.sh` does not set up.
 
@@ -51,8 +52,7 @@ On GitHub (`scripts/repo-settings.sh apply`, kept in the repo so it can be re-ru
   from `main` and `v*` tags. The WhatsApp secrets move from the repository into `alerts`,
   so a pushed branch can't read them.
 - **Actions**: GitHub's own actions plus `astral-sh/setup-uv`, pinned to a full SHA
-  (`rhysd/actionlint` is still on the allow-list, but no workflow uses it: actionlint runs
-  from its PyPI wheel, pinned by version); the `GITHUB_TOKEN` is read-only by default and
+  (actionlint runs from its PyPI wheel, pinned by version); the `GITHUB_TOKEN` is read-only by default and
   can't approve PRs; runs from outside contributors' forks wait for the owner's approval.
 - **Security**: Dependabot alerts and security updates (version updates were already on),
   secret scanning with push protection, private vulnerability reporting, CodeQL.
@@ -61,8 +61,9 @@ On du7 (`deploy/provision-du7.sh`):
 
 - **Job guard**: the runner's job-started hook (`deploy/runner-job-guard`, root-owned,
   enabled by a root-owned systemd drop-in) refuses every job except `du7` of `release.yml`
-  on a `vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`. A branch, a pull
-  request or a fork gets a failed job before any step runs.
+  on a `vX.Y.Z` tag and `du7` of `deploy.yml` or `deploy-branch.yml` (decision 9) run by
+  hand on `main`, each only when the owner started the run and, for a run started again,
+  did that too. A branch, a pull request or a fork gets a failed job before any step runs.
 - **Published releases only**: `pauta-deploy` fetches the release's `SHA256SUMS` from GitHub
   itself and refuses a wheel or lockfile that doesn't match it.
 
