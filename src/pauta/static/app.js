@@ -26,9 +26,20 @@ class Stale extends Error {}
 // and the router would follow it, so the tap is lost. So a screen only rewrites the
 // address while the address is still its own (the same path, whatever the query).
 const hashPath = (hash) => (hash || "#/").slice(1).split("?")[0] || "/";
+const onScreen = (hash) => hashPath(location.hash) === hashPath(hash);
 function keepHash(hash) {
-  if (hashPath(location.hash) === hashPath(hash)) history.replaceState(null, "", hash);
+  if (onScreen(hash)) history.replaceState(null, "", hash);
 }
+// The same goes for what a screen draws when an answer comes late. A screen that asks for
+// its data again by itself (another period, the board after a drop) is outside the
+// router's numbering: it draws only while the address is still its own (`onScreen`). A
+// part of a screen redrawn after a save or an upload keeps a node from when the screen
+// was drawn and stops once that node is off the page (`isConnected`): looked up by id, the
+// answer would land on the next request's timeline, or on nothing at all.
+
+// No answer at all (no signal, the server away). The browser's own error is in English
+// ("Failed to fetch", "Load failed"): every toast and the error screen say this one.
+const offline = () => Object.assign(new Error("a conexão caiu; tente de novo"), { status: 0 });
 
 async function api(method, path, body) {
   const nav = LOADING && method === "GET" ? NAV_SEQ : null;
@@ -40,7 +51,7 @@ async function api(method, path, body) {
   const t0 = performance.now();
   let res;
   try { res = await fetch(path, opts); }
-  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
+  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw offline(); }
   const doc = await res.json().catch(() => ({}));
   trackApi(method, path, res.status, performance.now() - t0);
   noteServer(res.headers, nav !== null);
@@ -109,6 +120,9 @@ function toast(msg, err = false) {
   toastTimer = setTimeout(() => { t.hidden = true; }, err ? 4200 : 2200);
   if (err) track("error_shown", errorClass());
 }
+
+// Escape leaves a dialog, as a tap on its Cancelar (or "Agora não") does
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal [data-a=cancel]")?.click(); });
 
 // ---------- usage log (decision 11) -------------------------------------------------------------
 // What the team does in the app, for `pauta usage`: event names and prop keys from a fixed
@@ -259,7 +273,7 @@ function addDays(iso, n) {
 }
 const daysUntil = (iso) => Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(todayISO() + "T00:00:00Z")) / 86400000);
 const fmtDate = (iso, opts = { day: "numeric", month: "short" }) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", opts).replace(".", "") : "";
-const stamp = (s) => new Date(/Z$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
+const stamp = (s) => new Date(/(Z|[+-]\d\d:?\d\d)$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
 function ago(s) {
   const sec = (Date.now() - stamp(s)) / 1000;
   if (sec < 60) return "agora";
@@ -311,16 +325,20 @@ function igUrl(h) {
 }
 // wa.me wants the international number, digits only. People type Brazilian numbers as
 // they dial them: "0 32 99999-9999" (the trunk zero), "(11) 98888-7777", "+55 11 ...",
-// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it
+// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it.
+// The link is one whole number (11 to 15 digits, not starting with zero) or none at all: a
+// field with two numbers ("... / ...") gives the first whole one, where both run together
+// were a 22-digit link.
 function waUrl(n) {
-  const raw = String(n || "").trim();
-  let d = raw.replace(/\D/g, "");
-  if (!d) return "";
-  const intl = raw.startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
-  d = d.replace(/^00/, "");  // the international prefix
-  if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
-  if (!intl && d.length <= 11) d = "55" + d;
-  return `https://wa.me/${d}`;
+  for (const raw of String(n || "").split(/[^\d\s().+-]+/)) {
+    let d = raw.replace(/\D/g, "");
+    const intl = raw.trim().startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
+    d = d.replace(/^00/, "");  // the international prefix
+    if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
+    if (!intl && /^\d{10,11}$/.test(d)) d = "55" + d;  // a whole national number, area code and all
+    if (/^[1-9]\d{10,14}$/.test(d)) return `https://wa.me/${d}`;
+  }
+  return "";
 }
 
 function sortOpen(a, b) {

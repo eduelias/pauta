@@ -53,6 +53,7 @@ MAX_BODY = 256 * 1024
 # a connection that sends nothing for this long is dropped, and only so many are served at
 # once: slow or stalled clients can't pile up threads on the Pi
 IDLE_SECONDS = 15
+BODY_SECONDS = 20  # and a JSON body is whole within this, however it arrives
 MAX_CONNECTIONS = 64
 BUSY = b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 5\r\n\r\n"
 ROBOTS = b"User-agent: *\nDisallow: /\n"
@@ -260,7 +261,7 @@ def make_handler(
 
         def _body(self) -> dict:
             length = (self.headers.get("Content-Length") or "0").strip()
-            if not length.isdigit():
+            if not (length.isascii() and length.isdigit()):
                 raise Reply(400, {"error": "pedido inválido"})
             n = int(length)
             if n > MAX_BODY:
@@ -268,13 +269,24 @@ def make_handler(
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if n and ctype != "application/json":
                 raise Reply(415, {"error": "envie JSON"})
+            raw, deadline = b"", time.monotonic() + BODY_SECONDS
             try:
-                raw = self.rfile.read(n) if n else b"{}"
+                while len(raw) < n:  # the idle timer restarts with every byte; this one doesn't
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError
+                    self.connection.settimeout(min(left, self.timeout))
+                    chunk = self.rfile.read1(n - len(raw))
+                    if not chunk:
+                        break
+                    raw += chunk
             except TimeoutError:
                 raise Reply(408, {"error": "o pedido demorou demais"}) from None
+            finally:
+                self.connection.settimeout(self.timeout)
             try:
                 doc = json.loads(raw or b"{}")
-            except ValueError:
+            except (ValueError, RecursionError):  # nested too deep is not JSON either
                 raise Reply(400, {"error": "JSON inválido"}) from None
             if not isinstance(doc, dict):
                 raise Reply(400, {"error": "JSON inválido"})
@@ -380,6 +392,8 @@ def make_handler(
                 self._json(r.status, r.doc)
             except (Invalid, AuthError) as e:
                 self._json(400, {"error": str(e)})
+            except UnicodeEncodeError:  # half a character pair in a text: SQLite won't keep it
+                self._json(400, {"error": "texto inválido"})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
             except DriveError as e:

@@ -29,6 +29,7 @@ function startOptions() {
 
 async function viewProfile() {
   const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
+  if (!onScreen("#/perfil")) return;
   app.innerHTML = `<div style="max-width:760px">
     <div class="head"><div><h1>Perfil</h1><p>Como você aparece para o time e como entra na Pauta.</p></div></div>
     <section class="panel" id="me">
@@ -101,15 +102,16 @@ async function loadDrive(doc) {
     try { loadDrive(await api("POST", "/api/onedrive/connect")); track("settings_changed", { section: "arquivos" }); } catch (e) { toast(e.message, true); }
   });
   $("#drivecancel")?.addEventListener("click", async () => {
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    await refreshBoot();
+    try { loadDrive(await api("DELETE", "/api/onedrive")); await refreshBoot(); } catch (e) { toast(e.message, true); }
   });
   $("#driveoff")?.addEventListener("click", async () => {
     if (!confirm("Desconectar o OneDrive? Os arquivos continuam lá, mas a Pauta deixa de enviar e abrir arquivos até alguém reconectar.")) return;
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    track("settings_changed", { section: "arquivos" });
-    await refreshBoot();
-    toast("OneDrive desconectado");
+    try {
+      loadDrive(await api("DELETE", "/api/onedrive"));
+      track("settings_changed", { section: "arquivos" });
+      await refreshBoot();
+      toast("OneDrive desconectado");
+    } catch (e) { toast(e.message, true); }
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
   // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
@@ -218,7 +220,7 @@ const META_STATES = {
   revoked: "acesso revogado na Meta; reconecte em Adicionar contas",
 };
 const stampBR = (iso) => {
-  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(" ", "T") + "Z");
+  const d = stamp(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 };
@@ -336,8 +338,9 @@ function loadQr() {
 }
 
 async function makeInvite() {
-  const box = $("#qrbox");
+  const box = $("#qrbox"), btn = $("#invite");
   const admin = $("#asadmin").checked;
+  btn.disabled = true;
   try {
     const [inv] = await Promise.all([api("POST", "/api/invite", { admin }), loadQr()]);
     const url = location.origin + inv.path;
@@ -354,4 +357,5 @@ async function makeInvite() {
       <a class="btn" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
     bindCopy(box);
   } catch (e) { toast(e.message, true); }
+  btn.disabled = false;
 }

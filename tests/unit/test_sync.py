@@ -106,6 +106,48 @@ def test_the_hourly_pass_keeps_the_account_list_warm(team):
     assert len(fake.calls) == n  # the pass just read it
 
 
+def test_a_history_read_that_failed_is_tried_again_until_it_works(team):
+    """A campaign first seen in a pass gets its numbers back to its start. When Meta fails
+    that one read the campaign is already saved, so it is no longer new: the next passes
+    must still fetch what is missing (once: a history that was read is not read again)."""
+    store, meta, fake, *_ = team
+    fake.fail_history.add("23850001")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert [e["account"] for e in out["errors"]] == ["111"] and out["campaigns_new"] == 3
+    assert days(store, "23850001") == ["2026-10-19", "2026-10-20"]  # the window only
+    # the account's new numbers are in, and the campaign after it got its history
+    assert "111" not in meta.unsynced and days(store, "23850002")[0] == "2026-10-12"
+    # a day later Meta answers: the history runs from the start to where the window begins
+    fake.fail_history.clear()
+    tomorrow = TODAY + timedelta(days=1)
+    out = sync.run(store, meta, days=2, today=tomorrow)
+    assert out["errors"] == [] and out["campaigns_new"] == 0
+    assert days(store, "23850001") == [
+        (date(2026, 10, 3) + timedelta(days=i)).isoformat() for i in range(19)
+    ]
+    assert days(store, "23850002")[0] == "2026-10-12"  # the one after it in the account too
+    # read once: the next pass asks for the windows only
+    fake.calls.clear()
+    sync.run(store, meta, days=2, today=tomorrow)
+    assert sum("/insights" in c for c in fake.calls) == 2
+
+
+def test_a_pause_asked_during_a_history_read_ends_the_pass(team, monkeypatch):
+    store, meta, *_ = team
+    real, asked = meta.daily_insights, []
+
+    def paused(*args, meta_ids=None, **kw):
+        if meta_ids:  # a history read, by campaign id
+            asked.append(meta_ids)
+            raise MetaError(THROTTLED, 503)
+        return real(*args, meta_ids=meta_ids, **kw)
+
+    monkeypatch.setattr(meta, "daily_insights", paused)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert len(asked) == 1  # not one more read once Meta asked for a pause
+    assert [e["status"] for e in out["errors"]] == [503]
+
+
 def test_run_links_done_requests(team):
     store, meta, fake, clinic, _ = team
     r = store.create_request(
@@ -455,6 +497,46 @@ def test_a_permanent_orphan_is_read_once_and_reported_quietly_after(team, caplog
     assert out["errors"][0]["status"] == 503 and meta.sync_error == THROTTLED
     assert {e["error"] for e in out["errors"][1:]} == {msg, UNCLAIMED}
     assert meta.orphans == {"333"}
+
+
+def test_the_pass_remembers_which_accounts_got_no_new_numbers(team):
+    """What Visão geral's "sem dados novos da Meta" goes by: the linked accounts the last
+    pass has nothing new for, each with why and the failing account named, and no other
+    (one account in trouble used to mark every client of its portfolio)."""
+    store, meta, fake, *_ = team
+    assert meta.unsynced == {}
+    fake.fail_campaigns.add("111")
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {"111": f"conta 111: {out['errors'][0]['error']}"}
+    fake.fail_campaigns.clear()
+    sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {}
+    # a throttle ends the pass: the accounts it never reached have nothing new either
+    fake.throttle = True
+    sync.run(store, meta, days=2, today=TODAY)
+    assert meta.unsynced == {"111": f"conta 111: {THROTTLED}", "222": THROTTLED}
+
+
+def test_an_account_whose_portfolio_was_disconnected_is_reported_not_skipped(team):
+    """Desconectar forgets a portfolio's token; its linked accounts keep that portfolio's
+    id on their rows. It matches no connection any more, so the pass used to skip them
+    without a word, their campaigns "active" with frozen numbers. They are nobody's now:
+    reported like any account no portfolio lists."""
+    store, meta, fake, *_ = team
+    meta.on_read = store.sync_meta_accounts
+    fake.business = OTHER_BUSINESS
+    connect(meta, fake)
+    fake.business = BUSINESS
+    sync.run(store, meta, days=2, today=TODAY)  # the read tags every row with its portfolio
+    store.link_meta_account("444", store.save_client({"name": "Cliente A"})["id"])
+    out = sync.run(store, meta, days=2, today=TODAY)
+    assert out["accounts"] == 3 and out["errors"] == [] and meta.unsynced == {}
+    meta.disconnect(OTHER_BUSINESS)
+    out = sync.run(store, meta, days=2, today=TODAY)
+    msg = ORPHAN.format(id="444")
+    assert out["accounts"] == 2
+    assert out["errors"] == [{"account": "444", "business_id": "", "error": msg, "status": 0}]
+    assert meta.unsynced == {"444": msg} and meta.sync_error == msg
 
 
 def test_one_pass_at_a_time(team):

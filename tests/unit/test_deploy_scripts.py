@@ -1,14 +1,17 @@
-"""deploy/runner-job-guard and pauta-deploy's release check: what may reach du7."""
+"""deploy/runner-job-guard and pauta-deploy: what may reach du7, the switch, the rollback."""
 
 import hashlib
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 WF = "eduelias/pauta/.github/workflows"
+# readlink -e, mv -T: GNU/Linux, like du7 and CI
+linux = pytest.mark.skipif(sys.platform != "linux", reason="GNU coreutils (du7, CI)")
 
 
 def guard(**env):
@@ -30,11 +33,15 @@ def guard(**env):
     [
         (f"{WF}/release.yml@refs/tags/v1.2.3", "push"),
         (f"{WF}/release.yml@refs/tags/v10.0.12", "push"),
-        (f"{WF}/deploy.yml@refs/heads/main", "workflow_dispatch"),
     ],
 )
 def test_guard_allows_the_deploy(ref, event):
-    r = guard(GITHUB_WORKFLOW_REF=ref, GITHUB_EVENT_NAME=event)
+    r = guard(
+        GITHUB_WORKFLOW_REF=ref,
+        GITHUB_EVENT_NAME=event,
+        GITHUB_ACTOR="eduelias",
+        GITHUB_TRIGGERING_ACTOR="eduelias",
+    )
     assert r.returncode == 0, r.stderr
     assert "may deploy" in r.stdout
 
@@ -90,12 +97,14 @@ def test_guard_refuses_everything_else(env, why):
     assert "refusing this job on du7" in r.stderr and why in r.stderr
 
 
+BY_HAND = f"{WF}/deploy.yml@refs/heads/main"
 BRANCH = f"{WF}/deploy-branch.yml@refs/heads/main"
 
 
-def test_guard_lets_the_owner_deploy_a_branch():
+@pytest.mark.parametrize("ref", [BY_HAND, BRANCH])
+def test_guard_lets_the_owner_deploy_by_hand(ref):
     r = guard(
-        GITHUB_WORKFLOW_REF=BRANCH,
+        GITHUB_WORKFLOW_REF=ref,
         GITHUB_EVENT_NAME="workflow_dispatch",
         GITHUB_ACTOR="eduelias",
         GITHUB_TRIGGERING_ACTOR="eduelias",
@@ -105,12 +114,26 @@ def test_guard_lets_the_owner_deploy_a_branch():
 
 
 @pytest.mark.parametrize(
+    "env", [{}, {"GITHUB_ACTOR": "eduelias"}, {"GITHUB_TRIGGERING_ACTOR": "eduelias"}]
+)
+@pytest.mark.parametrize(
+    ("ref", "event"),
+    [
+        (BY_HAND, "workflow_dispatch"),
+        (BRANCH, "workflow_dispatch"),
+        (f"{WF}/release.yml@refs/tags/v1.2.3", "push"),  # an old release's run, run again
+    ],
+)
+def test_guard_refuses_a_deploy_from_anyone_else(env, ref, event):
+    # started, or run again, by someone who is not the owner
+    r = guard(GITHUB_WORKFLOW_REF=ref, GITHUB_EVENT_NAME=event, **env)
+    assert r.returncode == 1
+    assert "refusing this job on du7: only eduelias may deploy" in r.stderr
+
+
+@pytest.mark.parametrize(
     ("env", "why"),
     [
-        # anyone else, or a re-run by anyone else
-        ({}, "only eduelias may deploy a branch"),
-        ({"GITHUB_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
-        ({"GITHUB_TRIGGERING_ACTOR": "eduelias"}, "only eduelias may deploy a branch"),
         # the owner, but the workflow from a branch (where anyone could have edited it)
         (
             {
@@ -209,6 +232,135 @@ def test_sourcing_does_not_deploy():
         text=True,
     )
     assert r.returncode == 0 and r.stdout.strip() == "sourced"
+
+
+def deploy(root, script, cwd=None, **env):
+    """Source pauta-deploy with /opt/pauta in a temporary folder and stand-ins for root and
+    the lock, then run `script`."""
+    stubs = (
+        f'source "{DEPLOY / "pauta-deploy"}"; ROOT="{root}"; RELEASES="{root}/releases"; '
+        f'PYTHON="{sys.executable}"; id() {{ echo 0; }}; flock() {{ :; }}; '
+    )
+    full = {"PATH": os.environ["PATH"], **env}
+    return subprocess.run(
+        ["bash", "-c", stubs + script], env=full, cwd=cwd, capture_output=True, text=True
+    )
+
+
+def test_python_runs_isolated_and_from_the_root_directory(tmp_path):
+    # a module of the same name in the caller's directory is never the one imported
+    here = tmp_path / "here"
+    here.mkdir()
+    (here / "json.py").write_text("raise SystemExit('json.py of the current directory')\n")
+    health = 'curl() { echo \'{"status": "ok", "version": "1.2.3"}\'; }; '
+    r = deploy(tmp_path / "opt", health + "health_version", cwd=here)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "1.2.3"
+    text = (DEPLOY / "pauta-deploy").read_text()
+    assert text.count('"$PYTHON"') == text.count('"$PYTHON" -I ') > 0  # every call, not just this
+    r = deploy(tmp_path / "opt", health + "main --status; pwd", cwd=here)
+    assert r.returncode == 0, r.stderr
+    assert "(healthz: 1.2.3)" in r.stdout
+    assert r.stdout.splitlines()[-1] == "/"
+
+
+def test_the_wheel_and_lockfile_are_read_once(release, tmp_path):
+    wheel, lock, sums = release
+    root = tmp_path / "opt"
+    # an install_release stand-in: the caller's file changes after the check, and it shows
+    # what it was handed. The files are named as deploy.yml names them, from its directory
+    # under sudo each file is read as the caller: runuser is a stand-in that says so
+    script = (
+        'fetch_sums() { cat "$SUMS"; }; backup_db() { :; }; activate() { :; }; prune() { :; }; '
+        'runuser() { echo "as $2" >&2; shift 3; "$@"; }; '
+        f'install_release() {{ echo changed > "{wheel}"; ls -ld "${{2%/*}}" | cut -c1-10; '
+        'echo "$2 $3"; cat "$2"; }; '
+        f"main 1.2.3 {wheel.name} {lock.name}"
+    )
+    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums), SUDO_USER="someone")
+    assert r.returncode == 0, r.stderr
+    assert r.stderr.count("as someone") == 2  # the wheel and the lockfile
+    mode, paths, content = r.stdout.splitlines()
+    assert mode == "drwx------"  # root only
+    assert all(path.startswith(f"{root}/.incoming.") for path in paths.split())
+    assert content == "the published wheel"
+    assert not list(root.glob(".incoming.*"))  # gone when the deploy ends
+    # and when it is refused (the caller's wheel is the changed one now)
+    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
+    assert r.returncode == 1 and "is not the published one" in r.stderr
+    assert not list(root.glob(".incoming.*"))
+
+
+@pytest.fixture
+def opt(tmp_path):
+    """A fake /opt/pauta with two installed releases, 1.2.2 live."""
+    root = tmp_path / "opt"
+    for v in ("1.2.2", "1.2.3"):
+        (root / "releases" / v).mkdir(parents=True)
+        (root / "releases" / v / ".complete").write_text("")
+    (root / "current").symlink_to(root / "releases" / "1.2.2")
+    return root
+
+
+def switch(root, script, healthy):
+    # the unit and /healthz are stand-ins: health_version answers with the version `current`
+    # points at, if that one is healthy
+    stubs = (
+        'systemctl() { echo "systemctl $*" >> "$ROOT/calls"; }; backup_db() { :; }; '
+        "journalctl() { :; }; logger() { :; }; "
+        'health_version() { v=$(basename "$(readlink -e "$ROOT/current")"); '
+        'case " $HEALTHY " in *" $v "*) echo "$v";; *) echo "";; esac; }; '
+    )
+    return deploy(root, stubs + script, HEALTHY=healthy)
+
+
+@linux
+def test_a_healthy_release_goes_live(opt):
+    r = switch(opt, "activate 1.2.3", "1.2.2 1.2.3")
+    assert r.returncode == 0, r.stderr
+    assert (opt / "current").resolve().name == "1.2.3"
+    assert (opt / "previous").resolve().name == "1.2.2"
+    assert "live 1.2.3 (was 1.2.2)" in (opt / "deploy.log").read_text()
+    assert (opt / "calls").read_text() == "systemctl restart pauta\n"
+
+
+@linux
+def test_a_broken_release_rolls_back(opt):
+    r = switch(opt, "activate 1.2.3", "1.2.2")
+    assert r.returncode == 1
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert not (opt / "previous").exists()
+    assert "FAILED 1.2.3, rolled back to 1.2.2 (healthz: 1.2.2)" in (opt / "deploy.log").read_text()
+    assert (opt / "calls").read_text() == "systemctl restart pauta\n" * 2
+
+
+@linux
+def test_rollback_goes_to_the_release_before(opt):
+    r = switch(opt, "main --rollback", "1.2.2 1.2.3")
+    assert r.returncode == 1 and "no previous release" in r.stderr
+    assert switch(opt, "activate 1.2.3", "1.2.2 1.2.3").returncode == 0
+    r = switch(opt, "main --rollback", "1.2.2 1.2.3")
+    assert r.returncode == 0, r.stderr
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert (opt / "previous").resolve().name == "1.2.3"
+    assert "live 1.2.2 (was 1.2.3)" in (opt / "deploy.log").read_text()
+
+
+@pytest.mark.parametrize(
+    ("args", "why"),
+    [
+        ("1.2.3", "usage"),
+        ("--rollback now", "usage"),
+        ("1.2 /x/pauta-1.2-py3-none-any.whl /x/requirements.lock", "bad version"),
+        ("1.2.3 /x/pauta-9.9.9-py3-none-any.whl /x/requirements.lock", "unexpected wheel"),
+        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/other.lock", "unexpected lockfile"),
+        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/requirements.lock", "no wheel at"),
+    ],
+)
+def test_main_refuses_bad_arguments(args, why, tmp_path):
+    r = deploy(tmp_path / "opt", f"main {args}; echo reached")
+    assert r.returncode == 1 and why in r.stderr
+    assert "reached" not in r.stdout
 
 
 @pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])

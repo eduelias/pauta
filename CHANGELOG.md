@@ -7,6 +7,129 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **"1.500" digitado como valor agora é mil e quinhentos.** Antes virava R$ 1,50: o ponto
+  era lido como vírgula. Agora o ponto seguido de três dígitos é separador de milhar
+  ("1.500", "R$ 2.000", "1.500.000") e a vírgula é a casa decimal. Vale para o valor do
+  cliente, os pagamentos, o valor padrão e a verba do pedido (que deixou de ser um campo
+  "de número", onde o navegador descartava "1.500,50"). Um valor na ordem inglesa
+  ("2,500.00") é recusado com aviso, em vez de virar 2,50.
+- **"Hoje" é o dia do time (horário de Brasília).** O servidor usava o próprio relógio: a
+  partir do começo da noite no Brasil, uma mensalidade que vencia hoje já aparecia em
+  atraso e um pedido concluído na sexta à noite ficava com a data de sábado.
+- **Mês pago adiantado não aparece mais como "vence em breve".** Quem pagou três meses de
+  uma vez só volta a aparecer quando o quarto mês se aproxima.
+- **Desmarcar "Cobrado" sem querer não zera mais a contagem do cliente.** Marcar de novo no
+  mesmo dia (ou voltar para Ativo no mesmo dia) retoma a mesma contagem; a partir do dia
+  seguinte, a contagem recomeça como antes.
+- **A exportação agora leva os ciclos de cobrança** (quanto cada cliente paga e desde
+  quando), além dos pagamentos.
+- **Valores e datas impossíveis são recusados:** "nan" como valor e datas anteriores a 1990
+  (um ano digitado pela metade, como 0202).
+- **Arquivo com nome muito longo não perde mais a extensão** ao ser enviado ao OneDrive.
+- **Uma conexão da Meta revogada não deixa mais a Pauta lenta.** Enquanto um portfólio
+  revogado continuava na lista (até alguém clicar em Desconectar), cada tela com contas de
+  anúncios esperava duas leituras completas da Meta e nada ficava guardado. Agora a lista
+  só é refeita no momento em que a revogação é percebida.
+- **O histórico de uma campanha nova é buscado de novo quando a primeira tentativa falha.**
+  Antes, se a Meta falhasse nessa leitura, a campanha ficava só com os dias mais recentes
+  e os períodos antigos mostravam menos gasto que o Gerenciador de Anúncios. Vale para as
+  campanhas que entrarem a partir desta versão.
+- **"Saldo para N dias" é calculado por conta de anúncios.** Os saldos das contas de um
+  cliente eram somados e divididos pelo gasto de todas: uma conta quase vazia ficava
+  escondida atrás de outra com saldo. Agora cada conta é dividida pelo próprio gasto dos
+  últimos 7 dias, e a linha mostra a que acaba primeiro (os dias e o saldo dela). Só
+  contam as contas com campanha no ar: uma conta zerada com campanha no ar é "saldo
+  acabou" mesmo sem gasto na semana, e o resto de saldo de uma conta onde nada roda não
+  gera aviso.
+- **Resultados que caem a zero geram o alerta de volume.** Com 14 conversas numa semana e
+  nenhuma na seguinte, com o mesmo investimento, a Visão geral não dizia nada. Agora diz
+  "resultados caíram 100% com o mesmo investimento", ou "resultados caíram a zero com mais
+  investimento" quando o gasto subiu.
+- **Uma falha passageira da Meta em um portfólio não some mais com as contas dele.** Por
+  dez minutos as contas ficavam sem saldo (o cliente saía do alerta de saldo) e
+  Configurações dizia que não apareciam mais na Meta. Agora ficam como na última leitura,
+  por até um dia.
+- **"Sem dados novos da Meta" aparece só para os clientes das contas sem dados.** Uma conta
+  com problema marcava todos os clientes do mesmo portfólio, sem dizer qual conta; agora o
+  aviso dos administradores traz o número da conta. E a conta de um portfólio desconectado
+  deixou de ser pulada em silêncio: é avisada como conta sem portfólio, e o cliente aparece
+  como "sem dados", não "sem entrega".
+- **Uma resposta que chega atrasada não é mais desenhada na tela errada.** Com a conexão
+  lenta, a resposta de um salvamento, de um envio de arquivo ou do "Atualizar agora" podia
+  chegar depois de a pessoa abrir outra tela, e era desenhada ali: outro pedido mostrava os
+  arquivos ou o histórico do primeiro (com um "Remover" que tirava o arquivo do primeiro),
+  outro cliente mostrava o nome do anterior, a Visão geral virava a lista por cliente.
+  Agora a resposta só é desenhada na tela que a pediu; o que foi salvo ou enviado continua
+  valendo.
+- **Um segundo toque enquanto o primeiro ainda está a caminho não envia de novo.** Dois
+  toques seguidos publicavam o mesmo comentário duas vezes, geravam dois convites (só um
+  aparecia) ou criavam o cliente em dobro. O botão fica desligado até a resposta chegar.
+- **Quando algo não salva, a tela avisa e volta ao que estava salvo.** Tocar em
+  "Concluído" mostrava "Status: Concluído" antes de salvar e, se falhasse, o botão ficava
+  aceso sem nada ter mudado. Agora o aviso vem depois de salvar, e botões, listas e datas
+  voltam ao valor salvo quando o salvamento falha, no pedido e no cliente (o texto digitado
+  fica no campo, para tentar de novo). Sem conexão, o aviso é "a conexão caiu; tente de
+  novo" em vez do texto em inglês do navegador, a tela de erro ganhou o botão "Tentar de
+  novo", e "Excluir pedido", "Exportar dados", "Sair" e os botões do OneDrive passaram a
+  avisar quando falham. O mesmo vale para trocar o período em Campanhas, marcar
+  "Cancelados" no Quadro e filtrar o Financeiro: se a busca falha, a escolha volta e a
+  tela avisa.
+- **O link do WhatsApp funciona com dois números no campo do cliente.** Dois números no
+  mesmo campo viravam um link só, com os dois grudados, que o WhatsApp recusava. Agora o
+  link usa o primeiro número completo; sem nenhum número completo (um celular sem DDD,
+  por exemplo), não há link.
+- **O registro de uso guarda o tipo do pedido novo.** O tipo ficava sempre vazio.
+- **Convites e links param de valer junto com a conta.** Desativar uma pessoa, ou tirar
+  dela o papel de administrador, cancela na hora os convites e os links de nova passkey
+  que ela criou e os links criados para ela. Tirar uma passkey em Perfil cancela o link que
+  a própria pessoa tinha criado, como sair em todos os aparelhos já fazia.
+- **As configurações do Financeiro só vão para quem vê o dinheiro.** Com o Financeiro só
+  para administradores, ou desligado, os dados que o app carrega ao abrir levavam as
+  configurações para todo o time. Agora quem não vê o dinheiro recebe só se o Financeiro
+  está ligado e a moeda.
+- **Um pedido tem um tempo total para chegar.** O servidor já desistia de uma conexão
+  parada por 15 segundos; agora o corpo de um pedido também precisa chegar inteiro em 20
+  segundos. O envio de arquivos não mudou.
+- **Três pedidos estranhos recebem uma resposta comum em vez de "erro interno".** Um
+  cookie de sessão com letras fora do ASCII vale como "sem sessão", um endereço comprido
+  demais para ser um arquivo abre o app, e um JSON aninhado demais é "JSON inválido".
+- **Um nome cortado em 40 caracteres não termina mais em espaço.**
+- **O número do esquema do banco não diminui mais** quando uma versão anterior é iniciada
+  depois de um rollback.
+
+### Changed
+
+- **`PAUTA_AUTH` com uma palavra desconhecida impede o servidor de iniciar.** Antes,
+  qualquer valor diferente de `passkeys` iniciava no modo aberto (o de desenvolvimento).
+  Agora vale `passkeys`, `open` ou vazio; outro valor para na largada com uma mensagem que
+  diz qual. Sem a variável continua sendo o modo aberto.
+- **Teclado e leitor de tela nos pedidos.** O texto de cada linha em Pedidos é um link (dá
+  para chegar com Tab e abrir com Enter, também no celular), os campos do pedido têm nome
+  para o leitor de tela, e Esc fecha as janelas de confirmação.
+- du7: o `pauta-deploy` roda o Python isolado (`-I`) a partir de `/` e lê o wheel e o
+  `requirements.lock` uma vez só, para uma pasta do root; a conferência com o release
+  publicado e a instalação usam essas cópias.
+- du7: um deploy (o de um release, o de produção disparado à mão e o de branch) só roda
+  quando é o dono do repositório quem dispara e, numa repetição, quem repete.
+- Aceitação: o `pauta-deploy-branch` só aceita um `requirements.lock` no formato que o
+  `uv export` escreve (comentários, `nome==versão` e os hashes); qualquer outra linha é
+  recusada antes de instalar.
+- As três mudanças acima só valem depois de instalar os scripts novos no du7
+  (`deploy/provision-du7.sh` e `deploy/provision-branch-env.sh acc`): um release instala
+  só o app.
+- Testes novos: propriedades das contas do Financeiro (`tests/unit/test_properties.py`),
+  a troca e o rollback do `pauta-deploy`, a promessa de rollback do banco, o endereço que o
+  limite de pedidos conta e o escape de texto nas telas.
+- Decisões (`docs/decisions/`) conferidas com o código: situação de cada uma, o que foi
+  construído e o que não foi; nomes e números de exemplo no lugar dos reais.
+
+### Removed
+
+- O limite de pedidos `accept`, que nenhuma rota usava; `tools/split.py` e a receita dele no
+  `CONTRIBUTING.md`; uma action liberada no `repo-settings.sh` que nenhum workflow usa.
+
 ## [1.15.1] - 2026-11-20
 
 ### Fixed

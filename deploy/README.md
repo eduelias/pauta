@@ -80,7 +80,7 @@ order (steps 1–5 done 2026-10-31):
    steps 2 and 3 come first.
 5. **Move the team**: send each person their own link, which is one tap and Face ID. From
    the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
-   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link NAME`).
    A link works once, for 3 days, for that account only: send it to that person only.
    Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
    Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
@@ -127,8 +127,9 @@ and answers `/healthz`, and du7 runs `sudo pauta-deploy-branch acc VERSION WHEEL
 
 - refuses unless the unit runs as `pauta-acc`, in no other group, with `ProtectHome=yes`, from
   `/opt/pauta-acc/current`; it has no way to name production's `/opt/pauta`, unit or data,
-- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required),
-  then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
+- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required, and
+  a `requirements.lock` with nothing but pinned names and their hashes, as `uv export` writes
+  it), then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
 - backs up the DB read-only to `/var/backups/pauta-acc` (30 days), never writing
   `/var/lib/pauta-acc` (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key),
 - switches `/opt/pauta-acc/current`, restarts `pauta-acc`, waits for `/healthz` to report the
@@ -184,8 +185,8 @@ and `systemctl reload caddy`.
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
 shell and no groups, and keeps itself updated. Its job-started hook,
 `/usr/local/lib/pauta/runner-job-guard.sh`, refuses every job except `du7` of `release.yml` on a
-`vX.Y.Z` tag, `du7` of `deploy.yml` run by hand on `main`, and `du7` of `deploy-branch.yml` run
-by hand on `main` by the owner; refusals are in
+`vX.Y.Z` tag, and `du7` of `deploy.yml` or `deploy-branch.yml` run by hand on `main`, each only
+when the owner started the run and, for a run started again, did that too; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
 

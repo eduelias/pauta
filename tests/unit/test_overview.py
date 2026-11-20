@@ -137,6 +137,60 @@ def test_days_left_at_the_last_seven_days_pace():
     assert overview.days_left(10_000, total(0)) is None
 
 
+def account(left, spent, active=True):
+    """One ad account: what is left on it, what it spent in the last 7 days, and whether a
+    campaign is live on it."""
+    return {"remaining_cents": left, "spend_cents": spent, "active": active}
+
+
+def left(cents, c):
+    """The client's balance when all it spent is on one ad account with `cents` left."""
+    return overview.balance([account(cents, c["sums"]["last"]["spend_cents"])])
+
+
+def test_a_clients_days_of_balance_are_those_of_its_first_account_to_run_out():
+    """A balance belongs to one ad account. R$ 10 left at R$ 50 a day next to R$ 1.000 at
+    R$ 5 a day is an account that stops today, not R$ 1.010 over R$ 55 a day (18 days)."""
+    assert overview.balance([account(1000, 35_000), account(100_000, 3500)]) == {
+        "remaining_cents": 1000,
+        "days_left": 0,
+    }
+    # an account without a limit (no balance) spending R$ 100 a day is not what the other's
+    # R$ 100 pays for: that one lasts its own 20 days, no alarm
+    assert overview.balance([account(None, 70_000), account(10_000, 3500)]) == {
+        "remaining_cents": 10_000,
+        "days_left": 20,
+    }
+    # nothing spent on an account with a balance: no day count from it, it hides no other
+    assert overview.balance([account(500, 0), account(7000, 7000)]) == {
+        "remaining_cents": 7000,
+        "days_left": 7,
+    }
+    # empty for over a week (nothing left, nothing spent) with a campaign live: out today
+    assert overview.balance([account(0, 0), account(50_000, 7000)]) == {
+        "remaining_cents": 0,
+        "days_left": 0,
+    }
+    # R$ 20 left where the campaigns ended three days ago: nothing there is running out
+    assert overview.balance([account(2000, 7000, active=False), account(50_000, 7000)]) == {
+        "remaining_cents": 50_000,
+        "days_left": 50,
+    }
+    # an account at zero that was spending is the first to run out
+    assert overview.balance([account(0, 7000), account(7000, 7000)]) == {
+        "remaining_cents": 0,
+        "days_left": 0,
+    }
+    # nobody with a pace: what is left on all of them, and no days
+    assert overview.balance([account(500, 0), account(0, 0, active=False), account(None, 0)]) == {
+        "remaining_cents": 500,
+        "days_left": None,
+    }
+    assert overview.balance([account(None, 7000)]) is None and overview.balance([]) is None
+    # a live account without a spending limit next to an idle one at zero: nothing ran out
+    assert overview.balance([account(None, 7000), account(0, 0, active=False)]) is None
+
+
 # ---- flags -----------------------------------------------------------------------------------
 
 
@@ -168,6 +222,38 @@ def test_volume_falling_at_the_same_spend_says_it_once():
     assert overview.flags(client(total(2500, 30), total(5000, 60)), TODAY) == []
 
 
+def test_results_falling_to_zero_at_the_same_spend_raise_the_volume_alert():
+    """14 conversations in the earlier week and none in the last, clicks and spend
+    unchanged (a broken link, form or pixel): the one drop that used to be silent,
+    because with no results now the comparison went to the clicks, which hadn't moved."""
+    gone = {
+        "key": "volume",
+        "level": WATCH,
+        "text": "resultados caíram 100% com o mesmo investimento",
+    }
+    before = total(5000, 50, 14, CHATS)
+    assert overview.flags(client(total(5000, 50), before), TODAY) == [gone]
+    # the days still name what they count, without a count ("—" in Ads Manager), or with 0
+    assert overview.flags(client(total(5000, 50, None, CHATS), before), TODAY) == [gone]
+    assert overview.flags(client(total(5000, 50, 0, CHATS), before), TODAY) == [gone]
+    assert overview.compare(total(5000, 50), before) == {
+        "kind": "result",
+        "cost_pct": None,
+        "volume_pct": -100,
+        "spend_pct": 0,
+    }
+    # with more money in (spend up 40%) there is no cost per result to compare: said too
+    more = {**gone, "text": "resultados caíram a zero com mais investimento"}
+    assert overview.flags(client(total(7000, 50), before), TODAY) == [more]
+    # one result left out of 250 rounds to -100% and is not zero: the cost alert says it
+    few = overview.flags(client(total(7000, 50, 1, CHATS), total(5000, 50, 250, CHATS)), TODAY)
+    assert [f["key"] for f in few] == ["cost"]
+    # under the minimum count before, the clicks still decide (4 results → 0 says little)
+    assert overview.flags(client(total(5000, 50), total(5000, 50, 4, CHATS)), TODAY) == []
+    # the last week counts something else: not the same thing, the click compares
+    assert overview.compare(total(5000, 50, 3, LEADS), before, min_count=5)["kind"] == "click"
+
+
 def test_the_floors_keep_small_numbers_quiet():
     # under R$ 20 in a window: no claim, whatever the percentages
     assert overview.flags(client(total(1900, 5), total(1900, 50)), TODAY) == []
@@ -190,15 +276,15 @@ def test_stopped_delivering_and_no_data_never_both():
 
 def test_balance_running_out_only_with_a_balance_and_a_live_campaign():
     spending = client(total(7000, 70), total(7000, 70))
-    assert overview.flags(spending, TODAY, remaining_cents=2500) == [
+    assert overview.flags(spending, TODAY, left(2500, spending)) == [
         {"key": "balance", "level": ACT, "text": "saldo para 2 dias"}
     ]
-    assert overview.flags(spending, TODAY, remaining_cents=1000)[0]["text"] == "saldo para 1 dia"
-    assert overview.flags(spending, TODAY, remaining_cents=500)[0]["text"] == "saldo acaba hoje"
-    assert overview.flags(spending, TODAY, remaining_cents=3000) == []
-    assert overview.flags(spending, TODAY, remaining_cents=None) == []
+    assert overview.flags(spending, TODAY, left(1000, spending))[0]["text"] == "saldo para 1 dia"
+    assert overview.flags(spending, TODAY, left(500, spending))[0]["text"] == "saldo acaba hoje"
+    assert overview.flags(spending, TODAY, left(3000, spending)) == []
+    assert overview.flags(spending, TODAY, left(None, spending)) == []
     paused = client(total(7000, 70), total(7000, 70), active=0)
-    assert overview.flags(paused, TODAY, remaining_cents=500) == []
+    assert overview.flags(paused, TODAY, left(500, paused)) == []
 
 
 def test_a_balance_at_zero_ran_out_and_explains_the_missing_delivery():
@@ -206,37 +292,37 @@ def test_a_balance_at_zero_ran_out_and_explains_the_missing_delivery():
     it is one alert, the balance as the cause; and it is said even when the last 7 days
     spent nothing (an account empty for a week has no pace to divide by)."""
     spending = client(total(7000, 70), total(7000, 70))
-    assert overview.flags(spending, TODAY, remaining_cents=0) == [
+    assert overview.flags(spending, TODAY, left(0, spending)) == [
         {"key": "balance", "level": ACT, "text": "saldo acabou"}
     ]
     stopped = client(total(7000, 70), total(7000, 70), quiet=1)
-    assert overview.flags(stopped, TODAY, remaining_cents=0) == [
+    assert overview.flags(stopped, TODAY, left(0, stopped)) == [
         {"key": "balance", "level": ACT, "text": "saldo acabou: sem entrega desde ontem"}
     ]
     some = client(total(7000, 70), total(7000, 70), quiet=1, active=3)
-    assert overview.flags(some, TODAY, remaining_cents=0)[0]["text"] == (
+    assert overview.flags(some, TODAY, left(0, some))[0]["text"] == (
         "saldo acabou: 1 de 3 campanhas sem entrega desde ontem"
     )
     # a little left and no delivery stay two alerts: the balance is not the reason yet
-    assert keys(overview.flags(stopped, TODAY, remaining_cents=500)) == ["stopped", "balance"]
+    assert keys(overview.flags(stopped, TODAY, left(500, stopped))) == ["stopped", "balance"]
     idle = client(quiet=1)  # nothing spent in the last 7 days
-    assert overview.flags(idle, TODAY, remaining_cents=0) == [
+    assert overview.flags(idle, TODAY, left(0, idle)) == [
         {"key": "balance", "level": ACT, "text": "saldo acabou: sem entrega desde ontem"}
     ]
     # numbers not arriving is said alone, next to the empty balance
-    marks = overview.flags(idle, TODAY, remaining_cents=0, problem=overview.NO_DATA)
+    marks = overview.flags(idle, TODAY, left(0, idle), problem=overview.NO_DATA)
     assert [(f["key"], f["text"]) for f in marks] == [
         ("no_data", overview.NO_DATA),
         ("balance", "saldo acabou"),
     ]
     # not for a paused client, an account without a limit, or a team that switched it off
     paused = client(active=0)
-    assert overview.flags(paused, TODAY, remaining_cents=0) == []
-    assert overview.flags(idle, TODAY, remaining_cents=None) == [
+    assert overview.flags(paused, TODAY, left(0, paused)) == []
+    assert overview.flags(idle, TODAY, left(None, idle)) == [
         {"key": "stopped", "level": ACT, "text": "sem entrega desde ontem"}
     ]
     off = {**overview.DEFAULTS, "low_balance_days": 0}
-    assert keys(overview.flags(idle, TODAY, remaining_cents=0, rules=off)) == ["stopped"]
+    assert keys(overview.flags(idle, TODAY, left(0, idle), rules=off)) == ["stopped"]
 
 
 def test_unseen_only_for_a_team_that_marks_visto_hoje():
@@ -251,7 +337,7 @@ def test_unseen_only_for_a_team_that_marks_visto_hoje():
 
 def test_flags_come_most_urgent_first():
     c = client(total(6000, 40), total(3000, 40), last_seen=None, quiet=1)
-    assert keys(overview.flags(c, TODAY, remaining_cents=100)) == [
+    assert keys(overview.flags(c, TODAY, left(100, c))) == [
         "stopped",
         "balance",
         "cost",
@@ -284,7 +370,7 @@ def test_rows_put_the_ones_that_need_a_look_first():
         [calm_big, calm_small, rising, stopped],
         TODAY,
         "2026-09-01",
-        remaining={1: 500_000},
+        balances={1: left(500_000, calm_big)},
         problems={},
         seen={2: {"by": "Piero", "at": "2026-10-20 12:00:00"}},
         reviews_used=True,
@@ -475,9 +561,9 @@ def test_the_rules_follow_the_teams_thresholds():
     assert keys(overview.flags(falling, TODAY, rules=rules(rise_pct=25))) == ["cost"]
     spending = client(total(7000, 70), total(7000, 70))
     five = rules(low_balance_days=5)
-    assert keys(overview.flags(spending, TODAY, remaining_cents=4500, rules=five)) == ["balance"]
+    assert keys(overview.flags(spending, TODAY, left(4500, spending), rules=five)) == ["balance"]
     off = rules(low_balance_days=0, unseen_days=0)
-    assert overview.flags(spending, TODAY, remaining_cents=0, rules=off) == []
+    assert overview.flags(spending, TODAY, left(0, spending), rules=off) == []
     assert overview.flags(client(last_seen=day(3)), TODAY, rules=off) == []
     assert overview.flags(client(last_seen=None), TODAY, rules=off) == []
     assert overview.flags(client(last_seen=day(3)), TODAY, rules=rules(unseen_days=4)) == []

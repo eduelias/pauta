@@ -2,12 +2,13 @@
 long and random, one live link per card, expiry, revoking, and `report.public_report`
 keeping only what the chosen metrics draw."""
 
+import re
 import sqlite3
 from datetime import date, timedelta
 
 import pytest
 
-from pauta import report
+from pauta import assets, report
 from pauta.db import SCHEMA_VERSION, Invalid, NotFound, Store
 
 ACTIVE = {
@@ -240,3 +241,12 @@ def test_period_label():
     assert report.period_label("2026-11-01", "2026-11-04", today) == "1 nov – 4 nov"
     assert report.period_label("2025-12-20", "2026-01-03", today) == "20 dez 2025 – 3 jan"
     assert report.period_label("2026-11-04", "2026-11-04", today) == "4 nov"
+
+
+def test_the_pages_metric_list_is_the_servers():
+    """`METRICS` in app-campanhas.js draws the report's tiles and `report.METRIC_FIELDS`
+    says what a link may carry for each: two lists kept by hand. A metric on one side
+    only is a tile the link refuses, or one drawn from fields the link never sends."""
+    js = (assets.STATIC / "app-campanhas.js").read_text()
+    block = js.split("const METRICS = {", 1)[1].split("\n};", 1)[0]
+    assert sorted(re.findall(r"^  (\w+): \{", block, re.M)) == sorted(report.METRIC_FIELDS)

@@ -174,3 +174,26 @@ def test_signed_in_opening_an_invite_link_keeps_the_app_working(live, device, to
         page.goto(f"{base}/#/{path}")
         expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
     expect(page.locator("#app")).not_to_contain_text("null is not an object")
+
+
+def test_keyboard_and_screen_reader_reach_a_request(live, device):
+    """The list's lines only opened with a mouse, the request's fields had no name a screen
+    reader could say, and a dialog had no Escape."""
+    base, auth, store = live
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    join(page, base, token, "Renato Lima")
+    clinic = store.save_client({"name": "Clínica Bem Estar"})
+    store.create_request({"client": clinic["id"], "what": "Limpeza de pele"}, None)
+    page.goto(f"{base}/#/pedidos")
+    page.set_viewport_size({"width": 390, "height": 840})  # a phone: no Nº column
+    page.get_by_role("link", name="Limpeza de pele", exact=True).press("Enter")
+    expect(page.get_by_label("O que precisa ser feito")).to_have_value("Limpeza de pele")
+    for name in ("Tipo", "Objetivo", "Região", "Prazo", "Responsável", "Verba", "O que falta"):
+        expect(page.get_by_label(name, exact=True)).to_have_count(1)
+    page.goto(f"{base}/#/cliente/1")
+    page.get_by_role("button", name="Excluir cliente").click()
+    expect(page.locator("#modal")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.locator("#modal")).to_be_hidden()
+    assert store.client(1)["name"] == "Clínica Bem Estar"

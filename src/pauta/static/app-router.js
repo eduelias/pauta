@@ -77,7 +77,11 @@ async function route() {
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
         document.body.classList.remove("report");  // an error screen keeps its navigation
-        app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
+        // the menu item of the screen you are on does not navigate: the way to ask again is here
+        // (not for a 4xx: asking again for a request that is not there gives the same answer)
+        const again = e.status >= 400 && e.status < 500 ? "" : `<div class="mt"><button class="btn" id="retry">Tentar de novo</button></div>`;
+        app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}${again}</div>`;
+        $("#retry")?.addEventListener("click", () => route());
       } finally { LOADING--; }
       if (seq === NAV_SEQ) window.scrollTo(0, 0);
       return;

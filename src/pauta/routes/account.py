@@ -146,6 +146,10 @@ def install(route, store, auth, drive, meta):
     def boot(self, viewer, _body):
         everyone = store.members()
         fin = store.finance_settings()
+        visible = finance_visible(viewer, fin)
+        if not (visible or viewer["is_admin"]):
+            # the settings are for who sees money; a request's card shows Verba in the currency
+            fin = {"enabled": fin["enabled"], "currency": fin["currency"]}
         members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["disabled"]]
         # Gravatar ids by account, for avatars on requests and the timeline
         avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
@@ -163,7 +167,7 @@ def install(route, store, auth, drive, meta):
                 "connected": drive.connected,
                 "max_mb": drive.max_bytes // (1024 * 1024),
             },
-            "finance": {**fin, "visible": finance_visible(viewer, fin)},
+            "finance": {**fin, "visible": visible},
             "meta": {"enabled": meta.enabled},
             # Configurações → Campanhas: the alert thresholds, and the request kinds the
             # "which campaign did this request create?" chooser goes by

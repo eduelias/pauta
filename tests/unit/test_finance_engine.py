@@ -129,9 +129,14 @@ def test_allocation_is_oldest_first():
     s = st("2026-09-01", [("2026-09-01", 10000), ("2026-10-03", 5000)], today="2026-10-20")
     assert [p.paid for p in s.periods] == [10000, 5000]
     assert s.status == "late" and s.owed == 5000 and s.next_due == D("2026-10-01")
-    # paying ahead covers the following months
+    # paying ahead covers the following months: three paid, so the fourth is the next due
     s = st("2026-09-01", [("2026-09-01", 30000)], today="2026-10-20")
-    assert s.status == "paid" and s.next_due == D("2026-11-01") and s.owed == 0
+    assert s.status == "paid" and s.next_due == D("2026-12-01") and s.owed == 0
+    # ...and a week before the month that is already paid, nobody is chased
+    assert st("2026-09-01", [("2026-09-01", 30000)], today="2026-10-25").status == "paid"
+    assert st("2026-09-01", [("2026-09-01", 30000)], today="2026-11-25").status == "due_soon"
+    # a fee of zero owes nothing and divides nothing
+    assert st("2026-09-01", [("2026-09-01", 500)], today="2026-10-20", cents=0).owed == 0
 
 
 def test_fourth_month_active():
@@ -160,6 +165,9 @@ def test_anchor_ahead_of_today():
     s = st("2026-11-20", [], today="2026-11-15")
     assert s.status == "due_soon" and s.months_active == 0 and s.next_due == D("2026-11-20")
     assert st("2026-12-20", [], today="2026-11-15").status == "paid"
+    # paid before it starts: the first month is covered, the second is the next due
+    s = st("2026-11-20", [("2026-11-10", 10000)], today="2026-11-15")
+    assert s.status == "paid" and s.next_due == D("2026-12-20")
 
 
 def test_the_panel_order_lists_every_status():

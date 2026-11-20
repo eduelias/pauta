@@ -73,20 +73,29 @@ function periodPicker(st) {
   </div>`;
 }
 function bindPeriod(st, onChange) {
+  // The screen draws itself again with the new period. When that fails, the period goes back
+  // to the one drawn (the buttons and the dates still show it, whatever was tapped since)
+  // and the person is told, instead of a tap that did nothing
+  const drawn = { p: st.p, since: st.since, until: st.until, dates: [$("#psince").value, $("#puntil").value] };
+  const change = () => Promise.resolve(onChange()).catch((e) => {
+    Object.assign(st, { p: drawn.p, since: drawn.since, until: drawn.until });
+    [$("#psince").value, $("#puntil").value] = drawn.dates;
+    toast(e.message, true);
+  });
   $("#period .seg").addEventListener("click", (e) => {
     const b = e.target.closest("[data-p]");
     if (!b || b.dataset.p === st.p) return;
     const [since, until] = periodDates(st.p, st);  // Personalizado starts from the range shown
     st.p = b.dataset.p;
     if (st.p === "custom") { st.since = since; st.until = until; }
-    onChange();
+    change();
   });
   const custom = () => {
     const a = $("#psince").value, b = $("#puntil").value;
     if (!isISO(a) || !isISO(b)) return;
     [st.since, st.until] = a <= b ? [a, b] : [b, a];
     st.p = "custom";
-    onChange();
+    change();
   };
   $("#psince").addEventListener("change", custom);
   $("#puntil").addEventListener("change", custom);
@@ -102,10 +111,12 @@ async function waitForSync(previous, since, until) {
   // is still the previous one with no error: the server restarted mid-pass (the lock is
   // fresh, `last_sync` comes back from the database), so nothing was synced. SYNC_LEFT
   // when the person has left the screen; null when it is still running after the last poll.
+  const here = () => onScreen("#/campanhas") && $("#syncline");  // Visão geral has that line too
   for (let i = 0; i < SYNC_POLL_MAX; i++) {
     await new Promise((r) => setTimeout(r, i ? SYNC_POLL_MS : 1000));
-    if (!document.contains($("#syncline"))) return SYNC_LEFT;
+    if (!here()) return SYNC_LEFT;
     const doc = await api("GET", `/api/campaigns?since=${since}&until=${until}`);
+    if (!here()) return SYNC_LEFT;
     if (doc.syncing && doc.last_sync === previous) continue;
     $("#syncline").textContent = syncLine(doc.last_sync);
     if (doc.last_sync === previous && !doc.sync_error) return SYNC_LOST;
@@ -430,6 +441,7 @@ async function viewOverview(query) {
   const st = readPeriod(query);
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns/overview?since=${since}&until=${until}`);
+  if (!onScreen("#/campanhas/geral")) return;
   savePeriod(st);
   trackPeriod(st);
   keepHash(`#/campanhas/geral?${periodQuery(st)}`);
@@ -493,6 +505,7 @@ async function viewCampaigns(query) {
   const [since, until] = periodDates(st.p, st);
   const url = `/api/campaigns?since=${since}&until=${until}${campState.skipped && ME.is_admin ? "&include_skipped=1" : ""}`;
   const doc = await api("GET", url);
+  if (!onScreen("#/campanhas")) return;
   savePeriod(st);
   trackPeriod(st);  // after the call: an api_slow row sits next to the period that cost it
   keepHash(`#/campanhas?${periodQuery(st)}`);
@@ -550,7 +563,7 @@ async function viewCampaigns(query) {
     // the server answers 202 at once and syncs on its own thread: poll the list until the
     // pass ends, keeping the "Dados da Meta" line honest meanwhile. 409 "busy" means one
     // is already running (another admin's tap, the hourly one): wait for that one instead
-    const btn = e.currentTarget;
+    const btn = e.currentTarget, line = $("#syncline");
     btn.disabled = true;
     try {
       let previous = doc.last_sync;
@@ -559,8 +572,7 @@ async function viewCampaigns(query) {
       } catch (err) {
         if (err.reason !== "busy") throw err;
       }
-      const line = $("#syncline");
-      if (line) line.textContent = previous ? `Sincronizando com a Meta… (dados de ${ago(previous)})` : "Sincronizando com a Meta…";
+      line.textContent = previous ? `Sincronizando com a Meta… (dados de ${ago(previous)})` : "Sincronizando com a Meta…";
       const done = await waitForSync(previous, since, until);
       if (done === SYNC_LEFT) return;
       if (!done) { toast("A sincronização ainda não terminou; os números aparecem quando acabar.", true); btn.disabled = false; return; }
@@ -669,7 +681,7 @@ const ACTION_LABELS = {
   "onsite_conversion.purchase": "Compras (loja da Meta)", comment: "Comentários", like: "Curtidas",
   post_reaction: "Reações", post: "Compartilhamentos", "onsite_conversion.post_save": "Salvamentos", add_to_cart: "Adições ao carrinho",
   initiate_checkout: "Finalizações de compra iniciadas",
-  // the ones on Piero's campaigns (2026-11-04)
+  // the ones on the team's campaigns (2026-11-04)
   "onsite_conversion.lead": "Cadastros na Meta", onsite_web_lead: "Cadastros no site",
   offsite_complete_registration_add_meta_leads: "Cadastros concluídos (site + Meta)",
   offsite_content_view_add_meta_leads: "Visualizações de conteúdo (site + Meta)",
@@ -772,6 +784,7 @@ async function viewCampaign(query, id) {
   const st = readPeriod(query);
   const [since, until] = periodDates(st.p, st);
   const doc = await api("GET", `/api/campaigns/${id}?since=${since}&until=${until}`);
+  if (!onScreen(`#/campanha/${id}`)) return;
   const k = doc.campaign;
   savePeriod(st);
   trackPeriod(st);
@@ -824,14 +837,15 @@ async function viewCampaign(query, id) {
   </div>`;
   bindPeriod(st, () => viewCampaign(new URLSearchParams(periodQuery(st)), id));
   // Revogar: the link is a 404 from then on; the row stays in the list as history
-  $("#links").addEventListener("click", async (e) => {
+  const links = $("#links");  // this campaign's, wherever the person is when Revogar answers
+  links.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-revoke]");
     if (!b) return;
     b.disabled = true;
     try {
       const row = await api("DELETE", `/api/campaigns/${id}/links/${b.dataset.revoke}`);
       doc.links = doc.links.map((l) => l.token === row.token ? row : l);
-      $("#links").innerHTML = linksPanel(doc.links);
+      links.innerHTML = linksPanel(doc.links);
       toast("Link desativado");
     } catch (err) { toast(err.message, true); b.disabled = false; }
   });
@@ -924,7 +938,7 @@ async function cardImage(node, scale = 3) {
 const slug = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 40) || "campanha";
 // the clipboard takes one PNG, to paste in the conversation (the phone's share sheet was
 // tried first: its own "Copiar" put the file there as two items and WhatsApp pasted two
-// photos, so Piero asked for this one button); a browser whose clipboard takes no image
+// photos, so the team asked for this one button); a browser whose clipboard takes no image
 // gets the PNG as a download instead
 const canCopyImage = () => Boolean(navigator.clipboard?.write && window.ClipboardItem);
 
@@ -988,6 +1002,7 @@ async function viewReport(query, id) {
   async function ensureLink() {
     if (!link) {
       link = await api("POST", `/api/campaigns/${id}/links`, { since, until, metrics: shown });
+      if (!root.isConnected) return link;
       if (wa) $("#share").href = waHref();
       $("#linkinfo").innerHTML = linkInfo();
     }
@@ -998,7 +1013,7 @@ async function viewReport(query, id) {
   const share = wa
     ? `<a class="btn" id="share" href="${esc(waHref())}" target="_blank" rel="noopener">${icon("send")}Abrir conversa</a>`
     : `<button class="btn" id="share" disabled title="O cliente não tem WhatsApp cadastrado">${icon("send")}Abrir conversa</button>`;
-  // no explanation under the buttons (Piero's ask); only the missing number is worth a line,
+  // no explanation under the buttons (the team's ask); only the missing number is worth a line,
   // and the link's "válido até" once there is one
   const hint = wa ? "" : `<b>${esc(k.client_name || "O cliente")}</b> não tem WhatsApp cadastrado: ${k.client ? `<a href="#/cliente/${k.client}">cadastre o número</a>` : "cadastre o número"} para abrir a conversa daqui.`;
   app.innerHTML = `<div class="report">
@@ -1009,6 +1024,7 @@ async function viewReport(query, id) {
     </div>
     ${reportCard(k, { since, until, keys: shown, defs, lastSync: doc.last_sync, by: firstName(ME.name) })}
   </div>`;
+  const root = app.firstElementChild;  // off the page once the person leaves the report
   // Copiar link: the link is made on the first tap. Safari only writes the clipboard inside
   // the tap, but a ClipboardItem takes a promise, so the address can still be made first.
   $("#copylink").addEventListener("click", async (e) => {

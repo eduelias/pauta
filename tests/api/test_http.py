@@ -4,6 +4,8 @@ import http.client
 import json
 import re
 import sqlite3
+import threading
+from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
 import pytest
@@ -11,6 +13,7 @@ import pytest
 from pauta import __version__
 from pauta.auth import Auth
 from pauta.ratelimit import RateLimiter
+from pauta.server import make_handler
 from softpasskey import ORIGIN, RP_ID, call, start
 
 
@@ -109,6 +112,26 @@ def test_unknown_paths_get_the_app_shell_not_files(site, path):
     assert b"<!doctype html>" in body and b"[project]" not in body and b"root:" not in body
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "body", "headers", "want"),
+    [
+        ("GET", "/api/me", b"", {"Cookie": "pauta_session=1|0|9999999999|assinatur\xe1"}, 200),
+        ("GET", "/" + "a" * 300, b"", {}, 200),
+        ("POST", "/api/logout", b"[" * 100_000, {"Content-Type": "application/json"}, 400),
+    ],
+    ids=["cookie", "long-name", "deep-json"],
+)
+def test_odd_requests_get_a_plain_answer(site, caplog, method, path, body, headers, want):
+    """A session cookie that is not ASCII is no session, a name too long for a file is the
+    shell like any unknown path, and JSON nested too deep is not JSON."""
+    base, _, _ = site
+    status, _, answer = raw(base, method, path, body, headers)
+    assert status == want
+    if path == "/api/me":
+        assert json.loads(answer)["logged_in"] is False
+    assert "aaaa" not in caplog.text and "Traceback" not in caplog.text
+
+
 def test_methods(site):
     base, _, _ = site
     assert raw(base, "POST", "/")[0] == 405
@@ -129,6 +152,10 @@ def test_body_rules(team):
     assert raw(base, "POST", "/api/clients", b"[1]", json_hdr)[0] == 400
     status, _, body = raw(base, "POST", "/api/clients", b"{}", json_hdr)
     assert status == 400 and "nome" in json.loads(body)["error"]
+    # values JSON can carry and the store cannot: half a character pair, a number past any id
+    assert raw(base, "POST", "/api/clients", b'{"name": "\\ud800"}', json_hdr)[0] == 400
+    odd = b'{"client": 1e400, "what": "x"}'
+    assert raw(base, "POST", "/api/requests", odd, json_hdr)[0] == 400
 
 
 def test_rate_limit_on_login(store):
@@ -141,6 +168,35 @@ def test_rate_limit_on_login(store):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_the_address_a_rate_limit_counts(store, auth):
+    """Through the proxy (a peer on loopback) it is the last address in X-Forwarded-For, the
+    one the proxy wrote, whatever the client put before it. From any other peer the header
+    is not read: the peer's own address counts."""
+    limiter = RateLimiter()
+    proxied = make_handler(store, auth, limiter)
+
+    class Direct(proxied):  # the same app, reached from another machine
+        def setup(self):
+            super().setup()
+            self.client_address = ("203.0.113.7", 0)
+
+    for handler, headers, counted in (
+        (proxied, {"X-Forwarded-For": "198.51.100.1, 198.51.100.2"}, "198.51.100.2"),
+        (proxied, {}, "127.0.0.1"),
+        (Direct, {"X-Forwarded-For": "198.51.100.3"}, "203.0.113.7"),
+    ):
+        limiter.reset()
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, args=(0.02,), daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{httpd.server_address[1]}/api/passkey/login/options"
+            assert call(url, {}, headers=headers)[0] == 200
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        assert list(limiter._hits) == [("login", counted)]
 
 
 def test_behind_the_proxy_cookies_are_secure(store, auth):

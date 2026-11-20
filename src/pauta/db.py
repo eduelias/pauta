@@ -24,7 +24,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
-from . import finance, obs
+from . import finance, meta, obs
 
 SCHEMA_VERSION = 15
 
@@ -223,7 +223,7 @@ CAMPAIGN_URL_ID = (
     r"campaign_id=(\d+)",
     r"/campaigns/(\d+)",
 )
-EXPORT_TABLES = ("campaign", "review", "insight", "meta_connection", "meta_log")
+EXPORT_TABLES = ("billing", "campaign", "review", "insight", "meta_connection", "meta_log")
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -311,7 +311,7 @@ def _not_a_script(limit):
 def _id(v) -> int | None:
     try:
         n = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return n if 0 < n <= MAX_ID else None
 
@@ -333,7 +333,8 @@ def _date(v, _db):
     if not DATE_RE.match(v):
         raise Invalid(f"data inválida: {v}")
     try:
-        date.fromisoformat(v)
+        if date.fromisoformat(v).year < 1990:  # a year typed halfway ("0202")
+            raise ValueError
     except ValueError:
         raise Invalid(f"data inválida: {v}") from None
     return v
@@ -349,13 +350,18 @@ def _money(v, _db):
         return None
     if isinstance(v, str):
         v = v.replace("R$", "").strip()
-        if "," in v:  # 1.500,50 -> 1500.50
+        # the Brazilian way: in 1.500,50 and in 1.500 the dots mark thousands; a dot that is
+        # not before three digits is a decimal point (1500.5, what the page puts back). The
+        # other order (2,500.00) is refused, not guessed: read this way it would be 2,50
+        if "," in v and not re.fullmatch(r"(\d{1,3}(\.\d{3})+|\d*),\d*", v):
+            raise Invalid("verba precisa ser um número")
+        if "," in v or re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", v):
             v = v.replace(".", "").replace(",", ".")
     try:
         n = round(float(v), 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise Invalid("verba precisa ser um número") from None
-    if n < 0 or n > 100_000_000:
+    if not 0 <= n <= 100_000_000:  # written this way, not-a-number fails it too
         raise Invalid("verba fora do intervalo")
     return n
 
@@ -372,7 +378,7 @@ def _int_range(lo, hi, label):
     def check(v, _db):
         try:
             n = int(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise Invalid(f"{label} precisa ser um número") from None
         if not lo <= n <= hi:
             raise Invalid(f"{label} fora do intervalo ({lo} a {hi})")
@@ -618,6 +624,13 @@ def _utcnow() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def team_today() -> date:
+    """Today's date where the team is (`meta.local_today`: PAUTA_TZ, else São Paulo): what
+    "due today", "late" and "done on" go by. In the evening in Brazil the server's clock
+    and UTC are already on tomorrow."""
+    return meta.local_today("")
+
+
 def gravatar(email: str | None) -> str:
     """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
     email = (email or "").strip().lower()
@@ -696,8 +709,11 @@ class Store:
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
+            # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
+                "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "
+                "SET value=excluded.value "
+                "WHERE CAST(meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
                 (str(SCHEMA_VERSION),),
             )
             if not db.execute("SELECT 1 FROM option LIMIT 1").fetchone():
@@ -1078,9 +1094,11 @@ class Store:
         one changes nothing. New rows appear only for ACTIVE campaigns (ended or archived ones
         never show up unless asked); a known one follows Meta's status: ACTIVE reopens an
         ended or paused row, anything else ends an active one. `skipped` is never touched.
-        Returns the new rows' meta ids (the caller fetches their history)."""
+        Returns the new rows' meta ids and, as `pending`, the listed ones whose history is
+        still to be read: the new ones, and older ones until `history_done` (the caller
+        fetches it; a row saved here is not new again when that read fails)."""
         aid = digits(account_id)
-        out: dict = {"new": [], "ended": 0, "reopened": 0}
+        out: dict = {"new": [], "pending": [], "ended": 0, "reopened": 0}
         with self.db() as db:
             row = db.execute(
                 "SELECT client FROM meta_account WHERE account_id=?", (aid,)
@@ -1136,6 +1154,12 @@ class Store:
                         (today, known["id"]),
                     )
                     out["ended"] += 1
+            # shortcut: an id Meta stops listing stays in the list, prune it if it ever grows
+            pending = self._history_pending(db) + out["new"]
+            if out["new"]:
+                self._set_history_pending(db, pending)
+            listed = {digits(m.get("id")) for m in metas}
+            out["pending"] = [mid for mid in pending if mid in listed]
         if out["new"] or out["ended"] or out["reopened"]:
             obs.event(
                 "campaigns_synced",
@@ -1145,6 +1169,25 @@ class Store:
                 reopened=out["reopened"],
             )
         return out
+
+    @staticmethod
+    def _history_pending(db) -> list[str]:
+        """The campaigns (meta ids) saved without their numbers back to their start yet."""
+        row = db.execute("SELECT value FROM meta WHERE key='history_pending'").fetchone()
+        return json.loads(row[0]) if row else []
+
+    @staticmethod
+    def _set_history_pending(db, meta_ids: list[str]) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_pending', ?)",
+            (json.dumps(meta_ids),),
+        )
+
+    def history_done(self, meta_id: str) -> None:
+        """The campaign's numbers back to its start are stored: never asked for again."""
+        with self.db() as db:
+            left = [mid for mid in self._history_pending(db) if mid != meta_id]
+            self._set_history_pending(db, left)
 
     def store_insights(self, rows: list[dict], fetched: str | None = None) -> int:
         """Daily numbers per campaign, upserted by (meta_id, day). `results` stays NULL when
@@ -1601,7 +1644,7 @@ class Store:
         return self.report_link(token)
 
     def table(self, name: str) -> list[dict]:
-        """Every row of one of the tracking tables, for the export."""
+        """Every row of one of the tables the export carries whole."""
         if name not in EXPORT_TABLES:
             raise Invalid("tabela desconhecida")
         with self.db() as db:
@@ -1686,8 +1729,15 @@ class Store:
 
     @staticmethod
     def _open_cycle(db, cid: int, by: int | None) -> None:
-        """One open cycle per client: a no-op when there is one already."""
+        """One open cycle per client: a no-op when there is one already. A cycle closed today
+        is reopened: un-ticking "Cobrado" and ticking it again is a slip, not a pause."""
         if db.execute("SELECT 1 FROM billing WHERE client=? AND ended IS NULL", (cid,)).fetchone():
+            return
+        if db.execute(
+            "UPDATE billing SET ended=NULL WHERE id="
+            "(SELECT MAX(id) FROM billing WHERE client=? AND ended=?)",
+            (cid, team_today().isoformat()),
+        ).rowcount:
             return
         settings = Store._settings(db)
         db.execute(
@@ -1697,11 +1747,14 @@ class Store:
 
     @staticmethod
     def _close_cycle(db, cid: int) -> None:
-        db.execute("UPDATE billing SET ended=date('now') WHERE client=? AND ended IS NULL", (cid,))
+        db.execute(
+            "UPDATE billing SET ended=? WHERE client=? AND ended IS NULL",
+            (team_today().isoformat(), cid),
+        )
 
     def _sync_cycle(self, db, cid: int, by: int | None) -> None:
-        """Ativo and billed means an open cycle; anything else closes it. Coming back opens a
-        new one, so the month count and the day restart (decision 7)."""
+        """Ativo and billed means an open cycle; anything else closes it. Coming back on a
+        later day opens a new one, so the month count and the day restart (decision 7)."""
         row = db.execute("SELECT state, billed FROM client WHERE id=?", (cid,)).fetchone()
         if row["state"] == "Ativo" and row["billed"]:
             self._open_cycle(db, cid, by)
@@ -1726,11 +1779,14 @@ class Store:
             return None
         settings = self._settings(db)
         payments = self._cycle_payments(db, cycle["id"])
+        # `created` is a UTC instant; the day the cycle opened is the team's
+        created = datetime.fromisoformat(cycle["created"]).replace(tzinfo=UTC)
+        opened = meta.local_today("", created)
         anchor = finance.resolve_anchor(
             settings,
             first_payment=payments[0][0] if payments else None,
             since=date.fromisoformat(client["since"]) if client.get("since") else None,
-            opened=date.fromisoformat(cycle["created"][:10]),
+            opened=opened,
             started=date.fromisoformat(cycle["started"]) if cycle["started"] else None,
         )
         st = finance.standing(
@@ -1738,13 +1794,13 @@ class Store:
             cents=cycle["cents"],
             anchor=anchor,
             payments=payments,
-            today=today or date.today(),
+            today=today or team_today(),
         )
         return {
             "id": cycle["id"],
             "amount": cycle["cents"] / 100,
             "currency": cycle["currency"],
-            "opened": cycle["created"][:10],
+            "opened": opened.isoformat(),
             **st.as_dict(),
         }
 
@@ -1795,7 +1851,7 @@ class Store:
                 raise Invalid("informe o valor")
             if vals["amount"] <= 0:
                 raise Invalid("o valor precisa ser maior que zero")
-            if vals["paid_on"] > (date.today() + timedelta(days=1)).isoformat():
+            if vals["paid_on"] > (team_today() + timedelta(days=1)).isoformat():
                 raise Invalid("a data do pagamento não pode estar no futuro")
             cycle = db.execute(
                 "SELECT id FROM billing WHERE client=? AND ended IS NULL", (cid,)
@@ -1834,7 +1890,7 @@ class Store:
     def finance(self, today: date | None = None, month: str | None = None) -> dict:
         """The panel: every Ativo, billed client and where it stands, plus what came in each
         month and the payments of `month` (default: this one)."""
-        today = today or date.today()
+        today = today or team_today()
         if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
             raise Invalid("mês inválido, use AAAA-MM")
         this_month = today.strftime("%Y-%m")
@@ -1967,7 +2023,7 @@ class Store:
             vals.setdefault("status", "todo")
             vals.setdefault("priority", "Média")
             if vals["status"] == "done" and not vals.get("done_on"):
-                vals["done_on"] = date.today().isoformat()
+                vals["done_on"] = team_today().isoformat()
             vals["created_by"] = by
             cols = ", ".join(vals)
             marks = ", ".join("?" for _ in vals)
@@ -1989,7 +2045,7 @@ class Store:
                 raise Invalid("descreva o que precisa ser feito")
             changed = {k: v for k, v in vals.items() if old[k] != v}
             if changed.get("status") == "done" and not (changed.get("done_on") or old["done_on"]):
-                changed["done_on"] = date.today().isoformat()
+                changed["done_on"] = team_today().isoformat()
             if not changed:
                 return self.request(rid)
             sets = ", ".join(f"{k}=?" for k in changed)

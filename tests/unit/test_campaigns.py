@@ -94,14 +94,19 @@ def test_schema_v10_gains_the_ads_manager_columns(tmp_path):
 
 
 def test_unlinked_account_is_not_tracked(store, linked):
-    assert store.sync_campaigns("222", [ACTIVE], TODAY) == {"new": [], "ended": 0, "reopened": 0}
+    res = store.sync_campaigns("222", [ACTIVE], TODAY)
+    assert res == {"new": [], "pending": [], "ended": 0, "reopened": 0}
     assert store.sync_campaigns("999", [ACTIVE], TODAY)["new"] == []
     assert campaigns(store) == {}
 
 
 def test_new_active_campaigns_appear_paused_ones_do_not(store, linked):
     res = store.sync_campaigns("act_111", [ACTIVE, PAUSED, {"id": ""}], TODAY)
-    assert res == {"new": ["23850001"], "ended": 0, "reopened": 0}
+    assert res == {"new": ["23850001"], "pending": ["23850001"], "ended": 0, "reopened": 0}
+    # its history is asked for until it is read, then never again
+    assert store.sync_campaigns("111", [ACTIVE], TODAY)["pending"] == ["23850001"]
+    store.history_done("23850001")
+    assert store.sync_campaigns("111", [ACTIVE], TODAY)["pending"] == []
     rows = campaigns(store)
     assert list(rows) == ["23850001"]
     row = rows["23850001"]
@@ -157,7 +162,7 @@ def test_campaigns_follow_metas_status(store, linked):
     res = store.sync_campaigns(
         "111", [{**ACTIVE, "name": "Limpeza (nova)", "effective_status": "PAUSED"}], TODAY
     )
-    assert res == {"new": [], "ended": 1, "reopened": 0}
+    assert res == {"new": [], "pending": ["23850001"], "ended": 1, "reopened": 0}
     row = campaigns(store)["23850001"]
     assert row["state"] == "ended" and row["ended"] == TODAY
     assert row["name"] == "Limpeza (nova)" and row["effective_status"] == "PAUSED"
@@ -166,7 +171,7 @@ def test_campaigns_follow_metas_status(store, linked):
     assert campaigns(store)["23850001"]["ended"] == TODAY
     # active again: reopened, the end date cleared
     res = store.sync_campaigns("111", [ACTIVE], "2026-10-25")
-    assert res == {"new": [], "ended": 0, "reopened": 1}
+    assert res == {"new": [], "pending": ["23850001"], "ended": 0, "reopened": 1}
     row = campaigns(store)["23850001"]
     assert row["state"] == "active" and row["ended"] is None and row["last_seen"] == "2026-10-25"
     # a campaign that vanished from the list keeps its row untouched

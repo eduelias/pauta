@@ -2,7 +2,7 @@
 # It runs builds of branches that aren't released or reviewed (decision 9), so it has its
 # own user and data dir and no access to /home: production's database is out of its reach.
 # pauta-deploy-branch checks User=, ProtectHome= and ExecStart= before every deploy.
-# Installed by deploy/provision-acc.sh. Settings that aren't the same for every test copy
+# Installed by deploy/provision-branch-env.sh. Settings that aren't the same for every test copy
 # (the Meta app, decision 8) go in drop-ins: pauta-acc.service.d/*.conf.
 [Unit]
 Description=Pauta acceptance (pauta serve) on 127.0.0.1:8089

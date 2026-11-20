@@ -146,17 +146,33 @@ s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
     log "database backed up to $out"
 }
 
+check_lock() {
+    # stdin: requirements.lock. It comes from the branch, like the wheel, so only what
+    # `uv export` writes gets to pip: comments, name==version (with a marker) and its sha256s.
+    # An option, a URL, a path or an unpinned name is none of these
+    local pin="[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][A-Za-z0-9.!+]*( ; [A-Za-z0-9_.' ()<>=!~]+)?"
+    local ok="^([[:space:]]*(#.*)?|$pin( \\\\)?|    --hash=sha256:[0-9a-f]{64}( \\\\)?)\$"
+    local n=0 line
+    while IFS= read -r line; do
+        n=$((n + 1))
+        [[ $line =~ $ok ]] ||
+            die "requirements.lock line $n is not a comment, name==version or --hash=sha256:..."
+    done
+}
+
 install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
-    local version=$1 wheel=$2 lock=$3 dir=$RELEASES/$1
+    local version=$1 wheel=$2 lock=$3 dir=$RELEASES/$1 pins
     if [ -f "$dir/.complete" ] && [ "$(stat -c %U "$dir")" = root ]; then
         log "$version is already installed; reusing it"
         return 0
     fi
+    pins=$(read_input "$lock")  # read once: what is checked is what pip gets
+    check_lock <<<"$pins"
     rm -rf --one-file-system "$dir"
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$dir"
     # the runner's workspace isn't readable by the service user: stream the inputs in
     read_input "$wheel" | as_user tee "$dir/$(basename -- "$wheel")" >/dev/null
-    read_input "$lock" | as_user tee "$dir/requirements.lock" >/dev/null
+    as_user tee "$dir/requirements.lock" <<<"$pins" >/dev/null
     as_user "$PYTHON" -I -m venv "$dir"
     # binary wheels only (nothing runs at install time), every hash checked, PyPI only
     as_user "$dir/bin/pip" install -q --require-hashes --only-binary=:all: \

@@ -98,3 +98,24 @@ def test_error_toasts_say_which_call_or_form(signed_in):
         ),
         ("novo", {"msg": "validation", "form": "f"}),
     ]
+
+
+def test_a_new_request_is_logged_with_its_kind(signed_in):
+    """The kind is picked with buttons, which are not fields of the form: the log read it
+    from the form's fields and so never had one."""
+    base, store, d, aid = signed_in
+    page = d.page
+    page.goto(f"{base}/#/novo")
+    page.select_option("#f select[name=client]", index=1)
+    page.locator('#f [data-seg="kind"]').get_by_role("button", name="Relatório").click()
+    page.fill("#f textarea[name=what]", "Números de outubro")
+    page.get_by_role("button", name="Enviar pedido").click()
+    expect(page.locator("#toast")).to_contain_text("enviado")
+    page.goto("about:blank")
+    made = []
+    for _ in range(100):
+        made = [r for r in usage_rows(store) if r["event"] == "request_created"]
+        if made:
+            break
+        time.sleep(0.05)
+    assert [json.loads(r["props"]) for r in made] == [{"kind": "Relatório", "has_deadline": False}]

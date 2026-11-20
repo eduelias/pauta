@@ -1,9 +1,16 @@
 # 2. Collaborators, and a public repository
 
-- **Status:** accepted (decided 2026-10-29). The repo-side parts are built; the du7 parts
-  apply the next time du7 is reachable (deploy/README.md, "Collaborators").
+- **Status:** accepted (decided 2026-10-29). Shipped in 1.3.0; du7's parts (the job guard,
+  the deploy script that installs published releases only) are in place (deploy/README.md,
+  "Collaborators"; 1.7.0 fixed the guard's file name).
 - **Amended by:** decision 12 (2026-11-04, lifetime cut to 5 days on 2026-11-05): one read-only page, `/r/<token>`, opens
   without an account, for 5 days, showing one campaign's report card and nothing else.
+- **Amended by:** decision 9: the job guard lets a third job through (`du7` of
+  `deploy-branch.yml`, run by hand on `main` by the owner), and the runner has a second sudo
+  rule, for `pauta-deploy-branch`. Since 2026-11-20 the guard checks who started the run for
+  all three jobs.
+- **2026-11-20:** the code differs: that third job runs in a third environment, `acc`, which
+  `scripts/repo-settings.sh` does not set up.
 
 ## Context
 
@@ -44,9 +51,9 @@ On GitHub (`scripts/repo-settings.sh apply`, kept in the repo so it can be re-ru
 - **Environments**: `production` (the du7 job) and `alerts` (the WhatsApp secrets) only run
   from `main` and `v*` tags. The WhatsApp secrets move from the repository into `alerts`,
   so a pushed branch can't read them.
-- **Actions**: GitHub's own actions plus `astral-sh/setup-uv` and `rhysd/actionlint`, each
-  pinned to a full SHA; the `GITHUB_TOKEN` is read-only by default and can't approve PRs;
-  runs from outside contributors' forks wait for the owner's approval.
+- **Actions**: GitHub's own actions plus `astral-sh/setup-uv`, pinned to a full SHA
+  (actionlint runs from its PyPI wheel, pinned by version); the `GITHUB_TOKEN` is read-only by default and
+  can't approve PRs; runs from outside contributors' forks wait for the owner's approval.
 - **Security**: Dependabot alerts and security updates (version updates were already on),
   secret scanning with push protection, private vulnerability reporting, CodeQL.
 
@@ -54,8 +61,9 @@ On du7 (`deploy/provision-du7.sh`):
 
 - **Job guard**: the runner's job-started hook (`deploy/runner-job-guard`, root-owned,
   enabled by a root-owned systemd drop-in) refuses every job except `du7` of `release.yml`
-  on a `vX.Y.Z` tag and `du7` of `deploy.yml` run by hand on `main`. A branch, a pull
-  request or a fork gets a failed job before any step runs.
+  on a `vX.Y.Z` tag and `du7` of `deploy.yml` or `deploy-branch.yml` (decision 9) run by
+  hand on `main`, each only when the owner started the run and, for a run started again,
+  did that too. A branch, a pull request or a fork gets a failed job before any step runs.
 - **Published releases only**: `pauta-deploy` fetches the release's `SHA256SUMS` from GitHub
   itself and refuses a wheel or lockfile that doesn't match it.
 
@@ -71,4 +79,5 @@ On du7 (`deploy/provision-du7.sh`):
 - Without Pro, going private again would switch the rulesets off.
 - The commit history shows the owner's two e-mail addresses (work and personal), and
   `deploy/` shows du7's LAN address and paths. Neither is a credential.
-- Proposal 0002 in the parked PR #8 (a guard for agent PRs) becomes 0003 if it's revived.
+- Proposal 0002 in the parked PR #8 (a guard for agent PRs) takes the next free number if
+  it's revived (0003 went to the request files).

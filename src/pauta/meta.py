@@ -42,10 +42,10 @@ reads, each with that connection's token and appsecret_proof. The union is kept 
 minutes; concurrent cold readers wait for one read and share it; a read that failed as a
 whole is remembered for a minute (two when Meta asked for a pause) so a page full of client
 cards doesn't hammer Meta, unless an admin asks to refresh. One account whose numbers Meta
-won't return comes back with `numbers: false` and a reason; one connection Meta refuses is
-left out (a revoked token marks it `revoked` on `connections()`; Meta not answering for it
-is passing trouble) and the others still read; only a throttle, or every connection
-failing, fails the whole list.
+won't return comes back with `numbers: false` and a reason; a connection whose token was
+revoked is left out and marked `revoked` on `connections()`; one Meta doesn't answer for
+is passing trouble (its accounts stand as last read, for up to a day) and the others still
+read; only a throttle, or every connection failing, fails the whole list.
 
 Campaign tracking (`sync.py`) reads more: each linked account's campaign list (paged) and
 its per-campaign daily insights for a range, plus the period's reach per campaign (reach
@@ -133,7 +133,7 @@ OBJECTIVE_RESULTS = {
     "MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
     "OUTCOME_MESSAGES": "onsite_conversion.messaging_conversation_started_7d",
 }
-# "today" is the ad account's day, not the server's (du7 runs on CET; Piero's accounts are
+# "today" is the ad account's day, not the server's (du7 runs on CET; the team's accounts are
 # in São Paulo): the team's default when an account doesn't say, PAUTA_TZ overrides it
 DEFAULT_TZ = "America/Sao_Paulo"
 DEFAULT_PERIOD_DAYS = 30  # Ads Manager's own default period: "Últimos 30 dias", yesterday back
@@ -349,6 +349,7 @@ class Meta:
         # one of those is of the connections before it and is not kept
         self._gen = 0
         self._failed: tuple[float, MetaError] | None = None  # the last read that failed whole
+        self._read_at: dict[str, float] = {}  # business id -> when Meta last answered for it
         self._reading = threading.Lock()  # one Meta read at a time (accounts())
         self.last_sync: str | None = None  # when the campaign sync last finished (ISO, UTC)
         self.sync_error = ""  # what the last sync ran into, "" when it went well
@@ -364,6 +365,9 @@ class Meta:
         # (gone from Meta, or their portfolio disconnected): the sync reads again only
         # when this set changes, and reports these at INFO after the first time
         self.orphans: frozenset[str] = frozenset()
+        # linked account id -> why the sync's last pass has no new numbers for it (Meta's
+        # error with the account named, the orphan's advice, or what ended the pass)
+        self.unsynced: dict[str, str] = {}
         # called with the fresh list each time Meta is actually read (not from the cache);
         # the server keeps the account ↔ client mapping there (db.sync_meta_accounts)
         self.on_read: Callable[[list[dict]], None] | None = None
@@ -497,18 +501,20 @@ class Meta:
         """The first connection's trouble, for /metrics and the old callers; "" when fine."""
         return next((c["error"] for c in self.connections() if c["error"]), "")
 
-    def _mark(self, business_id: str, state: str, error: str) -> None:
+    def _mark(self, business_id: str, state: str, error: str) -> bool:
         """A connection's state, kept in its file so it outlives a restart. Read and write
         under the lock, and only a file still there: Desconectar (which unlinks under the
-        same lock) wins over a late 190."""
+        same lock) wins over a late 190. Returns whether the saved state changed."""
+        wrote = False
         with self._lock:
             doc = self._saved(business_id)
             if doc and (doc.get("state") or "ok", doc.get("error") or "") != (state, error):
-                self._save(
+                wrote = self._save(
                     {**doc, "business_id": business_id, "state": state, "error": error},
                     create=False,
                 )
         self._changed()
+        return wrote
 
     def _changed(self) -> None:
         if self.on_change:
@@ -572,16 +578,18 @@ class Meta:
 
     def _fail(self, status: int, doc: dict, step: str, business_id: str = "") -> MetaError:
         """The error for a Graph answer that wasn't 200 (logged without any message text).
-        A 190 marks the one connection it came from as revoked; the others go on."""
+        A 190 marks the one connection it came from as revoked; the others go on. The
+        kept list is dropped when that mark is new."""
         code = self._code(doc)
         obs.event("meta_error", logging.WARNING, status=status, code=code, step=step)
         if code == 190:
-            # dropped, not aged: the pages must report the revocation, not an old list
-            self._cache = None
-            self._gen += 1
             obs.event("meta_revoked", logging.ERROR, business=business_id or None)
-            if business_id:
-                self._mark(business_id, "revoked", REVOKED)
+            if business_id and self._mark(business_id, "revoked", REVOKED):
+                # dropped, not aged: the pages must report the revocation, not an old list.
+                # Only when the state changes: a connection stays revoked (and read) until
+                # an admin disconnects it, and must not cost every page a full read
+                self._cache = None
+                self._gen += 1
             return MetaError(REVOKED, 409)
         if self._throttle(code):
             return MetaError(THROTTLED, 503)
@@ -895,10 +903,11 @@ class Meta:
         return out
 
     def _read(self) -> list[dict]:
-        """The union over connections, all read at the same time (`together`). One
-        connection Meta refuses is left out (a revoked one is marked so, by _fail; Meta
-        not answering for it is passing trouble, no state change); a throttle, or every
-        connection failing, fails the list."""
+        """The union over connections, all read at the same time (`together`). A revoked
+        connection is left out (and marked so, by _fail). Meta not answering for one is
+        passing trouble, no state change: its accounts stand as the kept list has them
+        (the balance alert and Configurações go by this list), for up to a day without
+        an answer. A throttle, or every connection failing, fails the list."""
         conns = self._readable()
         if not conns:
             raise MetaError(NOT_CONNECTED, 409)
@@ -910,8 +919,20 @@ class Meta:
             if e.status == 503:
                 raise e  # Meta asked the app to pause: the list waits with it
         if len(errors) == len(conns):
-            raise errors[0]
-        return [acc for a in answers if not isinstance(a, MetaError) for acc in a]
+            # Meta not answering says more than an old revocation next to it
+            raise next((e for e in errors if e.status != 409), errors[0])
+        cached = self._cache
+        kept = cached[1] if cached else []
+        now = time.time()
+        out: list[dict] = []
+        for c, a in zip(conns, answers, strict=True):
+            bid = c["business_id"]
+            if not isinstance(a, MetaError):
+                self._read_at[bid] = now
+                out.extend(a)
+            elif a.status != 409 and now - self._read_at.get(bid, 0.0) < STALE_SECONDS:
+                out.extend(acc for acc in kept if acc["business_id"] == bid)
+        return out
 
     def _read_one(self, business_id: str, business_name: str) -> list[dict]:
         """One connection's list from Meta: /me/adaccounts (paged: a portfolio with more

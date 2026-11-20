@@ -77,15 +77,6 @@ share (`Reply`, `SENT`, the id patterns, the Meta texts) is in `routes/__init__.
 is still one file: keep schema changes additive and your `Store` methods in their table's
 section.
 
-A branch from before the split (one big `server.py` and `app.js`) is re-split by
-`tools/split.py`, the script that made the split, rather than resolved by hand: merge `main`,
-keep the branch's own `server.py` and `app.js` (`git checkout --theirs`), delete
-`src/pauta/routes/` and `src/pauta/static/app-*.js`, run `python3 tools/split.py .`, then
-`make fmt` and `make check`. It is idempotent: on an already split tree it changes nothing,
-and it rebuilds the script tags, the wheel check and the lint line from the areas it finds
-instead of appending them again. A section under a new marker needs one line in its
-`SERVER_AREAS` / `JS_FILES` tables.
-
 ## Ground rules
 
 - Keep schema changes additive (new tables and columns, with a migration for existing
