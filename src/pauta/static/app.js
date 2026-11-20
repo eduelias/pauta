@@ -322,16 +322,20 @@ function igUrl(h) {
 }
 // wa.me wants the international number, digits only. People type Brazilian numbers as
 // they dial them: "0 32 99999-9999" (the trunk zero), "(11) 98888-7777", "+55 11 ...",
-// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it
+// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it.
+// The link is one whole number (11 to 15 digits, not starting with zero) or none at all: a
+// field with two numbers ("... / ...") gives the first whole one, where both run together
+// were a 22-digit link.
 function waUrl(n) {
-  const raw = String(n || "").trim();
-  let d = raw.replace(/\D/g, "");
-  if (!d) return "";
-  const intl = raw.startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
-  d = d.replace(/^00/, "");  // the international prefix
-  if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
-  if (!intl && d.length <= 11) d = "55" + d;
-  return `https://wa.me/${d}`;
+  for (const raw of String(n || "").split(/[^\d\s().+-]+/)) {
+    let d = raw.replace(/\D/g, "");
+    const intl = raw.trim().startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
+    d = d.replace(/^00/, "");  // the international prefix
+    if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
+    if (!intl && d.length <= 11) d = "55" + d;
+    if (/^[1-9]\d{10,14}$/.test(d)) return `https://wa.me/${d}`;
+  }
+  return "";
 }
 
 function sortOpen(a, b) {
