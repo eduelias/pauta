@@ -1258,3 +1258,26 @@ def test_a_sync_that_ends_on_visao_geral_does_not_draw_the_list_there(synced):
     expect(page.locator("#overview .orow[data-client]")).to_have_count(2)
     expect(page.locator("#cblocks")).to_have_count(0)
     expect(page.locator("#toast")).to_be_hidden()
+
+
+def test_markup_in_a_client_or_campaign_name_is_shown_as_text(synced):
+    """Campanhas' screens with <, >, ", ' and & in the names that go through their templates
+    (a campaign's name is whatever was typed in Ads Manager): text, never elements or
+    attributes. The other screens' walk is in test_screens.py."""
+    base, store, laptop, clinic, bakery = synced
+    markup = """Ana & <i class=pwn>Cia</i> "pwn=1" 'pwn=2'"""
+    store.save_client({"name": markup, "contact": markup}, clinic["id"])
+    with store.db() as conn:
+        conn.execute("UPDATE campaign SET name = ?", (markup,))
+        cid = conn.execute(
+            "SELECT id FROM campaign WHERE client = ? ORDER BY id", (clinic["id"],)
+        ).fetchone()[0]
+    page = laptop.page
+    for route in ("campanhas", "campanhas/geral", f"campanha/{cid}", f"relatorio/{cid}"):
+        page.goto(f"{base}/#/{route}")
+        expect(page.locator("#app > .fadein")).to_have_count(1)  # the router's last touch
+        expect(page.locator("#app")).to_contain_text(markup)
+        expect(page.locator(".pwn, [pwn]")).to_have_count(0)
+    page.goto(f"{base}/#/cliente/{clinic['id']}")  # the Meta card arrives after the page
+    expect(page.locator("#clientmeta .kcard").first).to_contain_text(markup)
+    expect(page.locator(".pwn, [pwn]")).to_have_count(0)
