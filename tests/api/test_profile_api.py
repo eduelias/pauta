@@ -156,6 +156,16 @@ def test_my_own_link_dies_with_my_sessions_an_admins_does_not(team):
     assert status == 400 and "expirou" in err["error"]
 
 
+def test_my_own_link_dies_with_a_passkey_i_remove(team):
+    base, _, piero, _ = team
+    assert register_more(base, piero, SoftPasskey()) == 200
+    mine = call(f"{base}/api/me/move", {}, piero)[1]["url"].rsplit("/", 1)[1]
+    assert call(f"{base}/api/move/{mine}")[0] == 200
+    first = call(f"{base}/api/me/passkeys", cookie=piero)[1][0]["id"]
+    assert call(f"{base}/api/me/passkeys/{first}", None, piero, "DELETE")[0] == 200
+    assert call(f"{base}/api/move/{mine}")[0] == 404
+
+
 def test_open_mode_has_no_passkeys_to_manage(tmp_path):
     store = __import__("pauta.db", fromlist=["Store"]).Store(tmp_path / "pauta.db")
     httpd, base = start(store, Auth(store, enabled=False))

@@ -176,6 +176,24 @@ def test_the_team_always_keeps_an_active_admin(store, auth):
     assert [m["is_admin"] for m in store.members() if m["id"] == b] == [1]
 
 
+@pytest.mark.parametrize("change", [{"disabled": True}, {"is_admin": False}])
+def test_links_end_when_the_admin_behind_them_is_disabled_or_demoted(team, change):
+    base, nato, piero, _ = team
+    token = call(f"{base}/api/invite", {"admin": True}, nato)[1]["path"].rsplit("/", 1)[1]
+    _, ana, ana_cookie = join(base, token, "Ana", SoftPasskey())
+    pid = call(f"{base}/api/me", cookie=piero)[1]["account"]
+    invite = call(f"{base}/api/invite", {"admin": True, "uses": 5}, ana_cookie)[1]["path"]
+    links = [f"{base}/api/invite/{invite.rsplit('/', 1)[1]}"]  # one she made, to join
+    for member, by in ((pid, ana_cookie), (ana["account"], nato)):  # made by her, made for her
+        url = call(f"{base}/api/members/{member}/move", {}, by)[1]["url"]
+        links.append(f"{base}/api/move/{url.rsplit('/', 1)[1]}")
+    kept = call(f"{base}/api/members/{pid}/move", {}, nato)[1]["url"].rsplit("/", 1)[1]
+    assert [call(link)[0] for link in links] == [200, 200, 200]
+    assert call(f"{base}/api/members/{ana['account']}", change, nato, "PATCH")[0] == 200
+    assert [call(link)[0] for link in links] == [404, 404, 404]
+    assert call(f"{base}/api/move/{kept}")[0] == 200  # nobody else's links are touched
+
+
 def test_export_is_for_admins(team):
     base, nato, piero, _ = team
     assert call(f"{base}/api/export", cookie=piero)[0] == 403

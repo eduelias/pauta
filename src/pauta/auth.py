@@ -544,6 +544,10 @@ class Auth:
                 raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
             db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
+            db.execute(  # as in end_sessions: a link the person made for themselves ends too
+                "UPDATE invite SET expires=0 WHERE account=? AND created_by=?",
+                (account_id, account_id),
+            )
 
     # ---- login with a discoverable passkey ------------------------------------------------
 
@@ -608,6 +612,12 @@ class Auth:
                 )
             if is_admin is not None:
                 db.execute("UPDATE account SET is_admin=? WHERE id=?", (int(is_admin), account_id))
+            if (disabled and not row["disabled"]) or (is_admin is False and row["is_admin"]):
+                # the invites and links this account made, and the links made for it, end too
+                db.execute(
+                    "UPDATE invite SET expires=0 WHERE created_by=? OR account=?",
+                    (account_id, account_id),
+                )
             admins = db.execute(
                 "SELECT COUNT(*) FROM account WHERE is_admin AND NOT disabled"
             ).fetchone()[0]
