@@ -1151,6 +1151,7 @@ class Store:
                         (today, known["id"]),
                     )
                     out["ended"] += 1
+            # shortcut: an id Meta stops listing stays in the list, prune it if it ever grows
             pending = self._history_pending(db) + out["new"]
             if out["new"]:
                 self._set_history_pending(db, pending)

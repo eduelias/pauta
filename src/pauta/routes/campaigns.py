@@ -184,8 +184,9 @@ def install(route, store, auth, drive, meta):
         how many days at that account's last 7 days' pace (`balance`, null when Meta gives
         none; without a pace, what is left on all of them), `seen_today` and its
         `flags` ([{key, level, text}], rules over the last 7 full days against the 7
-        before). Read from the stored daily numbers and Meta's cached account list: never
-        a wait on Meta. Why a client has no fresh numbers is spelled out to admins only."""
+        before). Read from the stored daily numbers and Meta's kept account list (a wait
+        on Meta only when none is kept, or it is over a day old). Why a client has no fresh
+        numbers is spelled out to admins only."""
         since, until, today = _period(self)
         last, before = overview.flag_windows(today)
         windows = {
@@ -203,10 +204,15 @@ def install(route, store, auth, drive, meta):
             for c in store.connections()
             if c["state"] != "ok"
         }
-        spent: dict[str, int] = {}  # per ad account, in the flags' last window
-        for c in store.campaign_rows(*last):
+        # per ad account, in the flags' last window: what it spent ("Não acompanhar"
+        # campaigns draw on the same balance) and whether a campaign is live on it
+        spent: dict[str, int] = {}
+        running: set[str] = set()
+        for c in store.campaign_rows(*last, CAMPAIGN_STATES):
             for k in c["campaigns"]:
                 spent[k["account_id"]] = spent.get(k["account_id"], 0) + k["spend_cents"]
+                if k["state"] == "active":
+                    running.add(k["account_id"])
         accounts: dict[int, list[dict]] = {}
         problems: dict[int, str] = {}
         for a in store.meta_accounts():
@@ -215,9 +221,14 @@ def install(route, store, auth, drive, meta):
             cid = a["client"]["id"]
             left = ((live.get(a["id"]) or {}).get("balance") or {}).get("remaining_cents")
             accounts.setdefault(cid, []).append(
-                {"remaining_cents": left, "spend_cents": spent.get(a["id"], 0)}
+                {
+                    "remaining_cents": left,
+                    "spend_cents": spent.get(a["id"], 0),
+                    "active": a["id"] in running,
+                }
             )
-            # else the account's own trouble in the last pass, never its neighbours'
+            # else the account's own trouble in the last pass, never its neighbours' (kept
+            # in memory: empty from a restart until the first pass ends, a minute later)
             why = revoked.get(a["business_id"]) or meta.unsynced.get(a["id"])
             if not meta.connected:
                 why = NOT_CONNECTED

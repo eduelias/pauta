@@ -3,11 +3,10 @@
 - **Status:** phases A and B built with this document (2026-11-12, shipped in 1.10.0), at
   the owner's word ("whatever we can now"); see "What was built" at the end for what differs
   from the sketch. Phase C and the questions for the person who asked are open.
-- **2026-11-20:** the code differs: "Sem números" covers fewer cases than the rule below. It
-  is raised when the account's portfolio still has a connection that is not ok, or when
-  nothing is connected. An account whose portfolio was disconnected while others remain,
-  one Meta no longer lists, or one whose own numbers Meta refuses gets no such flag (at
-  most "sem entrega desde ontem"). The words are "sem dados novos da Meta".
+- **2026-11-20:** "Sem números" reads "sem dados novos da Meta" and is raised per ad account:
+  when its portfolio's connection is not ok, when nothing is connected, and (since the
+  release after 1.15.1) when the last sync pass got no new numbers for that account, an
+  account whose portfolio was disconnected included.
 - **2026-11-20:** the code differs: the route can wait for Meta. The balance comes from
   Meta's account list as the server keeps it in memory; with none kept yet, or one over a
   day old, the route reads Meta before it answers.

@@ -137,9 +137,10 @@ def test_days_left_at_the_last_seven_days_pace():
     assert overview.days_left(10_000, total(0)) is None
 
 
-def account(left, spent):
-    """One ad account: what is left on it and what it spent in the last 7 days."""
-    return {"remaining_cents": left, "spend_cents": spent}
+def account(left, spent, active=True):
+    """One ad account: what is left on it, what it spent in the last 7 days, and whether a
+    campaign is live on it."""
+    return {"remaining_cents": left, "spend_cents": spent, "active": active}
 
 
 def left(cents, c):
@@ -160,10 +161,20 @@ def test_a_clients_days_of_balance_are_those_of_its_first_account_to_run_out():
         "remaining_cents": 10_000,
         "days_left": 20,
     }
-    # nothing spent on an account: no day count from it, and it hides no other
-    assert overview.balance([account(0, 0), account(7000, 7000)]) == {
+    # nothing spent on an account with a balance: no day count from it, it hides no other
+    assert overview.balance([account(500, 0), account(7000, 7000)]) == {
         "remaining_cents": 7000,
         "days_left": 7,
+    }
+    # empty for over a week (nothing left, nothing spent) with a campaign live: out today
+    assert overview.balance([account(0, 0), account(50_000, 7000)]) == {
+        "remaining_cents": 0,
+        "days_left": 0,
+    }
+    # R$ 20 left where the campaigns ended three days ago: nothing there is running out
+    assert overview.balance([account(2000, 7000, active=False), account(50_000, 7000)]) == {
+        "remaining_cents": 50_000,
+        "days_left": 50,
     }
     # an account at zero that was spending is the first to run out
     assert overview.balance([account(0, 7000), account(7000, 7000)]) == {
@@ -171,7 +182,7 @@ def test_a_clients_days_of_balance_are_those_of_its_first_account_to_run_out():
         "days_left": 0,
     }
     # nobody with a pace: what is left on all of them, and no days
-    assert overview.balance([account(500, 0), account(0, 0), account(None, 0)]) == {
+    assert overview.balance([account(500, 0), account(0, 0, active=False), account(None, 0)]) == {
         "remaining_cents": 500,
         "days_left": None,
     }
@@ -229,6 +240,9 @@ def test_results_falling_to_zero_at_the_same_spend_raise_the_volume_alert():
         "volume_pct": -100,
         "spend_pct": 0,
     }
+    # with more money in (spend up 40%) there is no cost per result to compare: said too
+    more = {**gone, "text": "resultados caíram a zero com mais investimento"}
+    assert overview.flags(client(total(7000, 50), before), TODAY) == [more]
     # under the minimum count before, the clicks still decide (4 results → 0 says little)
     assert overview.flags(client(total(5000, 50), total(5000, 50, 4, CHATS)), TODAY) == []
     # the last week counts something else: not the same thing, the click compares

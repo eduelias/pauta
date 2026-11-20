@@ -115,6 +115,8 @@ def test_a_history_read_that_failed_is_tried_again_until_it_works(team):
     out = sync.run(store, meta, days=2, today=TODAY)
     assert [e["account"] for e in out["errors"]] == ["111"] and out["campaigns_new"] == 3
     assert days(store, "23850001") == ["2026-10-19", "2026-10-20"]  # the window only
+    # the account's new numbers are in, and the campaign after it got its history
+    assert "111" not in meta.unsynced and days(store, "23850002")[0] == "2026-10-12"
     # a day later Meta answers: the history runs from the start to where the window begins
     fake.fail_history.clear()
     tomorrow = TODAY + timedelta(days=1)

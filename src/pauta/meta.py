@@ -919,7 +919,8 @@ class Meta:
             if e.status == 503:
                 raise e  # Meta asked the app to pause: the list waits with it
         if len(errors) == len(conns):
-            raise errors[0]
+            # Meta not answering says more than an old revocation next to it
+            raise next((e for e in errors if e.status != 409), errors[0])
         cached = self._cache
         kept = cached[1] if cached else []
         now = time.time()

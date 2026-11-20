@@ -165,8 +165,7 @@ def _run(store: Store, meta: Meta, *, days: int, today: date | None = None) -> d
             day = today or local_today(account.get("timezone_name") or "")
             since = day - timedelta(days=days - 1)
             try:
-                _sync_account(store, meta, aid, bid, since, day, fetched, out)
-                done.add(aid)
+                _sync_account(store, meta, aid, bid, since, day, fetched, out, done)
             except MetaError as e:
                 out["errors"].append(
                     {"account": aid, "business_id": bid, "error": str(e), "status": e.status}
@@ -293,7 +292,7 @@ def _business(account: dict, meta: Meta, conns: list[dict]) -> str:
     return conns[0]["business_id"] if len(conns) == 1 else ""
 
 
-def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
+def _sync_account(store, meta, aid, bid, since, today, fetched, out, done) -> None:
     metas = meta.campaigns(aid, business_id=bid)
     res = store.sync_campaigns(aid, metas, today.isoformat())
     objectives = {m["id"]: m.get("objective") or "" for m in metas}
@@ -301,23 +300,33 @@ def _sync_account(store, meta, aid, bid, since, today, fetched, out) -> None:
         aid, since, today, today=today, business_id=bid, objectives=objectives
     )
     out["insight_rows"] += store.store_insights(rows, fetched)
+    done.add(aid)  # the window's numbers are in, whatever happens to the history below
     out["campaigns_new"] += len(res["new"])
     starts = {m["id"]: m.get("started") for m in metas}
     # the new ones, and the ones an earlier pass saved and then failed to read back
+    failed = None  # one campaign's history failing doesn't hold back the others
     for mid in res["pending"]:
         started = starts.get(mid)
         if started and date.fromisoformat(started) < since:
-            history = meta.daily_insights(
-                aid,
-                date.fromisoformat(started),
-                since - timedelta(days=1),
-                meta_ids=[mid],
-                today=today,
-                business_id=bid,
-                objectives=objectives,
-            )
+            try:
+                history = meta.daily_insights(
+                    aid,
+                    date.fromisoformat(started),
+                    since - timedelta(days=1),
+                    meta_ids=[mid],
+                    today=today,
+                    business_id=bid,
+                    objectives=objectives,
+                )
+            except MetaError as e:
+                if e.status in (409, 503):  # revoked or a pause: the pass stops here
+                    raise
+                failed = failed or e
+                continue  # still pending: the next pass asks again
             out["insight_rows"] += store.store_insights(history, fetched)
         store.history_done(mid)
+    if failed:
+        raise failed  # reported as the account's error, though its window is in
 
 
 def due(now: datetime, last_hourly: datetime | None, last_nightly: datetime | None) -> set[str]:

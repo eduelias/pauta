@@ -117,17 +117,20 @@ def days_left(remaining_cents: int | None, last: dict) -> int | None:
 
 def balance(accounts: list[dict]) -> dict | None:
     """A client's balance from its ad accounts, each {remaining_cents, spend_cents: its own
-    spend in the last FLAG_DAYS}: what is left on the account that runs out first and in
-    how many days ({remaining_cents, days_left}). A balance belongs to one account, so
-    each is divided by its own spend; an account Meta gives no balance for, or that spent
-    nothing, has no day count and hides no other. When none has one: what is left on all
-    of them, and no days. None when Meta gives no balance at all."""
+    spend in the last FLAG_DAYS, active: a campaign is live on it}: what is left on the
+    account that runs out first and in how many days ({remaining_cents, days_left}). A
+    balance belongs to one account, so each is divided by its own spend. Only an account
+    with something live counts: one at zero is out today whatever it spent, one Meta gives
+    no balance for, or that spent nothing, has no day count and hides no other. When none
+    has one: what is left on all of them, and no days. None when Meta gives no balance."""
     known = [a["remaining_cents"] for a in accounts if a["remaining_cents"] is not None]
-    timed = [
-        (days, a["remaining_cents"])
-        for a in accounts
-        if (days := days_left(a["remaining_cents"], a)) is not None
-    ]
+    timed = []
+    for a in accounts:
+        if not a["active"]:  # nothing runs there: its balance is not what runs out
+            continue
+        days = 0 if a["remaining_cents"] == 0 else days_left(a["remaining_cents"], a)
+        if days is not None:
+            timed.append((days, a["remaining_cents"]))
     if timed:
         days, left = min(timed)
         return {"remaining_cents": left, "days_left": days}
@@ -186,6 +189,10 @@ def flags(
         if steady and ch["volume_pct"] is not None and ch["volume_pct"] <= -rules["drop_pct"]:
             # at the same spend this is the cost rising too: one sentence says both
             text = f"{what} caíram {-ch['volume_pct']}% com o mesmo investimento"
+            out.append({"key": "volume", "level": WATCH, "text": text})
+        elif ch["kind"] == "result" and ch["volume_pct"] == -100 and (ch["spend_pct"] or 0) > 0:
+            # more money and nothing back: there is no cost per result left to compare
+            text = "resultados caíram a zero com mais investimento"
             out.append({"key": "volume", "level": WATCH, "text": text})
         elif ch["cost_pct"] is not None and ch["cost_pct"] >= rules["rise_pct"]:
             text = f"custo por {unit} subiu {ch['cost_pct']}% em {FLAG_DAYS} dias"

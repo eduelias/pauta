@@ -37,10 +37,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 - **"Saldo para N dias" é calculado por conta de anúncios.** Os saldos das contas de um
   cliente eram somados e divididos pelo gasto de todas: uma conta quase vazia ficava
   escondida atrás de outra com saldo. Agora cada conta é dividida pelo próprio gasto dos
-  últimos 7 dias, e a linha mostra a que acaba primeiro (os dias e o saldo dela).
+  últimos 7 dias, e a linha mostra a que acaba primeiro (os dias e o saldo dela). Só
+  contam as contas com campanha no ar: uma conta zerada com campanha no ar é "saldo
+  acabou" mesmo sem gasto na semana, e o resto de saldo de uma conta onde nada roda não
+  gera aviso.
 - **Resultados que caem a zero geram o alerta de volume.** Com 14 conversas numa semana e
   nenhuma na seguinte, com o mesmo investimento, a Visão geral não dizia nada. Agora diz
-  "resultados caíram 100% com o mesmo investimento".
+  "resultados caíram 100% com o mesmo investimento", ou "resultados caíram a zero com mais
+  investimento" quando o gasto subiu.
 - **Uma falha passageira da Meta em um portfólio não some mais com as contas dele.** Por
   dez minutos as contas ficavam sem saldo (o cliente saía do alerta de saldo) e
   Configurações dizia que não apareciam mais na Meta. Agora ficam como na última leitura,
