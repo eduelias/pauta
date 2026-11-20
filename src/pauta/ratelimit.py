@@ -14,7 +14,6 @@ from collections import deque
 # bucket: (hits, seconds)
 DEFAULT_LIMITS: dict[str, tuple[int, int]] = {
     "invite": (30, 3600),  # invites made per hour
-    "accept": (60, 3600),  # one-tap joins per hour
     "register": (40, 3600),  # 20 sign-ups per hour (two requests each)
     "login": (120, 900),  # 60 logins per quarter hour (two requests each)
 }
