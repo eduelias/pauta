@@ -1,4 +1,4 @@
-"""deploy/runner-job-guard and pauta-deploy's release check: what may reach du7."""
+"""deploy/runner-job-guard and pauta-deploy: what may reach du7, the switch, the rollback."""
 
 import hashlib
 import os
@@ -10,6 +10,8 @@ import pytest
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 WF = "eduelias/pauta/.github/workflows"
+# readlink -e, mv -T: GNU/Linux, like du7 and CI
+linux = pytest.mark.skipif(sys.platform != "linux", reason="GNU coreutils (du7, CI)")
 
 
 def guard(**env):
@@ -275,6 +277,78 @@ def test_the_wheel_and_lockfile_are_read_once(release, tmp_path):
     r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
     assert r.returncode == 1 and "is not the published one" in r.stderr
     assert not list(root.glob(".incoming.*"))
+
+
+@pytest.fixture
+def opt(tmp_path):
+    """A fake /opt/pauta with two installed releases, 1.2.2 live."""
+    root = tmp_path / "opt"
+    for v in ("1.2.2", "1.2.3"):
+        (root / "releases" / v).mkdir(parents=True)
+        (root / "releases" / v / ".complete").write_text("")
+    (root / "current").symlink_to(root / "releases" / "1.2.2")
+    return root
+
+
+def switch(root, script, healthy):
+    # the unit and /healthz are stand-ins: health_version answers with the version `current`
+    # points at, if that one is healthy
+    stubs = (
+        'systemctl() { echo "systemctl $*" >> "$ROOT/calls"; }; backup_db() { :; }; '
+        "journalctl() { :; }; logger() { :; }; "
+        'health_version() { v=$(basename "$(readlink -e "$ROOT/current")"); '
+        'case " $HEALTHY " in *" $v "*) echo "$v";; *) echo "";; esac; }; '
+    )
+    return deploy(root, stubs + script, HEALTHY=healthy)
+
+
+@linux
+def test_a_healthy_release_goes_live(opt):
+    r = switch(opt, "activate 1.2.3", "1.2.2 1.2.3")
+    assert r.returncode == 0, r.stderr
+    assert (opt / "current").resolve().name == "1.2.3"
+    assert (opt / "previous").resolve().name == "1.2.2"
+    assert "live 1.2.3 (was 1.2.2)" in (opt / "deploy.log").read_text()
+    assert (opt / "calls").read_text() == "systemctl restart pauta\n"
+
+
+@linux
+def test_a_broken_release_rolls_back(opt):
+    r = switch(opt, "activate 1.2.3", "1.2.2")
+    assert r.returncode == 1
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert not (opt / "previous").exists()
+    assert "FAILED 1.2.3, rolled back to 1.2.2 (healthz: 1.2.2)" in (opt / "deploy.log").read_text()
+    assert (opt / "calls").read_text() == "systemctl restart pauta\n" * 2
+
+
+@linux
+def test_rollback_goes_to_the_release_before(opt):
+    r = switch(opt, "main --rollback", "1.2.2 1.2.3")
+    assert r.returncode == 1 and "no previous release" in r.stderr
+    assert switch(opt, "activate 1.2.3", "1.2.2 1.2.3").returncode == 0
+    r = switch(opt, "main --rollback", "1.2.2 1.2.3")
+    assert r.returncode == 0, r.stderr
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert (opt / "previous").resolve().name == "1.2.3"
+    assert "live 1.2.2 (was 1.2.3)" in (opt / "deploy.log").read_text()
+
+
+@pytest.mark.parametrize(
+    ("args", "why"),
+    [
+        ("1.2.3", "usage"),
+        ("--rollback now", "usage"),
+        ("1.2 /x/pauta-1.2-py3-none-any.whl /x/requirements.lock", "bad version"),
+        ("1.2.3 /x/pauta-9.9.9-py3-none-any.whl /x/requirements.lock", "unexpected wheel"),
+        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/other.lock", "unexpected lockfile"),
+        ("1.2.3 /x/pauta-1.2.3-py3-none-any.whl /x/requirements.lock", "no wheel at"),
+    ],
+)
+def test_main_refuses_bad_arguments(args, why, tmp_path):
+    r = deploy(tmp_path / "opt", f"main {args}; echo reached")
+    assert r.returncode == 1 and why in r.stderr
+    assert "reached" not in r.stdout
 
 
 @pytest.mark.parametrize("script", ["provision-du7.sh", "provision-branch-env.sh"])
