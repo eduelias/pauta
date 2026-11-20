@@ -7,6 +7,8 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-11-20
+
 ### Changed
 
 - du7: o `pauta-deploy` instala o que o próprio release construiu. O CI calcula o sha256
@@ -909,7 +911,8 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.16.1...HEAD
+[1.16.1]: https://github.com/eduelias/pauta/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/eduelias/pauta/compare/v1.15.1...v1.16.0
 [1.15.1]: https://github.com/eduelias/pauta/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/eduelias/pauta/compare/v1.14.1...v1.15.0
