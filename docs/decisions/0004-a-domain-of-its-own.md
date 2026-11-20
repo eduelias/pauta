@@ -7,6 +7,9 @@
   Acceptance is on `acc.pauta.cc` since 2026-10-31. The team is moving.
 - **Blocks:** decision 5 (other teams) and decision 6 (billing). Decision 1 (acceptance)
   moves with it (`acc.pauta.cc`).
+- **2026-11-20:** the code differs: passkeys from before the move are not stamped with
+  `pauta.genic.dev`. `passkey.rp_id` stays empty until the passkey next signs in, so "who
+  has moved" lists only the domains seen since.
 
 ## Context
 
@@ -32,18 +35,18 @@ and `pauta.team` (says what it is).
 | Registrar | Cloudflare, bought in the dashboard. Auto-renew and the registrar lock are switched on there: the Terraform/OpenTofu provider has no registrar resource, and the Registrar API (beta, 2026) can register but not renew |
 | DNS | Code in `du7/dns-zone` (OpenTofu), like `du7.dev`: an `import` block for each zone (Cloudflare created them at purchase), then the records. `pauta.cc`, `app.`, `acc.` and `www.` are a CNAME to `du7.sytes.net` (flattened at the apex), **DNS-only**: Cloudflare's free proxy caps request bodies at 100 MB while Pauta takes 200 MB uploads in one request, and the rate limits rely on the client address Caddy passes on. A CAA record for the CAs Caddy uses. Neither domain sends mail, so each gets a null MX, `v=spf1 -all` and a DMARC `p=reject` so nobody can send mail as them |
 | Certificates | Caddy on du7, as today (TLS-ALPN on 443; works because the records are DNS-only) |
-| Moving the current team | A "move to pauta.cc" hand-off instead of new invites (an invite always makes a *new* account, and a session cookie is host-only, so nobody is signed in on the new domain). On the old address, a banner and a button "Mudar para pauta.cc": Pauta makes a one-time token for that account (10 minutes, single use), sends the person to `https://pauta.cc/#/mudar/<token>`, they make a passkey there with Face ID or a fingerprint, and are signed in. Accounts, requests and history stay; only the passkeys are new. The same link, made by an admin, later serves "perdi meu celular" |
-| The old address | Keeps working unchanged until everyone has moved, then becomes a 301 to `pauta.cc` for at least a year (old links sit in WhatsApp chats), then goes |
+| Moving the current team | A "move to pauta.cc" hand-off instead of new invites (an invite always makes a *new* account, and a session cookie is host-only, so nobody is signed in on the new domain). On the old address, a banner and a button "Mudar para app.pauta.cc": Pauta makes a one-time token for that account (10 minutes, single use), sends the person to `https://app.pauta.cc/#/mudar/<token>`, they make a passkey there with Face ID or a fingerprint, and are signed in. Accounts, requests and history stay; only the passkeys are new. The same link, made by an admin, later serves "perdi meu celular" |
+| The old address | Keeps working unchanged until everyone has moved, then becomes a 301 to `app.pauta.cc` for at least a year (old links sit in WhatsApp chats), then goes |
 
 ## The move, step by step
 
-1. **DNS** (`dns-zone`, ~1 hour, no effect on anyone): `pauta-cc.tf` and `pauta-team.tf`
-   with the imports and records above. `tofu plan`, then `apply`.
+1. **DNS** (`dns-zone`, ~1 hour, no effect on anyone): `pauta.tf`, one file for both
+   zones, with the imports and records above. `tofu plan`, then `apply`.
 2. **Code** (one PR, ~1 day, owner review: `auth.py`, `deploy/`):
    - `PAUTA_RP_ID` and `PAUTA_ORIGIN` accept more than one domain during the move; the RP ID
      for a ceremony is the configured one that the request's origin belongs to.
    - `passkey.rp_id` (additive column; existing rows get `pauta.genic.dev`), so Pauta knows
-     who has moved: `pauta users` and the Equipe page show it.
+     who has moved: `pauta users` and the Equipe page (now Configurações → Time) show it.
    - The hand-off token, the banner and the `#/mudar/` screen.
    - Every `pauta.genic.dev` in the repo becomes `pauta.cc`: `index.html` link-preview tags
      and `og.png` (`tools/render_images.py`), `pyproject.toml`, the CLI's `--base-url`,
@@ -55,10 +58,10 @@ and `pauta.team` (says what it is).
    redirects (mind the single-file bind mount: check that the container sees the new
    Caddyfile before reloading), the unit with both domains, then `make release`.
 4. **The team moves** (a day of calendar time): a WhatsApp message to the three people:
-   open Pauta, tap "Mudar para pauta.cc", confirm with Face ID, and add the new address to
+   open Pauta, tap "Mudar para app.pauta.cc", confirm with Face ID, and add the new address to
    the home screen (an installed app belongs to its old address). Watch `pauta users`.
-5. **Close the old address** once everyone has moved: `pauta.genic.dev` becomes a 301 in
-   Caddy; the unit drops the old RP ID and origin. Acceptance moves the same way
+5. **Close the old address** once everyone has moved: `pauta.genic.dev` becomes a 301 to
+   `app.pauta.cc` in Caddy; the unit drops the old RP ID and origin. Acceptance moves the same way
    (`acc.pauta.cc`, demo data, its software-passkey test account made again).
 6. **Monitoring**: du7's watchdog `pauta*` checks, the GitHub uptime check, the repo's
    homepage link. OneDrive needs nothing (device-code sign-in has no redirect address).
