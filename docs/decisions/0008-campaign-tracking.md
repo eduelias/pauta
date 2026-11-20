@@ -52,8 +52,8 @@ list is what runs.
 - Phase 1 as a list that works without Meta: `/api/tracking`, `/api/tracking/start` and
   `/api/tracking/settings`, the "Para acompanhar" inbox, **Nova campanha**, the nav counter.
 - A cadence and its statuses (`never`, `overdue`, `due`, `done`): the column
-  `campaign.every_days` exists and nothing reads or writes it. A check on one campaign;
-  deleting a check.
+  `campaign.every_days` exists; nothing sets it or acts on it (one query still returns
+  it). A check on one campaign; deleting a check.
 - Pausar, Reativar and Encerrar buttons; editing a campaign's name or note.
 - The `tracking` settings block (`enabled`, `kinds`, `every_days`) and `lead_metric`. A
   lead is fixed as a link click; since 1.8.0 the labels are "Cliques no link" and "Custo por

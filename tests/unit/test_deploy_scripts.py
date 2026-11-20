@@ -269,14 +269,17 @@ def test_the_wheel_and_lockfile_are_read_once(release, tmp_path):
     root = tmp_path / "opt"
     # an install_release stand-in: the caller's file changes after the check, and it shows
     # what it was handed. The files are named as deploy.yml names them, from its directory
+    # under sudo each file is read as the caller: runuser is a stand-in that says so
     script = (
         'fetch_sums() { cat "$SUMS"; }; backup_db() { :; }; activate() { :; }; prune() { :; }; '
+        'runuser() { echo "as $2" >&2; shift 3; "$@"; }; '
         f'install_release() {{ echo changed > "{wheel}"; ls -ld "${{2%/*}}" | cut -c1-10; '
         'echo "$2 $3"; cat "$2"; }; '
         f"main 1.2.3 {wheel.name} {lock.name}"
     )
-    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums))
+    r = deploy(root, script, cwd=tmp_path, SUMS=str(sums), SUDO_USER="someone")
     assert r.returncode == 0, r.stderr
+    assert r.stderr.count("as someone") == 2  # the wheel and the lockfile
     mode, paths, content = r.stdout.splitlines()
     assert mode == "drwx------"  # root only
     assert all(path.startswith(f"{root}/.incoming.") for path in paths.split())

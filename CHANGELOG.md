@@ -111,6 +111,9 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 - Aceitação: o `pauta-deploy-branch` só aceita um `requirements.lock` no formato que o
   `uv export` escreve (comentários, `nome==versão` e os hashes); qualquer outra linha é
   recusada antes de instalar.
+- As três mudanças acima só valem depois de instalar os scripts novos no du7
+  (`deploy/provision-du7.sh` e `deploy/provision-branch-env.sh acc`): um release instala
+  só o app.
 - Testes novos: propriedades das contas do Financeiro (`tests/unit/test_properties.py`),
   a troca e o rollback do `pauta-deploy`, a promessa de rollback do banco, o endereço que o
   limite de pedidos conta e o escape de texto nas telas.

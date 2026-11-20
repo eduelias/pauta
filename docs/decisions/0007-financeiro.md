@@ -17,8 +17,6 @@
 - **2026-11-20:** the code differs: "integer cents, never floats" holds for the tables.
   The default fee setting is a float in currency units, and the API answers amounts as
   cents divided by 100.
-- **2026-11-20:** the code differs: `/api/export` carries the payments and the finance
-  settings, not the `billing` rows (the cycles).
 
 ## Context
 
