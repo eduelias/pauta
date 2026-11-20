@@ -52,8 +52,8 @@ On GitHub (`scripts/repo-settings.sh apply`, kept in the repo so it can be re-ru
   so a pushed branch can't read them.
 - **Actions**: GitHub's own actions plus `astral-sh/setup-uv`, pinned to a full SHA
   (`rhysd/actionlint` is still on the allow-list, but no workflow uses it: actionlint runs
-  from its PyPI wheel, pinned by version); the `GITHUB_TOKEN` is read-only by default and can't approve PRs;
-  runs from outside contributors' forks wait for the owner's approval.
+  from its PyPI wheel, pinned by version); the `GITHUB_TOKEN` is read-only by default and
+  can't approve PRs; runs from outside contributors' forks wait for the owner's approval.
 - **Security**: Dependabot alerts and security updates (version updates were already on),
   secret scanning with push protection, private vulnerability reporting, CodeQL.
 
