@@ -45,13 +45,13 @@ def add_months(d: date, n: int, day: int | None = None) -> date:
     return date(y, m + 1, min(day, calendar.monthrange(y, m + 1)[1]))
 
 
-def period_start(anchor: date, index: int, cadence: str) -> date:
-    """The start of period `index` (0-based) of a cycle anchored on `anchor`."""
+def period_start(anchor: date, index: int, cadence: str, day: int | None = None) -> date:
+    """The start of period `index` (0-based) of a cycle anchored on `anchor`. `day` is the
+    cycle's day of the month when the anchor could not hold it (the 31st, opened in
+    February): the longer months get it back."""
     if cadence == "weekly":
         return anchor + timedelta(days=7 * index)
-    if cadence == "yearly":
-        return add_months(anchor, 12 * index, anchor.day)
-    return add_months(anchor, index, anchor.day)
+    return add_months(anchor, (12 if cadence == "yearly" else 1) * index, day or anchor.day)
 
 
 @dataclass(frozen=True)
@@ -140,11 +140,15 @@ def standing(
     cadence = settings.get("cadence", "monthly")
     grace = int(settings.get("grace_days") or 0)
     soon = int(settings.get("due_soon_days") or 0)
+    # the team's fixed day, unless this cycle was started by hand on another one
+    day = int(settings.get("fixed_day") or 1) if settings.get("anchor") == "fixed_day" else None
+    if day and add_months(anchor, 0, day) != anchor:
+        day = None
     # every period that has started by today, oldest first
     starts: list[date] = []
     i = 0
     while True:
-        s = period_start(anchor, i, cadence)
+        s = period_start(anchor, i, cadence, day)
         if s > today and i > 0:
             break
         if s > today and i == 0:  # anchored in the future (a "cliente desde" ahead of today)
@@ -169,7 +173,7 @@ def standing(
         # what is left over pays the following periods in advance (at most a hundred years
         # of months, like the loop above); anchored ahead of today, that starts at the anchor
         ahead = min(pool // cents, 1200) if cents > 0 else 0
-        next_due = period_start(anchor, len(starts) + ahead, cadence)
+        next_due = period_start(anchor, len(starts) + ahead, cadence, day)
         status = "due_soon" if (next_due - today).days <= soon else "paid"
     return Standing(
         status=status,
