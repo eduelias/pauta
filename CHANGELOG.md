@@ -7,6 +7,19 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Security
+
+- du7: a produção passa a rodar com um usuário só dela (`pauta`), como a aceitação já
+  fazia, e não mais com o usuário de login do dono. O banco, a chave de sessão e os tokens
+  ficam em `/var/lib/pauta`, os backups em `/var/backups/pauta`, e o serviço não enxerga
+  mais `/home` nem os outros discos. Cada versão instalada passa a ser do root depois de
+  montada (o serviço lê, não altera) e o código dela só roda dentro do sandbox do serviço.
+  A cópia para o NAS virou uma unidade própria (`pauta-backup-nas`), e os comandos do dono
+  no du7 passam a ser `sudo pauta-cli …`. Nada muda no du7 com o release: vale depois de
+  rodar `deploy/provision-du7.sh` lá, que faz a mudança uma única vez (segundos fora do
+  ar, ninguém precisa entrar de novo) e guarda a cópia antiga. Passo a passo e como
+  desfazer: `deploy/README.md`, "Production's own user".
+
 ## [1.16.1] - 2026-11-20
 
 ### Changed

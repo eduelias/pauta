@@ -1,6 +1,9 @@
 # Running on du7
 
-Pauta runs on du7 (192.168.2.68) as the systemd unit `pauta`, on `127.0.0.1:8088` only.
+Pauta runs on du7 (192.168.2.68) as the systemd unit `pauta`, as its own user `pauta`, on
+`127.0.0.1:8088` only. (The user and the `/var` paths below hold from the day the move in
+"Production's own user" is run on du7; until then it runs as the owner's login user, with
+the state in `~/.local/share/pauta` and the backups in `~/backups/pauta`.)
 Caddy puts it on the internet at https://app.pauta.cc, next to dom.du7.dev. Acceptance is
 https://acc.pauta.cc; https://www.pauta.cc is for the public site (a temporary redirect to the
 app until it exists), and pauta.cc and pauta.team lead there. The old address,
@@ -15,13 +18,14 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 | DNS | `pauta.cc` and `pauta.team` (registered at Cloudflare, auto-renew and lock on): zones and records are code in `du7/dns-zone` (`pauta.tf`, OpenTofu). `pauta.cc`, `app.`, `acc.`, `www.` and `pauta.team`, `www.` are CNAMEs to `du7.sytes.net` (the No-IP name the router keeps on the home IP), DNS-only. The old `pauta.genic.dev` is a Squarespace record (`genic.dev` → DNS → `pauta` CNAME `du7.sytes.net`; editing it asks for the account passkey) |
 | Router | the existing TCP 443 → 192.168.2.68:443 forward (shared with dom.du7.dev; nothing new) |
 | Caddy | The `caddy` container's Caddyfile (`~/dns-stack/caddy/Caddyfile`, bind-mounted as a single file), the blocks from `deploy/Caddyfile.pauta`. Certificates via TLS-ALPN on 443 |
-| Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release), `/opt/pauta/current` → the live one |
-| DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
-| Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
-| Thumbnail cache | `~/.local/share/pauta/pauta.db.thumbs/<file id>.<item digest>.<type>`: a file's OneDrive thumbnail, fetched once. A cache: not backed up, safe to delete wholesale (the next view fetches again); clear it when restoring a backup |
-| Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
-| Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
+| Code | `/opt/pauta/releases/X.Y.Z/` (a venv per release, root's once built: the service reads it and can't change it), `/opt/pauta/current` → the live one |
+| DB of record | `/var/lib/pauta/pauta.db` (`PAUTA_STATE_DIR`; the folder is `pauta`'s alone, 0700): accounts, passkeys, invites, clients, requests |
+| Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `/var/lib/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
+| Thumbnail cache | `/var/lib/pauta/pauta.db.thumbs/<file id>.<item digest>.<type>`: a file's OneDrive thumbnail, fetched once. A cache: not backed up, safe to delete wholesale (the next view fetches again); clear it when restoring a backup |
+| Backups | nightly 03:40 (`pauta-backup.timer`) → `/var/backups/pauta` (the `pauta` group, which the owner is in, may read these), then `pauta-backup-nas.service` copies the newest to `/media/nas/backups/pauta` as the drive's owner; 30 days each. Before every deploy → `/var/backups/pauta/pre-deploy` (`pauta` only), 90 days |
+| Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}`, `pauta-backup-nas.service` (copies of `deploy/`), sandboxed: own user, read-only system, no `/home`, no other drives, writes only to the state and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
+| The owner's commands | `sudo pauta-cli …` (copy of `deploy/pauta-cli`): the live release's `pauta` command as the service user. See "People" |
 | Runner | GitHub Actions self-hosted runner `du7` (labels `du7`, `pauta`) in `/opt/gh-runner`, user `gh-runner`, unit `actions.runner.eduelias-pauta.du7.service`; every job first passes `/usr/local/lib/pauta/runner-job-guard.sh` (drop-in `job-guard.conf`) |
 
 ## Releasing
@@ -54,8 +58,10 @@ starts `.github/workflows/release.yml`:
    which
    - copies the wheel and the lockfile once into a folder only root can open and refuses
      them unless the copies hash to the two sha256s from step 1,
+   - refuses unless the unit runs as `pauta` (asked of systemd),
    - builds `/opt/pauta/releases/1.2.0` as the service user (binary wheels only, every hash
-     checked, PyPI only),
+     checked, PyPI only), then makes it root's and reads the version from the wheel's
+     metadata: the release's own code first runs in the unit's sandbox, after the switch,
    - backs up the DB with the system Python (the new code never touches it before the switch),
    - points `/opt/pauta/current` at the new release and restarts `pauta`,
    - waits for `/healthz` to report 1.2.0, and **switches back to the old release** if it
@@ -97,7 +103,7 @@ order (steps 1–5 done 2026-10-31):
    steps 2 and 3 come first.
 5. **Move the team**: send each person their own link, which is one tap and Face ID. From
    the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
-   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link NAME`).
+   (`sudo pauta-cli move-link NAME`).
    A link works once, for 3 days, for that account only: send it to that person only.
    Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
    Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
@@ -131,8 +137,9 @@ database (the `passkey.rp_id` column is additive) and the old address still work
 - What's live and what's installed: `sudo pauta-deploy --status`.
 
 Schema changes are additive (new tables and columns), so an older release runs on a newer
-database. If one ever isn't, restore the matching file from `~/backups/pauta/pre-deploy`
-(stop `pauta`, copy it over `~/.local/share/pauta/pauta.db`, remove `pauta.db.thumbs/`, start `pauta`).
+database. If one ever isn't, restore the matching file from `/var/backups/pauta/pre-deploy`
+(as root: stop `pauta`, copy it over `/var/lib/pauta/pauta.db`, `chown pauta:pauta` it, remove
+`pauta.db.thumbs/`, start `pauta`).
 
 ## Acceptance: trying a branch
 
@@ -199,7 +206,8 @@ gh api -X POST repos/eduelias/pauta/actions/runners/registration-token --jq .tok
 sudo deploy/provision-du7.sh 2.338.2 <sha256 of actions-runner-linux-arm64-2.338.2.tar.gz> token
 ```
 
-It installs `pauta-deploy`, the units, a sudo rule letting `gh-runner` run
+It makes the `pauta` user with `/var/lib/pauta` and `/var/backups/pauta`, installs
+`pauta-deploy`, `pauta-cli`, the units, a sudo rule letting `gh-runner` run
 `/usr/local/sbin/pauta-deploy` (and nothing else) as root, and registers the runner as a
 systemd service. Then put a first release in place by hand (`sudo pauta-deploy X.Y.Z
 pauta-X.Y.Z-py3-none-any.whl requirements.lock <wheel sha256> <lockfile sha256>` with the
@@ -215,6 +223,98 @@ shell and no groups, and keeps itself updated. Its job-started hook,
 when the owner started the run and, for a run started again, did that too; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
+
+## Production's own user
+
+Decision 1 gave acceptance a user of its own and planned the same for production. Until this
+is run on du7, production runs as the owner's login user with its state in that user's home:
+the unit could read (not write) everything that user can. From then on it runs as `pauta`,
+a system user with no shell, no other group and nothing of anyone else's in reach: state in
+`/var/lib/pauta`, backups in `/var/backups/pauta`, no `/home`, `/media` or `/mnt` in its
+sandbox, and releases it can read and not change. **State on 2026-11-20: in the repository,
+not yet run on du7.**
+
+Merging and releasing this changes nothing on du7 by itself: releases keep deploying through
+the `pauta-deploy` installed there. The move happens when `provision-du7.sh` is run.
+
+**The move** (once; offline between the stop and the start: a second or two expected for
+the 26 MB there, 0.1 s in a rehearsal with a small database, not measured on du7). From a
+fresh copy of `deploy/` on du7:
+
+```
+sudo deploy/provision-du7.sh 2.338.2 <sha256 of the runner tarball>     # no token: the runner stays
+```
+
+In this order it: checks every file it will install is there; makes the user `pauta` and
+puts the owner in the `pauta` group; refuses, before anything is stopped or copied, if
+`/var/lib/pauta` or `/var/backups/pauta` already hold anything while `~/.local/share/pauta`
+still has a database; stops `pauta` and the backup timer; copies `~/.local/share/pauta` (the DB, the session key,
+the Meta secret and tokens, the OneDrive token, the thumbnails) and `~/backups/pauta` with
+modes and times kept, compares each copy with its original byte for byte, and hands the
+copies to `pauta`; renames the old folders to `~/.local/share/pauta.moved-YYYYMMDD` and
+`~/backups/pauta.moved-YYYYMMDD`; installs the units, `pauta-deploy` and `pauta-cli`; makes
+the installed releases root's; starts `pauta` and the timer; and waits for `/healthz`. If a
+copy fails or differs, the new folders are removed and the old unit is started on the old
+state: nothing has changed. Nobody is signed out (the session key moves too). A second run
+finds nothing to move and stops nothing.
+
+**What else changes at that moment**, outside this repository:
+
+- `~/du7-watchdog.py`, the `pauta-backup` check: `HOME / "backups/pauta"` becomes
+  `"/var/backups/pauta"` (the owner can list it through the `pauta` group; cron picks the
+  group up at its next run). The other `pauta*` checks stay as they are: `pauta-backup-nas`
+  reads the same NAS folder, and the heal still starts `pauta-backup.service`.
+- The NAS copy: the drive is exFAT, mounted for the owner's uid, so `pauta` can't write
+  there. `pauta backup` no longer gets `--copy-to`; `pauta-backup-nas.service` (installed by
+  the same run) copies the last two nights' files as the owner after each backup.
+- Anything that wrote into the state folder by hand: the Meta App Secret is now pushed to
+  `/var/lib/pauta/pauta.db.meta-secret` (owner `pauta`, mode 600; see "Meta in production").
+- The drop-in `/etc/systemd/system/pauta.service.d/meta.conf` holds two ids and no path:
+  unchanged.
+
+**Check afterwards:**
+
+```
+systemctl show pauta -p User -p ProtectHome            # User=pauta, ProtectHome=yes
+sudo pauta-deploy --status                             # live X.Y.Z (healthz: X.Y.Z)
+curl -s 127.0.0.1:8088/metrics                         # backup.dir /var/backups/pauta, onedrive and meta connected
+sudo pauta-cli users                                   # the accounts, read as pauta
+sudo systemctl start pauta-backup && ls -l /var/backups/pauta /media/nas/backups/pauta | tail -4
+python3 ~/du7-watchdog.py --status | grep pauta        # after the watchdog edit
+```
+
+and sign in at https://app.pauta.cc on a phone that was signed in before.
+
+**Rolling it back** (the old state is whole until you delete it). With `DATE` the day of the
+move, and `OLD` a copy of `deploy/` from release 1.16.1 (on du7:
+`~/pauta-provision-2778380/deploy`):
+
+```
+sudo systemctl stop pauta pauta-backup.timer
+# only if the team worked in the meantime and that work must be kept: take the new DB along
+#   sudo cp -a /var/lib/pauta/. ~/.local/share/pauta.moved-DATE/ && sudo chown -R esaleh: ~/.local/share/pauta.moved-DATE
+mv ~/.local/share/pauta.moved-DATE ~/.local/share/pauta
+mv ~/backups/pauta.moved-DATE ~/backups/pauta
+sudo install -m 0644 OLD/pauta.service OLD/pauta-backup.service /etc/systemd/system/
+sudo install -m 0755 OLD/pauta-deploy /usr/local/sbin/pauta-deploy
+sudo rm /etc/systemd/system/pauta-backup-nas.service
+sudo systemctl daemon-reload && sudo systemctl start pauta pauta-backup.timer
+sudo pauta-deploy --status
+```
+
+and the watchdog line back. `/var/lib/pauta` and `/var/backups/pauta` stay where they are;
+move them aside (`sudo mv /var/lib/pauta /var/lib/pauta.aside`, the same for the backups)
+before running the move a second time, which otherwise refuses. The new `pauta-deploy`
+refuses to deploy while the unit runs as anyone but `pauta`, and the old one knows nothing
+of `/var/lib/pauta`, so the two must be put back together, as above.
+
+**The old copies** stay for 14 days, then go by hand:
+`rm -rf ~/.local/share/pauta.moved-DATE ~/backups/pauta.moved-DATE`. Every file in them is
+also in the new place, and the new place has had 14 nightly backups by then.
+
+**Not in this step** (the third stage of the same plan): the runner's own user and a
+root-owned runner install with self-update off, and narrowing what the service can reach on
+the network (what decision 9 lists for acceptance holds for `pauta` too).
 
 ## Collaborators
 
@@ -251,7 +351,7 @@ runner. Approve no fork runs and invite nobody until both are done.
 |---|---|---|
 | Logs | `journalctl -u pauta` (one JSON line per request; `-p err` for errors with tracebacks), `journalctl -t pauta-deploy` | |
 | Numbers | `curl -s 127.0.0.1:8088/metrics` on du7 (refused through Caddy): request and 5xx counts, the last 15 min's latency and failing routes, DB size, newest backup age | |
-| Watchdog | `~/du7-watchdog.py` (cron, every 5 min; `--status` for the table): `pauta` (unit + `/healthz`, restarts it after 2 strikes, never during a deploy), `pauta-5xx` (3+ in 15 min), `pauta-backup` (newest under 26 h, else runs `pauta-backup` once), `pauta-backup-nas`, `pauta-tls` (over 14 days left), `pauta-runner` (restarts it), `pauta-deploy` (last line of `deploy.log` is `FAILED`) | IRC #du7; WhatsApp when a heal didn't help or there is none (at most once per check per 6 h) |
+| Watchdog | `~/du7-watchdog.py` (cron, every 5 min; `--status` for the table): `pauta` (unit + `/healthz`, restarts it after 2 strikes, never during a deploy), `pauta-5xx` (3+ in 15 min), `pauta-backup` (newest in `/var/backups/pauta` under 26 h, else runs `pauta-backup` once), `pauta-backup-nas`, `pauta-tls` (over 14 days left), `pauta-runner` (restarts it), `pauta-deploy` (last line of `deploy.log` is `FAILED`) | IRC #du7; WhatsApp when a heal didn't help or there is none (at most once per check per 6 h) |
 | From outside | `.github/workflows/uptime.yml`, hourly on GitHub's machines | an issue labelled `uptime` (GitHub email and app push) and WhatsApp; closed with one more WhatsApp when it's back |
 | Releases and deploys | the `alert` jobs in `release.yml` and `deploy.yml` | WhatsApp with the failed stages and the run link |
 
@@ -268,21 +368,27 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
 
 ## People
 
-- The first admin: on du7, `PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta
-  invite --admin` prints a link (7 days, one person). The first account is always an admin.
+- On du7 the `pauta` command is `sudo pauta-cli …` (`invite`, `move-link`, `users`, `usage`,
+  `reload`, `onedrive …`, `meta …`): the live release's command as the user `pauta`, on its
+  database, with the unit's own environment and a sandbox like the unit's. Never
+  `sudo -u pauta /opt/pauta/current/bin/pauta` from a terminal (`deploy/pauta-cli` says
+  why), and running it as yourself no longer finds the database. A backup by hand is
+  `sudo systemctl start pauta-backup` (the NAS copy follows).
+- The first admin: on du7, `sudo pauta-cli invite --admin` prints a link (7 days, one
+  person). The first account is always an admin.
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
-- `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
+- `sudo pauta-cli users` lists accounts. Admins disable people or make them admin on the Equipe page.
 - Make every open tab reload itself (a fix people must get now): on du7,
-  `PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta reload`. Each tab
+  `sudo pauta-cli reload`. Each tab
   reloads at its next change of screen, never under a form being filled, and the running
   server needs no restart. After an ordinary release tabs only show "A Pauta foi
   atualizada" and wait for the person. Tabs loaded before 1.15.0 know neither.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
   an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
-  or `pauta move-link <name>` on du7). Disabling ends every session
+  or `sudo pauta-cli move-link <name>` on du7). Disabling ends every session
   the account had; "Sair em todos os aparelhos" does the same for your own account.
-- Sign everyone out (a leaked cookie, a suspicion): delete
-  `~/.local/share/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is
+- Sign everyone out (a leaked cookie, a suspicion): `sudo rm
+  /var/lib/pauta/pauta.db.session-key` and `sudo systemctl restart pauta`. The key is
   never in the DB or its backups; a missing key file is simply made again.
 - The team always keeps one active admin. If the only admin loses access, make a new admin
   invite with the CLI command above.
@@ -318,20 +424,19 @@ https://entra.microsoft.com as du7@msn.com, in its own "Default Directory"
 **Connecting** (once, and again if the connection breaks): an admin opens Equipe → OneDrive
 → Conectar OneDrive. The page shows a code; the owner of the OneDrive opens
 microsoft.com/link, signs in, types the code and approves. The page notices within seconds.
-From du7 instead (the same environment as the unit):
+From du7 instead (`pauta-cli` takes the unit's environment):
 
 ```
-export PAUTA_STATE_DIR=~/.local/share/pauta PAUTA_ONEDRIVE_CLIENT_ID=a6a25189-1541-430b-ba90-be78b92a8e30
-/opt/pauta/current/bin/pauta onedrive connect
+sudo pauta-cli onedrive connect
 ```
 
-**Checking**: `pauta onedrive status` (same environment) prints the account, folder, space
+**Checking**: `sudo pauta-cli onedrive status` prints the account, folder, space
 used and when the token was last renewed, and exits non-zero on a problem. `/metrics` has
 `onedrive.{enabled,connected,error}` for the watchdog: alert when `enabled` and (`connected`
 is false or `error` is set). A token unused for 90 days expires; any upload or download
 renews it.
 
-**Disconnecting**: Equipe → OneDrive → Desconectar, or `pauta onedrive disconnect`. The
+**Disconnecting**: Equipe → OneDrive → Desconectar, or `sudo pauta-cli onedrive disconnect`. The
 files stay in OneDrive; the owner can also revoke Pauta at
 https://account.live.com/consent/Manage.
 
@@ -351,8 +456,8 @@ and Pauta keeps it in a file next to the DB. Production has been switched on sin
 | Setting | Where | Notes |
 |---|---|---|
 | `PAUTA_META_APP_ID`, `PAUTA_META_CONFIG_ID` | the drop-in `/etc/systemd/system/pauta.service.d/meta.conf` (`[Service]` + two `Environment=` lines), not `pauta.service` itself | The app id and the Facebook Login for Business configuration id (`1649862390172470`, "Pauta - leitura de anuncios"). Both public. Unset: no Meta card on Configurações, no sync. `sudo systemctl daemon-reload && sudo systemctl restart pauta` after editing |
-| The App Secret | `~/.local/share/pauta/pauta.db.meta-secret` next to the DB, mode 600, one line | Rendered from the 1Password item "Pauta Meta app" (Du7 Tech) on the Mac and pushed; never in the repo, the unit, a chat or a log. Rotating it in the Meta dashboard means rewriting this file and restarting |
-| The tokens | `~/.local/share/pauta/pauta.db.meta-token.<business_id>`, mode 600, one per connected portfolio | Written by the app when an admin connects a portfolio. Never in the DB or its backups. A portfolio disconnected in the UI (Desconectar) or revoked in the team's Business Settings loses its file |
+| The App Secret | `/var/lib/pauta/pauta.db.meta-secret` next to the DB, owner `pauta`, mode 600, one line | Rendered from the 1Password item "Pauta Meta app" (Du7 Tech) on the Mac and pushed; never in the repo, the unit, a chat or a log. Rotating it in the Meta dashboard means rewriting this file and restarting |
+| The tokens | `/var/lib/pauta/pauta.db.meta-token.<business_id>`, mode 600, one per connected portfolio | Written by the app when an admin connects a portfolio. Never in the DB or its backups. A portfolio disconnected in the UI (Desconectar) or revoked in the team's Business Settings loses its file |
 | The callback | Meta dashboard → Pauta → Facebook Login for Business → Settings → Valid OAuth Redirect URIs | **`https://app.pauta.cc/api/meta/callback` only**, strict mode, HTTPS enforced. Acceptance uses its own app (see "Acceptance: trying a branch"), so its callback is not listed here |
 
 Check: `curl -s 127.0.0.1:8088/metrics` → `"meta": {"enabled": true, "connected": …}`.
@@ -361,6 +466,6 @@ The Meta card on Configurações shows each connected portfolio and its token's 
 ## Taking it offline
 
 `sudo systemctl stop pauta` takes it offline; remove the Caddy block and the `pauta` DNS
-record to undo it completely. The DB stays in `~/.local/share/pauta`. To retire the runner:
+record to undo it completely. The DB stays in `/var/lib/pauta`. To retire the runner:
 `cd /opt/gh-runner/actions-runner && sudo ./svc.sh uninstall`, remove it under the repo's
 Settings → Actions → Runners, and delete `/etc/sudoers.d/gh-runner-pauta`.

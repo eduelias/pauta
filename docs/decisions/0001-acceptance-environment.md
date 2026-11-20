@@ -14,6 +14,11 @@
   if that commit is healthy on acceptance); the "ACEITAÇÃO" ribbon, title and theme colour
   (`PAUTA_ENV`); production's own `pauta` user (it runs as `esaleh`); and, in this repo, any
   watching of acceptance (the uptime check probes production only).
+- **2026-11-20, later:** production's own `pauta` user is built in the repository: the unit
+  and its backup run as `pauta` with the state in `/var/lib/pauta` and no `/home`,
+  `deploy/provision-du7.sh` moves the state there once, and `pauta-deploy` refuses to deploy
+  while the unit runs as anyone else. du7 runs it from the day that script is run there
+  (`deploy/README.md`, "Production's own user"). The rest of that list is still not built.
 
 ## Context
 
