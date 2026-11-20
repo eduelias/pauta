@@ -41,14 +41,14 @@ def today() -> date:
     return local_today(TZ)
 
 
+def short(d: date) -> str:
+    """A day as the page prints it: "3 out" (the year only when it isn't this one)."""
+    return f"{d.day} {MONTHS[d.month - 1]}" + (f" {d.year}" if d.year != today().year else "")
+
+
 def label(since: date, until: date) -> str:
-    """What the picker prints: "1 nov – 1 nov" (the year only when it isn't this one)."""
-    year = today().year
-
-    def one(d):
-        return f"{d.day} {MONTHS[d.month - 1]}" + (f" {d.year}" if d.year != year else "")
-
-    return f"{one(since)} – {one(until)}"
+    """What the picker prints: "1 nov – 1 nov"."""
+    return f"{short(since)} – {short(until)}"
 
 
 def brl(cents: int) -> str:
@@ -146,7 +146,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(limpeza.locator(".km-budget b")).to_contain_text("15,00 · diário")
     expect(limpeza.locator(".state")).to_have_text("Ativa")
     expect(limpeza.locator(".state")).to_have_attribute("title", "ACTIVE")
-    expect(limpeza.locator(".ksince")).to_have_text("ativa desde 3 out")
+    expect(limpeza.locator(".ksince")).to_have_text(f"ativa desde {short(date(2026, 10, 3))}")
     # Botox: Meta names the indicator (Cadastros) and counts nothing: "—", a lifetime budget
     botox = page.locator(".krow[data-id]", has_text="Botox outubro")
     expect(botox.locator(".km-results b span")).to_have_text("—")
@@ -156,7 +156,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(botox.locator(".km-results .ksub")).to_have_count(0)
     expect(botox.locator(".km-cpr b span")).to_have_text("—")
     expect(botox.locator(".km-budget b")).to_contain_text("450,00 · total")
-    expect(botox.locator(".ksince")).to_have_text("ativa desde 12 out")
+    expect(botox.locator(".ksince")).to_have_text(f"ativa desde {short(date(2026, 10, 12))}")
     # Panetone: no `results` from Meta, so the objective's action (link clicks); no budget
     panetone = page.locator(".krow[data-id]", has_text="Panetone")
     pan = expected("23850004", since, until, date(2026, 10, 15))
