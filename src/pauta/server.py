@@ -53,6 +53,7 @@ MAX_BODY = 256 * 1024
 # a connection that sends nothing for this long is dropped, and only so many are served at
 # once: slow or stalled clients can't pile up threads on the Pi
 IDLE_SECONDS = 15
+BODY_SECONDS = 20  # and a JSON body is whole within this, however it arrives
 MAX_CONNECTIONS = 64
 BUSY = b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 5\r\n\r\n"
 ROBOTS = b"User-agent: *\nDisallow: /\n"
@@ -268,10 +269,21 @@ def make_handler(
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if n and ctype != "application/json":
                 raise Reply(415, {"error": "envie JSON"})
+            raw, deadline = b"", time.monotonic() + BODY_SECONDS
             try:
-                raw = self.rfile.read(n) if n else b"{}"
+                while len(raw) < n:  # the idle timer restarts with every byte; this one doesn't
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError
+                    self.connection.settimeout(min(left, self.timeout))
+                    chunk = self.rfile.read1(n - len(raw))
+                    if not chunk:
+                        break
+                    raw += chunk
             except TimeoutError:
                 raise Reply(408, {"error": "o pedido demorou demais"}) from None
+            finally:
+                self.connection.settimeout(self.timeout)
             try:
                 doc = json.loads(raw or b"{}")
             except (ValueError, RecursionError):  # nested too deep is not JSON either

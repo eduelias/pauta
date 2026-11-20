@@ -303,6 +303,25 @@ def test_a_stalled_body_is_dropped(tight):
     assert reply.startswith(b"HTTP/1.0 408") and time.monotonic() - start_at < 3
 
 
+def test_a_body_has_a_total_time_however_it_arrives(tight, monkeypatch):
+    monkeypatch.setattr(server_mod, "BODY_SECONDS", 0.5)
+    head = (
+        f"POST /api/logout HTTP/1.0\r\nOrigin: {ORIGIN}\r\n"
+        "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n"
+    )
+    u = urlparse(tight)
+    reply = b""
+    with socket.create_connection((u.hostname, u.port), timeout=0.1) as s:
+        s.sendall(head.encode())
+        for _ in range(30):  # a byte every 0.1 s: the connection is never idle
+            try:
+                reply = s.recv(4096)
+                break
+            except TimeoutError:
+                s.sendall(b" ")
+    assert reply.startswith(b"HTTP/1.0 408")
+
+
 def test_connections_are_capped(tight):
     u = urlparse(tight)
     hog = socket.create_connection((u.hostname, u.port))  # says nothing, holds the one slot
