@@ -349,7 +349,9 @@ def _money(v, _db):
         return None
     if isinstance(v, str):
         v = v.replace("R$", "").strip()
-        if "," in v:  # 1.500,50 -> 1500.50
+        # the Brazilian way: in 1.500,50 and in 1.500 the dots mark thousands; a dot that is
+        # not before three digits is a decimal point (1500.5, what the page puts back)
+        if "," in v or re.fullmatch(r"\d+(\.\d{3})+", v):
             v = v.replace(".", "").replace(",", ".")
     try:
         n = round(float(v), 2)

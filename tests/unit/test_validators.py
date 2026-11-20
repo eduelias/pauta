@@ -58,6 +58,12 @@ def test_date():
         ("R$ 200", 200.0),
         ("R$ 1.234.567,89", 1234567.89),
         ("99.5", 99.5),  # a dot alone is a decimal point
+        ("1500.50", 1500.5),  # what the page puts back in a field
+        ("1.500", 1500.0),  # the Brazilian way: a dot before three digits marks thousands
+        ("R$ 2.000", 2000.0),
+        ("1.500.000", 1500000.0),
+        ("1.500,00", 1500.0),
+        (1.5, 1.5),  # a JSON number is taken as it is
         (12.345, 12.35),
         (0, 0.0),
     ],
