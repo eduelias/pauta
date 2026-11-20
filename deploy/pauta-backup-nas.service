@@ -1,0 +1,29 @@
+# The second copy of Pauta's nightly backup, on the NAS drive mounted on du7 (started by
+# pauta-backup.service when it succeeds). The drive is exFAT, mounted for one uid: only the
+# owner can write there, so this runs as the owner (in the pauta group, which may read the
+# nightly backups), never as root, and pauta never needs the drive. /var/backups/pauta is
+# pauta's to write, so only regular files are taken, never what a link points at.
+[Unit]
+Description=Pauta: copy the newest backups to the NAS
+# no NAS (a late USB disk after a power cut): skipped, not failed; the local copy still counts
+ConditionPathIsMountPoint=/media/nas
+
+[Service]
+Type=oneshot
+User=esaleh
+Group=esaleh
+# the last two nights (so one missed night is caught up), then 30 days kept, like the local ones
+ExecStart=/usr/bin/find /var/backups/pauta -maxdepth 1 -type f -name 'pauta-*.db' -mtime -2 -exec /usr/bin/cp --no-dereference --preserve=timestamps -t /media/nas/backups/pauta {} +
+ExecStart=/usr/bin/find /media/nas/backups/pauta -maxdepth 1 -type f -name 'pauta-*.db' -mtime +30 -delete
+TimeoutStartSec=10min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/media/nas/backups/pauta
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+UMask=0077

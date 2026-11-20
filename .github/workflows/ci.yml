@@ -47,7 +47,7 @@ jobs:
       - name: JavaScript parses
         run: for f in src/pauta/static/app*.js; do node --check "$f"; done
       - name: Deploy scripts (shellcheck)
-        run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
+        run: shellcheck deploy/pauta-deploy deploy/pauta-deploy-branch deploy/pauta-cli deploy/provision-du7.sh deploy/provision-branch-env.sh deploy/runner-job-guard scripts/repo-settings.sh
       - name: Workflows (actionlint)
         # the PyPI wheel of the same release: the rhysd/actionlint action builds it from
         # source on every run (37 s of the job's 50)

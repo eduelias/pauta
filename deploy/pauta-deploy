@@ -15,26 +15,31 @@
 # build and to nothing else; who may call at all is the runner's job guard's business
 # (deploy/runner-job-guard). Nothing is fetched from the release page. See deploy/README.md.
 #
-# Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (owned by the service user)
+# The service has its own user, `pauta`, and this script won't deploy while the unit runs as
+# anyone else. A release's venv is built as that user and then made root's, so the running
+# app can't change code; the release's own code first runs in the unit's sandbox.
+#
+# Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (root's once built)
 #          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
 #          /opt/pauta/previous          -> the one before, for --rollback
 #          /opt/pauta/deploy.log        one line per deploy, switch and rollback
 #          /opt/pauta/.incoming.*       a running deploy's copy of its wheel and lockfile
+#          /var/backups/pauta/pre-deploy/  the DB before each deploy (service user, 0700)
+#          /var/lib/pauta/              the unit's state: only the backup reads it here
 set -euo pipefail
 umask 022
 
 ROOT=/opt/pauta
 RELEASES=$ROOT/releases
 SERVICE=pauta
-SERVICE_USER=esaleh
-STATE_DIR=/home/esaleh/.local/share/pauta
-BACKUPS=/home/esaleh/backups/pauta/pre-deploy
+SERVICE_USER=pauta
+STATE_DIR=/var/lib/pauta
+BACKUPS=/var/backups/pauta/pre-deploy
 HEALTH=http://127.0.0.1:8088/healthz
 KEEP=5            # releases kept on disk (current and previous are never pruned)
 PYTHON=/usr/bin/python3
 VERSION_RE='^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$'
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, no piwheels
 
 log() { echo "pauta-deploy: $*" >&2; }
 die() { log "$*"; exit 1; }
@@ -42,7 +47,19 @@ record() {  # deploy.log, and the journal (journalctl -t pauta-deploy); FAILED i
     echo "$(date -Is) $*" >> "$ROOT/deploy.log"
     logger -t pauta-deploy -p "user.$([[ $* == FAILED* ]] && echo err || echo notice)" -- "$*" || true
 }
-as_user() { runuser -u "$SERVICE_USER" -- "$@"; }
+as_user() {  # run as the service user, with a clean environment (no cache, no HOME writes)
+    runuser -u "$SERVICE_USER" -- env -i PATH="$PATH" HOME=/nonexistent LANG=C.UTF-8 \
+        PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+        PIP_NO_INPUT=1 "$@"
+}
+check_unit() {
+    # Asked of systemd, not the repo: a unit still running as someone else has its state
+    # somewhere else, and a deploy would skip the backup and build for the wrong user
+    local user
+    user=$(systemctl show -p User --value "$SERVICE")
+    [ "$user" = "$SERVICE_USER" ] ||
+        die "$SERVICE runs as '${user:-root}', not $SERVICE_USER: run deploy/provision-du7.sh first"
+}
 read_input() {
     # A file the caller handed us, read with the caller's own rights: a path swapped for a
     # symlink to a root-only file after our checks gets the caller nothing it couldn't read
@@ -117,13 +134,22 @@ install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless alr
     # the runner's workspace isn't readable by the service user: copy the inputs in
     install -o "$SERVICE_USER" -m 0644 "$wheel" "$lock" "$dir/"
     as_user "$PYTHON" -I -m venv "$dir"
-    as_user "$dir/bin/pip" install -q --no-cache-dir --require-hashes --only-binary=:all: \
+    # binary wheels only (nothing runs at install time), every hash checked, PyPI only
+    as_user "$dir/bin/pip" install -q --require-hashes --only-binary=:all: \
         -r "$dir/$(basename "$lock")"
-    as_user "$dir/bin/pip" install -q --no-cache-dir --no-deps "$dir/$(basename "$wheel")"
-    local got
-    got=$(as_user "$dir/bin/pauta" --version)
-    [ "$got" = "pauta $version" ] || die "the wheel says '$got', expected 'pauta $version'"
-    as_user touch "$dir/.complete"
+    as_user "$dir/bin/pip" install -q --no-deps "$dir/$(basename "$wheel")"
+    # from here on the code is root's: nothing running as the service user can change it
+    chown -R -P root:root "$dir"
+    # The release's own code first runs inside the unit's sandbox, after the switch: take the
+    # version from its metadata (running `pauta --version` here would run it unsandboxed)
+    local meta got
+    meta=$(find "$dir/lib" -path '*/site-packages/pauta-*.dist-info/METADATA' -type f)
+    [ -n "$meta" ] && [ "$(wc -l <<<"$meta")" -eq 1 ] ||
+        die "expected one pauta-*.dist-info in the venv, found: ${meta:-none}"
+    got=$(sed -n 's/^Version: //p' "$meta" | head -n 1)
+    [ "$got" = "$version" ] || die "the wheel says version '$got', expected '$version'"
+    [ -x "$dir/bin/pauta" ] || die "the wheel has no pauta command"
+    touch "$dir/.complete"
 }
 
 # shellcheck disable=SC2012
@@ -186,6 +212,7 @@ main() {
             ;;
         --rollback)
             [ $# -eq 1 ] || die "usage: pauta-deploy --rollback"
+            check_unit
             local prev
             prev=$(readlink -e "$ROOT/previous" 2>/dev/null) || die "no previous release"
             [ -f "$prev/.complete" ] || die "previous release $prev is not installed"
@@ -199,6 +226,7 @@ main() {
             [ -f "$RELEASES/$2/.complete" ] ||
                 die "$2 is not installed on du7: a new version only comes from a release. Installed:" \
                     "$(cd "$RELEASES" && ls -1dt -- */.complete 2>/dev/null | cut -d/ -f1 | xargs)"
+            check_unit
             backup_db "$2"
             activate "$2"
             ;;
@@ -217,6 +245,7 @@ main() {
             [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
             [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
             [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
+            check_unit
             # Read each once into a folder only root can open; what is checked below is
             # what gets installed. We hold the lock: any .incoming is this run's, or a dead one's
             trap 'rm -rf "$ROOT"/.incoming.*' EXIT

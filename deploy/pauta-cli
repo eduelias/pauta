@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# The live release's `pauta` command on du7's own database, as the service's user and in a
+# sandbox like the unit's:
+#
+#   sudo pauta-cli users              sudo pauta-cli invite --admin
+#   sudo pauta-cli move-link NAME     sudo pauta-cli usage
+#
+# The state is the `pauta` user's (/var/lib/pauta, 0700), so the owner's commands go through
+# here. Never `sudo -u pauta /opt/pauta/current/bin/pauta ...` from a terminal: a process
+# may type into the terminal it runs on (TIOCSTI), which would hand the owner's shell to
+# whatever the release's code does. This starts it as a transient systemd unit instead: it
+# writes to the terminal without being on it. Its environment is the unit's own (state dir,
+# domains, the OneDrive and Meta ids from the drop-ins), asked of systemd, so the two can't
+# drift apart. A backup by hand is `sudo systemctl start pauta-backup`.
+# Lives at /usr/local/sbin/pauta-cli (root:root 0755); see deploy/README.md.
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "pauta-cli: run me with sudo" >&2; exit 1; }
+cd /
+# shortcut: splits on spaces, so a value with a space in it would break; none of the unit's has one
+read -ra env <<<"$(systemctl show pauta -p Environment --value)"
+exec systemd-run --quiet --pipe --wait --collect --uid=pauta --gid=pauta \
+    -p ProtectSystem=strict -p ProtectHome=yes -p "InaccessiblePaths=-/media -/mnt" \
+    -p ReadWritePaths=/var/lib/pauta -p WorkingDirectory=/var/lib/pauta \
+    -p PrivateTmp=yes -p PrivateDevices=yes -p NoNewPrivileges=yes -p CapabilityBoundingSet= \
+    -p UMask=0077 "${env[@]/#/--setenv=}" /opt/pauta/current/bin/pauta "$@"

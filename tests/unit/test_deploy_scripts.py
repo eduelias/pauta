@@ -1,4 +1,5 @@
-"""deploy/runner-job-guard and pauta-deploy: what may reach du7, the switch, the rollback."""
+"""deploy/runner-job-guard, pauta-deploy and provision-du7.sh: what may reach du7, the switch,
+the rollback, and production's own user (its units, the one-time move, pauta-cli)."""
 
 import hashlib
 import os
@@ -7,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_deploy_branch import fake_wheel
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 WF = "eduelias/pauta/.github/workflows"
@@ -191,11 +193,12 @@ def test_sourcing_does_not_deploy():
 
 
 def deploy(root, script, cwd=None, **env):
-    """Source pauta-deploy with /opt/pauta in a temporary folder and stand-ins for root and
-    the lock, then run `script`."""
+    """Source pauta-deploy with /opt/pauta in a temporary folder and stand-ins for root, the
+    lock and a unit that runs as pauta, then run `script`."""
     stubs = (
         f'source "{DEPLOY / "pauta-deploy"}"; ROOT="{root}"; RELEASES="{root}/releases"; '
         f'PYTHON="{sys.executable}"; id() {{ echo 0; }}; flock() {{ :; }}; '
+        "systemctl() { echo pauta; }; "
     )
     full = {"PATH": os.environ["PATH"], **env}
     return subprocess.run(
@@ -297,7 +300,8 @@ def switch(root, script, healthy):
     # the unit and /healthz are stand-ins: health_version answers with the version `current`
     # points at, if that one is healthy
     stubs = (
-        'systemctl() { echo "systemctl $*" >> "$ROOT/calls"; }; backup_db() { :; }; '
+        'systemctl() { if [ "$1" = show ]; then echo pauta; else '
+        'echo "systemctl $*" >> "$ROOT/calls"; fi; }; backup_db() { :; }; '
         "journalctl() { :; }; logger() { :; }; "
         'health_version() { v=$(basename "$(readlink -e "$ROOT/current")"); '
         'case " $HEALTHY " in *" $v "*) echo "$v";; *) echo "";; esac; }; '
@@ -362,6 +366,61 @@ def test_activate_refuses_a_release_that_is_not_installed(opt):
     assert not (opt / "calls").exists()  # no backup, no restart
 
 
+@pytest.mark.parametrize("user", ["esaleh", ""])  # the owner's login user; root
+@pytest.mark.parametrize("args", ["--activate 1.2.3", "--rollback", "1.2.3 {} {} {} {}"])
+def test_no_deploy_while_the_unit_runs_as_someone_else(args, user, opt, release):
+    # du7 before provision-du7.sh moved the service to its own user, or after a rollback of that
+    (opt / "previous").symlink_to(opt / "releases" / "1.2.3")
+    stubs = (
+        'systemctl() { if [ "$1" = show ]; then echo "$UNIT_USER"; '
+        'else echo "$*" >> "$ROOT/calls"; fi; }; '
+        'backup_db() { echo backup >> "$ROOT/calls"; }; install_release() { echo reached; }; '
+    )
+    r = deploy(opt, stubs + f"main {args.format(*release)}", UNIT_USER=user)
+    assert r.returncode == 1
+    assert f"pauta runs as '{user or 'root'}', not pauta" in r.stderr
+    assert "provision-du7.sh" in r.stderr
+    assert not (opt / "calls").exists() and "reached" not in r.stdout
+    assert (opt / "current").resolve().name == "1.2.2"
+    assert not list(opt.glob(".incoming.*"))
+
+
+@linux
+def test_install_builds_as_the_service_user_and_hands_the_release_to_root(tmp_path):
+    root = tmp_path / "opt"
+    (root / "releases").mkdir(parents=True)
+    wheel = tmp_path / "in" / "pauta-1.2.3-py3-none-any.whl"
+    wheel.parent.mkdir()
+    ran = tmp_path / "ran"
+    fake_wheel(wheel, "1.2.3", ran)
+    lock = tmp_path / "in" / "requirements.lock"
+    lock.write_text("")  # no dependencies: nothing to fetch
+    # as the current user instead of runuser; who owns what is du7's business
+    stubs = (
+        'as_user() { "$@"; }; chown() { echo "chown $*" >> "$ROOT/calls"; }; '
+        'install() { if [ "$1" = -d ]; then mkdir -p "${@: -1}"; '
+        'else cp "${@: -3:2}" "${@: -1}"; fi; }; '
+    )
+    r = deploy(root, stubs + f'install_release 1.2.3 "{wheel}" "{lock}"')
+    assert r.returncode == 0, r.stderr
+    dest = root / "releases" / "1.2.3"
+    assert (dest / ".complete").exists()
+    assert f"chown -R -P root:root {dest}" in (root / "calls").read_text()
+    # the release's code only ever runs in the unit's sandbox, never during the install
+    assert not ran.exists()
+    assert subprocess.run([dest / "bin" / "pauta"], capture_output=True, text=True).stdout == (
+        "pauta 1.2.3\n"
+    )
+    # a wheel that says another version is refused, and its folder is not a release
+    other = tmp_path / "in2" / "pauta-1.2.4-py3-none-any.whl"
+    other.parent.mkdir()
+    fake_wheel(other, "9.9.9")
+    (other.parent / "requirements.lock").write_text("")
+    r = deploy(root, stubs + f'install_release 1.2.4 "{other}" "{other.parent}/requirements.lock"')
+    assert r.returncode == 1 and "the wheel says version '9.9.9'" in r.stderr
+    assert not (root / "releases" / "1.2.4" / ".complete").exists()
+
+
 def test_capabilities_needs_no_lock(tmp_path):
     root = tmp_path / "opt"
     r = deploy(root, "flock() { return 1; }; main --capabilities")
@@ -419,3 +478,174 @@ def test_the_guard_is_installed_where_the_runner_will_run_it(script):
     ]
     assert hooks == ["/usr/local/lib/pauta/runner-job-guard.sh"]
     assert 'runner-job-guard" /usr/local/lib/pauta/runner-job-guard.sh' in text
+
+
+def units():
+    return {name: (DEPLOY / name).read_text() for name in ("pauta.service", "pauta-backup.service")}
+
+
+def test_production_runs_as_its_own_user_out_of_everyones_home():
+    for name, text in units().items():
+        lines = text.splitlines()
+        assert "User=pauta" in lines and "Group=pauta" in lines, name
+        assert "ProtectHome=yes" in lines and "InaccessiblePaths=-/media -/mnt" in lines, name
+        assert "/home" not in text.replace("no /home at all", ""), name
+        assert "Environment=PAUTA_STATE_DIR=/var/lib/pauta" in lines, name
+    # the same user and places in the script that deploys, asked of the script itself
+    r = deploy("/nowhere", 'echo "$SERVICE_USER $STATE_DIR $BACKUPS"')
+    assert r.stdout.split() == ["pauta", "/var/lib/pauta", "/var/backups/pauta/pre-deploy"]
+    # the NAS is the owner's drive: pauta's backup doesn't go there, the owner's copy does
+    assert "/media/nas" not in units()["pauta-backup.service"]
+    assert "OnSuccess=pauta-backup-nas.service" in units()["pauta-backup.service"]
+    nas = (DEPLOY / "pauta-backup-nas.service").read_text()
+    assert "User=esaleh" in nas and "ReadWritePaths=/media/nas/backups/pauta" in nas
+    assert "-type f" in nas and "--no-dereference" in nas  # a planted link is never followed
+
+
+def provision(tmp_path, script, **env):
+    """Source provision-du7.sh with the owner's home and /var in a temporary folder, the unit
+    and chown as stand-ins, then run `script`."""
+    stubs = (
+        f'source "{DEPLOY / "provision-du7.sh"}"; '
+        f'OLD_STATE="{tmp_path}/home/share/pauta"; OLD_BACKUPS="{tmp_path}/home/backups/pauta"; '
+        f'STATE_DIR="{tmp_path}/var/lib/pauta"; BACKUP_DIR="{tmp_path}/var/backups/pauta"; '
+        f'systemctl() {{ echo "systemctl $*" >> "{tmp_path}/calls"; }}; '
+        f'chown() {{ echo "chown $*" >> "{tmp_path}/calls"; }}; '
+    )
+    full = {"PATH": os.environ["PATH"], **env}
+    return subprocess.run(["bash", "-c", stubs + script], env=full, capture_output=True, text=True)
+
+
+@pytest.fixture
+def old_home(tmp_path):
+    """du7 as it was: the state and the backups in the owner's home, nothing in /var."""
+    state = tmp_path / "home" / "share" / "pauta"
+    (state / "pauta.db.thumbs").mkdir(parents=True)
+    (state / "pauta.db").write_bytes(b"the database")
+    (state / "pauta.db.session-key").write_text("key")
+    (state / "pauta.db.session-key").chmod(0o600)
+    (state / "pauta.db.thumbs" / "1.abc.jpg").write_bytes(b"jpg")
+    backups = tmp_path / "home" / "backups" / "pauta"
+    (backups / "pre-deploy").mkdir(parents=True)
+    (backups / "pauta-20261119-034228.db").write_bytes(b"last night")
+    (backups / "pauta-20261119-034228.db").chmod(0o600)
+    (backups / "pre-deploy" / "pauta-20261120-105600-before-1.16.1.db").write_bytes(b"before")
+    (tmp_path / "var" / "lib").mkdir(parents=True)
+    (tmp_path / "var" / "backups").mkdir()
+    return tmp_path
+
+
+def tree(folder):
+    return {str(f.relative_to(folder)): f.read_bytes() for f in folder.rglob("*") if f.is_file()}
+
+
+def test_sourcing_provision_changes_nothing(tmp_path):
+    r = provision(tmp_path, "echo sourced")
+    assert r.returncode == 0 and r.stdout.strip() == "sourced", r.stderr
+    assert not (tmp_path / "calls").exists()
+
+
+def test_the_state_moves_once_and_the_old_copy_stays(old_home):
+    state, backups = old_home / "home" / "share" / "pauta", old_home / "home" / "backups" / "pauta"
+    before = tree(state), tree(backups)
+    r = provision(old_home, 'move_state; echo "moved=$MOVED"')
+    assert r.returncode == 0, r.stderr
+    new, new_backups = old_home / "var" / "lib" / "pauta", old_home / "var" / "backups" / "pauta"
+    assert (tree(new), tree(new_backups)) == before
+    # modes travel with the files; the nightly copies open up to the group, nothing else does
+    assert (new / "pauta.db.session-key").stat().st_mode & 0o777 == 0o600
+    assert (new_backups / "pauta-20261119-034228.db").stat().st_mode & 0o777 == 0o640
+    # the old folders are kept under another name, whole
+    stamp = r.stdout.splitlines()[-1].removeprefix("moved=")
+    assert len(stamp) == 8 and stamp.isdigit()
+    assert not state.exists() and not backups.exists()
+    assert (tree(state.with_name(f"pauta.moved-{stamp}")),) == before[:1]
+    assert (tree(backups.with_name(f"pauta.moved-{stamp}")),) == before[1:]
+    # stopped before anything is read, the copies handed to the service user, and no start:
+    # that is for the new unit, which the caller installs next
+    assert (old_home / "calls").read_text().splitlines() == [
+        "systemctl stop pauta-backup.timer pauta-backup.service pauta.service",
+        f"chown -R pauta:pauta {new}.incoming",
+        f"chown -R pauta:pauta {new_backups}.incoming",
+    ]
+    # again: nothing to move, nothing stopped, nothing changed
+    (old_home / "calls").unlink()
+    r = provision(old_home, 'move_state; echo "moved=$MOVED"')
+    assert r.returncode == 0 and r.stdout == "moved=\n", r.stderr
+    assert not (old_home / "calls").exists()
+    assert (tree(new), tree(new_backups)) == before
+
+
+@pytest.mark.parametrize("taken", ["var/lib/pauta", "var/backups/pauta"])
+def test_the_move_never_overwrites_a_place_that_has_something(taken, old_home):
+    # the old folder is back (a rollback) while the new place still has its files
+    (old_home / taken).mkdir()
+    (old_home / taken / "pauta.db").write_bytes(b"newer")
+    r = provision(old_home, "move_state; echo reached")
+    assert r.returncode == 1 and "nothing touched" in r.stderr and taken in r.stderr
+    assert "reached" not in r.stdout
+    assert not (old_home / "calls").exists()  # the service was not even stopped
+    assert (old_home / taken / "pauta.db").read_bytes() == b"newer"
+    assert (old_home / "home" / "share" / "pauta" / "pauta.db").read_bytes() == b"the database"
+
+
+def test_an_empty_new_place_is_not_in_the_way(old_home):
+    (old_home / "var" / "backups" / "pauta" / "pre-deploy").mkdir(parents=True)
+    (old_home / "var" / "lib" / "pauta").mkdir()
+    r = provision(old_home, "move_state")
+    assert r.returncode == 0, r.stderr
+    assert (old_home / "var" / "lib" / "pauta" / "pauta.db").read_bytes() == b"the database"
+
+
+def test_a_copy_that_fails_leaves_the_old_place_running(old_home):
+    state = old_home / "home" / "share" / "pauta"
+    before = tree(state)
+    # the second copy (the backups) comes out different: both new folders go, the old unit starts
+    script = 'diff() { [[ "$2" != */backups/* ]]; }; move_state; echo reached'
+    r = provision(old_home, script)
+    assert r.returncode == 1 and "nothing moved" in r.stderr
+    assert "reached" not in r.stdout
+    assert tree(state) == before
+    assert not list((old_home / "var" / "lib").iterdir())
+    assert not list((old_home / "var" / "backups").iterdir())
+    assert not list((old_home / "home" / "share").glob("pauta.moved-*"))
+    assert (old_home / "calls").read_text().splitlines()[-1] == (
+        "systemctl start pauta.service pauta-backup.timer"
+    )
+
+
+def test_provision_installs_what_the_units_need():
+    text = (DEPLOY / "provision-du7.sh").read_text()
+    for name in ("pauta.service", "pauta-backup.service", "pauta-backup-nas.service"):
+        assert f" {name} " in text or f" {name};" in text, name
+    # the move comes before the new unit is installed, and the new unit before the start
+    order = ["\nmove_state\n", "/etc/systemd/system/$unit", "systemctl start pauta.service"]
+    at = [text.index(o, text.index("# sourced by the tests")) for o in order]
+    assert at == sorted(at)
+    assert "chown -R -P root:root /opt/pauta/releases" in text
+
+
+def test_the_owners_commands_run_as_the_service_user(tmp_path):
+    # id, systemctl and systemd-run are stand-ins on PATH: what would be run, and as whom
+    for name, body in {
+        "id": "echo 0",
+        "systemctl": 'echo "PAUTA_STATE_DIR=/var/lib/pauta PAUTA_ORIGIN=https://app.pauta.cc"',
+        "systemd-run": 'printf "%s\\n" "$@"',
+    }.items():
+        (tmp_path / name).write_text(f"#!/bin/sh\n{body}\n")
+        (tmp_path / name).chmod(0o755)
+    env = {"PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    r = subprocess.run(
+        ["bash", str(DEPLOY / "pauta-cli"), "invite", "--admin"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    args = r.stdout.splitlines()
+    assert "--uid=pauta" in args and "--gid=pauta" in args and "ProtectHome=yes" in args
+    # the unit's own environment, and the live release's command with the arguments as given
+    assert "--setenv=PAUTA_STATE_DIR=/var/lib/pauta" in args
+    assert "--setenv=PAUTA_ORIGIN=https://app.pauta.cc" in args
+    assert args[-3:] == ["/opt/pauta/current/bin/pauta", "invite", "--admin"]
+    assert "--pty" not in args and "-t" not in args  # never on the owner's terminal

@@ -1,5 +1,8 @@
-# Pauta on du7. Installed by hand once (deploy/README.md); releases only move
+# Pauta on du7. Installed by deploy/provision-du7.sh; releases only move
 # /opt/pauta/current (deploy/pauta-deploy), so this file rarely changes.
+# It runs as its own user, `pauta`, with its state in /var/lib/pauta (decision 1), the way
+# acceptance does: nothing of anyone else's is in its reach. pauta-deploy checks User=
+# before every deploy.
 [Unit]
 Description=Pauta (pauta serve) on 127.0.0.1:8088
 Documentation=https://github.com/eduelias/pauta
@@ -10,20 +13,23 @@ Wants=network-online.target
 # a flood can't take the whole Pi with it
 TasksMax=256
 MemoryMax=256M
-User=esaleh
-Group=esaleh
+User=pauta
+Group=pauta
 Environment=PYTHONUNBUFFERED=1
-# the DB of record (accounts, passkeys, clients, requests); releases never touch it
-Environment=PAUTA_STATE_DIR=/home/esaleh/.local/share/pauta
-WorkingDirectory=/home/esaleh/.local/share/pauta
+# the DB of record (accounts, passkeys, clients, requests) and, next to it, the session key
+# and the OneDrive and Meta tokens; releases never touch it
+Environment=PAUTA_STATE_DIR=/var/lib/pauta
+WorkingDirectory=/var/lib/pauta
+StateDirectory=pauta
+StateDirectoryMode=0700
 # passkeys only work on the domain they were made on (and its subdomains). The app lives on
 # app.pauta.cc with passkeys for pauta.cc. During the move from pauta.genic.dev (decision 4)
 # both are listed, the new home first; afterwards only pauta.cc and https://app.pauta.cc
 Environment=PAUTA_AUTH=passkeys
 Environment=PAUTA_RP_ID=pauta.cc,pauta.genic.dev
 Environment=PAUTA_ORIGIN=https://app.pauta.cc,https://pauta.genic.dev
-# the newest nightly backup's age shows in /metrics (read only: ProtectHome=read-only)
-Environment=PAUTA_BACKUP_DIR=/home/esaleh/backups/pauta
+# the newest nightly backup's age shows in /metrics (read only: ProtectSystem=strict)
+Environment=PAUTA_BACKUP_DIR=/var/backups/pauta
 # files on requests go to OneDrive (decision 3). A public client id, not a secret: the
 # "Pauta" app registration in du7@msn.com's Entra directory. Its token is written next to
 # the DB (pauta.db.onedrive-token) when an admin connects on the Equipe page
@@ -33,11 +39,12 @@ ExecStart=/opt/pauta/current/bin/pauta serve --host 127.0.0.1 --port 8088
 Restart=on-failure
 RestartSec=5
 
-# sandbox: read-only system and home, write access only to the data directory
+# sandbox: read-only system, no /home at all, none of the other drives (it needs nothing
+# there), write access only to its state dir
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/esaleh/.local/share/pauta
+ProtectHome=yes
+InaccessiblePaths=-/media -/mnt
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
