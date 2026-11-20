@@ -46,6 +46,17 @@ def test_defaults_are_local_and_open(store, monkeypatch):
     assert viewer["logged_in"] and viewer["is_admin"] and viewer["account"] is None
 
 
+def test_only_a_known_auth_mode_starts(store, monkeypatch):
+    for word in ("", "open"):
+        monkeypatch.setenv("PAUTA_AUTH", word)
+        assert not Auth(store).enabled
+    for word in ("passkey", "Passkeys", " passkeys", "on", "1"):
+        monkeypatch.setenv("PAUTA_AUTH", word)
+        with pytest.raises(RuntimeError, match="PAUTA_AUTH"):
+            Auth(store)
+    assert Auth(store, enabled=True).enabled  # the CLI's own commands don't read it
+
+
 # ---- sessions ------------------------------------------------------------------------------
 
 

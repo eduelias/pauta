@@ -12,7 +12,7 @@ a passkey for the same account on the new one. An admin can make the same link f
 else (Configurações → Time, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
 
 Configuration (environment):
-  PAUTA_AUTH=passkeys     turn accounts on
+  PAUTA_AUTH=passkeys     turn accounts on (unset or `open`: off; any other word stops the app)
   PAUTA_RP_ID             passkey domain(s), comma-separated, the current home first,
                           e.g. pauta.cc,pauta.genic.dev while moving (default: localhost)
   PAUTA_ORIGIN            allowed origin(s), comma-separated, the app's own first, e.g.
@@ -154,7 +154,15 @@ class Auth:
         origins: list[str] | None = None,
     ):
         self.store = store
-        self.enabled = (os.environ.get("PAUTA_AUTH") == "passkeys") if enabled is None else enabled
+        if enabled is None:
+            mode = os.environ.get("PAUTA_AUTH", "")
+            if mode not in ("", "open", "passkeys"):  # a typo must not start the app open
+                raise RuntimeError(
+                    f"PAUTA_AUTH={mode!r} is not a mode: use passkeys, or leave it unset "
+                    "(open, for local development)"
+                )
+            enabled = mode == "passkeys"
+        self.enabled = enabled
         ids = rp_id or os.environ.get("PAUTA_RP_ID") or "localhost"
         self.rp_ids = [r.strip().lower() for r in ids.split(",") if r.strip()] or ["localhost"]
         self.rp_id = self.rp_ids[0]  # home: where passkeys are made from now on
