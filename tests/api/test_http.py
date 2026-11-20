@@ -4,6 +4,8 @@ import http.client
 import json
 import re
 import sqlite3
+import threading
+from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
 import pytest
@@ -11,6 +13,7 @@ import pytest
 from pauta import __version__
 from pauta.auth import Auth
 from pauta.ratelimit import RateLimiter
+from pauta.server import make_handler
 from softpasskey import ORIGIN, RP_ID, call, start
 
 
@@ -161,6 +164,35 @@ def test_rate_limit_on_login(store):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_the_address_a_rate_limit_counts(store, auth):
+    """Through the proxy (a peer on loopback) it is the last address in X-Forwarded-For, the
+    one the proxy wrote, whatever the client put before it. From any other peer the header
+    is not read: the peer's own address counts."""
+    limiter = RateLimiter()
+    proxied = make_handler(store, auth, limiter)
+
+    class Direct(proxied):  # the same app, reached from another machine
+        def setup(self):
+            super().setup()
+            self.client_address = ("203.0.113.7", 0)
+
+    for handler, headers, counted in (
+        (proxied, {"X-Forwarded-For": "198.51.100.1, 198.51.100.2"}, "198.51.100.2"),
+        (proxied, {}, "127.0.0.1"),
+        (Direct, {"X-Forwarded-For": "198.51.100.3"}, "203.0.113.7"),
+    ):
+        limiter.reset()
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, args=(0.02,), daemon=True).start()
+        try:
+            url = f"http://127.0.0.1:{httpd.server_address[1]}/api/passkey/login/options"
+            assert call(url, {}, headers=headers)[0] == 200
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        assert list(limiter._hits) == [("login", counted)]
 
 
 def test_behind_the_proxy_cookies_are_secure(store, auth):
