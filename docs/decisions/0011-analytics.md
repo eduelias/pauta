@@ -1,12 +1,18 @@
 # 11. Analytics: a usage log inside the app, Plausible on the public site
 
-- **Status:** the app part is accepted (2026-11-03) and shipped in 1.8.1: the `usage` table, `POST /api/usage`,
-  `track()` with the events below and `pauta usage` are in the app (retention 90 days, pruned
-  by the nightly `pauta backup`; `pauta usage --disable` switches a team's log off). The owner
+- **Status:** the app part is accepted (2026-11-03) and shipped in 1.8.1: the `usage` table,
+  `POST /api/usage`, `track()` with the events below and `pauta usage` are in the app
+  (retention 90 days, pruned by the nightly `pauta backup`; `pauta usage --disable` switches
+  a team's log off). The owner
   confirmed the signals from the production journal and the `event` table by hand: screens
   and actions per person, where errors appear, how long the phone waits, and the same step
   repeated on several requests of one client (the report's "Repeated steps" line). The site
   part (Plausible) is still proposed: nothing is installed, no account exists.
+- **2026-11-20:** the code differs: prop values are not from a fixed list. The keys are
+  fixed per event; a value is any boolean, number or string cut at 64 characters, and
+  `request_created.kind` carries the team's own name for the request kind.
+- **2026-11-20:** not built as of 1.15.1: `pauta usage --team` (it waits for decision 5) and
+  `--save`; the report reading the journal's server-side events; `docs/privacy/lia-usage.md`.
 - **Depends on:** nothing for the app part. The site part needs decision 4's site (live) and,
   for the checkout goal, decision 6's `/assinar` page.
 - **Fits:** decision 5 (one database per team, Du7 as *operador*; the usage rows live in the
@@ -147,30 +153,31 @@ without touching the other.
 | Ingest | `POST /api/usage` with `{events:[{t, e, s, p}]}`; the client batches events and flushes every 10 s, on `visibilitychange` and with `navigator.sendBeacon` on unload. Session required (so an event is always for an account), `Origin` check as every write, body cap 16 KB, 50 events per call, rate-limited per account. Quiet route like `/healthz`: not in the request log, not counted in `/metrics` |
 | Client | One `track(e, p)` in `app.js`, called from `route()` (screens), the places that already call `toast()` with `err=true`, `api()` (duration and status for every call, kept only when > 1.5 s or 4xx/5xx), and a dozen named actions below. No new file, no inline script, no CSP change |
 | Server-side events | Already there: `file_uploaded`, `auth_failed`, `rate_limited`, request log lines. They stay in the journal; the report joins them by day, not by account |
-| Report | `pauta usage [--days 7] [--team slug]`: active accounts per day; screens per day; actions per day; top error toasts (message class + screen); slow calls p95 by route (client-measured, includes the network, unlike `/metrics`); device mix (phone/desktop, standalone %, viewport buckets); and two product funnels from the product tables, no instrumentation needed: **open → done** (`request.created` to `done_on`, median and p90 days, by kind) and **Visto hoje coverage** (clients with live campaigns checked per day, from decision 8's `review` table). Dead features = events with zero rows in the window, listed by name |
+| Report | `pauta usage [--days 7] [--team slug]` (also `--enable` and `--disable`): active accounts per day; screens and actions over the whole window, by account; top error toasts (message class + screen); slow calls p95 by route (client-measured, includes the network, unlike `/metrics`); device mix (phone/desktop, standalone %, viewport buckets); and two product funnels from the product tables, no instrumentation needed: **open → done** (`request.created` to `done_on`, median and p90 days, by kind) and **Visto hoje coverage** (clients with live campaigns checked per day, from decision 8's `review` table). Dead features = events with zero rows in the window, listed by name |
 | Later, if the CLI hurts | An owner-only `#/uso` page with the same numbers, in the app's own style, and `/metrics` gains the per-team active-accounts count for the watchdog |
 | Tests | Unit: the enum check and truncation; API: a batch is stored, an unknown event is dropped, a foreign Origin is refused, the route is quiet; e2e: opening three screens yields three `screen` rows |
 
-The 15 events for the first release (name, props):
+The events (name, props): 15 in the first release, 19 names in `usage.EVENTS` today, on
+17 rows here (rows 7 and 11 hold two each).
 
 | # | Event | Props | Answers |
 |---|---|---|---|
-| 1 | `app_open` | `version`, `dev`, `theme` | Sessions per day, PWA vs browser, viewport mix |
-| 2 | `screen` | `s` (painel, quadro, pedidos, pedido, novo, clientes, cliente, financeiro, campanhas, campanha, configuracoes, perfil, entrar), `from` | Screens used, screen → screen paths, dead screens |
-| 3 | `request_created` | `kind`, `has_deadline`, `files` | Volume, which kinds, whether the form is finished |
-| 4 | `request_status` | `from`, `to`, `via` (board, page, list) | Where status changes happen; abandoned "Aguardando" |
+| 1 | `app_open` | `version`, `theme`, `start` (the screen chosen on Perfil, when one was); `dev` is the row's own column | Sessions per day, PWA vs browser, viewport mix |
+| 2 | `screen` | `s` (painel, quadro, pedidos, pedido, novo, clientes, cliente, cliente_novo, financeiro, campanhas, campanha, configuracoes, perfil, entrar, mudar), `from`. The report screen (`#/relatorio/<id>`) is not in the list: its rows are stored with an empty screen | Screens used, screen → screen paths, dead screens |
+| 3 | `request_created` | `kind`, `has_deadline` (`files` is accepted, never sent) | Volume, which kinds, whether the form is finished |
+| 4 | `request_status` | `from`, `to`, `via` (board, page) | Where status changes happen; abandoned "Aguardando" |
 | 5 | `request_sent` | — | The WhatsApp share of a request is used or not |
-| 6 | `comment_added` | `screen` | The timeline is a conversation or a log |
+| 6 | `comment_added` | — (`screen` is accepted, never sent) | The timeline is a conversation or a log |
 | 7 | `file_added` / `file_failed` | `reason` (size, empty, network, drive) | OneDrive friction |
 | 8 | `client_saved` | `new` (true/false) | Client editing frequency |
-| 9 | `seen_today` | `n` (campaigns marked) | Decision 8's daily check is done from the list or per campaign |
-| 10 | `finance_entry` | `kind` (payment, cycle) | Financeiro is used by whom and how often |
+| 9 | `seen_today` | `n` (the client's campaigns marked; for "Visto hoje: todos", the number of clients) | Decision 8's daily check is done from the list or per campaign |
+| 10 | `finance_entry` | `kind` (payment, cycle, void) | Financeiro is used by whom and how often |
 | 11 | `search` / `filter` | `what` (status, client, text; on Clientes: view, sort) | How people find requests, and whether the clients list and its orders get used |
 | 12 | `error_shown` | `msg` (class: validation, network, auth, drive, server), `screen`, `status`, `route` and `method` (the call that failed within 3 s), `form` (the form id or screen, when no call failed) | Where people hit a wall, and on which call or form |
-| 13 | `api_slow` | `route` (pattern), `ms` bucket, `status` | Slow calls as felt on the phone |
-| 14 | `settings_changed` | `section` (equipe, financeiro, acompanhamento, meta, perfil) | Which settings get touched |
-| 15 | `login` | `ok`, `method` (passkey, autofill, link) | Sign-in friction on phones |
-| 16 | `period` | `p` (the picker key: last_30, this_month, custom…) | Which period each Campanhas draw used, next to the `api_slow` row it may have cost (added 2026-11-12: a 6.6 s Campanhas read could not be tied to a period) |
+| 13 | `api_slow` | `route` (pattern), `ms` (rounded, not a bucket), `status`, `method` | Slow calls as felt on the phone |
+| 14 | `settings_changed` | `section` (equipe, financeiro, campanhas, listas, arquivos, meta, perfil) | Which settings get touched |
+| 15 | `login` | `ok`, `method` (passkey, link) | Sign-in friction on phones |
+| 16 | `period` | `p` (the picker key: last_30, this_month, custom…); with `custom`, also `days` (the range's length) and `ago` (how many days back it ends), never its dates | Which period each Campanhas draw used, next to the `api_slow` row it may have cost (added 2026-11-12: a 6.6 s Campanhas read could not be tied to a period) |
 | 17 | `client_message` | `kind` (balance, summary) | Whether the message drafts on Visão geral get opened, and which (added 2026-11-12 with "Avisar o cliente"); the Painel's card Saldo acabando sends the same event, told apart by the row's screen (`painel`). Never the client, the number or the text |
 
 ### Option B in detail (the site)
