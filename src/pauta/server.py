@@ -274,7 +274,7 @@ def make_handler(
                 raise Reply(408, {"error": "o pedido demorou demais"}) from None
             try:
                 doc = json.loads(raw or b"{}")
-            except ValueError:
+            except (ValueError, RecursionError):  # nested too deep is not JSON either
                 raise Reply(400, {"error": "JSON inválido"}) from None
             if not isinstance(doc, dict):
                 raise Reply(400, {"error": "JSON inválido"})

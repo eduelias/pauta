@@ -53,8 +53,11 @@ def _keep(key, make):
 
 
 def _file(rel: str) -> Path | None:
-    target = (STATIC / rel).resolve()
-    return target if STATIC.resolve() in target.parents and target.is_file() else None
+    try:
+        target = (STATIC / rel).resolve()
+        return target if STATIC.resolve() in target.parents and target.is_file() else None
+    except (OSError, ValueError):  # a name no file system takes is a file we don't have
+        return None
 
 
 def bundles() -> dict[str, list[str]]:

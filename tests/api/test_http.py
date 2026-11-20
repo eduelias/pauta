@@ -109,6 +109,26 @@ def test_unknown_paths_get_the_app_shell_not_files(site, path):
     assert b"<!doctype html>" in body and b"[project]" not in body and b"root:" not in body
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "body", "headers", "want"),
+    [
+        ("GET", "/api/me", b"", {"Cookie": "pauta_session=1|0|9999999999|assinatur\xe1"}, 200),
+        ("GET", "/" + "a" * 300, b"", {}, 200),
+        ("POST", "/api/logout", b"[" * 100_000, {"Content-Type": "application/json"}, 400),
+    ],
+    ids=["cookie", "long-name", "deep-json"],
+)
+def test_odd_requests_get_a_plain_answer(site, caplog, method, path, body, headers, want):
+    """A session cookie that is not ASCII is no session, a name too long for a file is the
+    shell like any unknown path, and JSON nested too deep is not JSON."""
+    base, _, _ = site
+    status, _, answer = raw(base, method, path, body, headers)
+    assert status == want
+    if path == "/api/me":
+        assert json.loads(answer)["logged_in"] is False
+    assert "aaaa" not in caplog.text and "Traceback" not in caplog.text
+
+
 def test_methods(site):
     base, _, _ = site
     assert raw(base, "POST", "/")[0] == 405

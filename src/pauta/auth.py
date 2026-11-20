@@ -195,7 +195,8 @@ class Auth:
             if name != COOKIE or value.count("|") != 3:
                 continue
             aid, gen, expires, sig = value.split("|")
-            if not hmac.compare_digest(sig, self._sign(f"{aid}|{gen}|{expires}")):
+            # as bytes: a header may carry text that is not ASCII, which str refuses
+            if not hmac.compare_digest(sig.encode(), self._sign(f"{aid}|{gen}|{expires}").encode()):
                 return None
             if not all(x.isdigit() for x in (aid, gen, expires)) or int(expires) < time.time():
                 return None
