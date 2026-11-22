@@ -1,5 +1,6 @@
 """Publicações in the browser (docs/publishing-spec.md): the tab only where the Instagram
-app is set; an admin connects a client's profile through Instagram's login and comes back;
+app is set; an admin connects a portfolio through Meta's login, comes back, and says which
+client each Instagram account is for;
 a picture chosen as PNG leaves as a JPEG Instagram takes; publish now, schedule, edit and
 delete."""
 
@@ -8,8 +9,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from fakeinstagram import USERNAME, mp4, png
-from pauta.publishing import Posts, Publisher
+from fakeinstagram import IG_ID, USERNAME, mp4, png
+from pauta.publishing import MOVED, NO_ACCOUNT_POST, NO_PROFILE, Posts, Publisher
 
 pytestmark = pytest.mark.e2e
 
@@ -53,18 +54,26 @@ def test_connect_publish_schedule_edit_delete(live, device, ig, fake_ig):
 
     page.locator("#nav a[data-nav='#/publicacoes']").click()
     expect(page.get_by_role("heading", name="Publicações")).to_be_visible()
-    expect(page.locator("#igprofiles .empty")).to_have_text("Nenhum perfil conectado ainda.")
+    expect(page.locator("#igprofiles .empty")).to_have_text(
+        "Nenhuma conta do Instagram conectada ainda."
+    )
     expect(page.get_by_role("link", name="Nova publicação")).to_have_count(0)
 
-    # Conectar Instagram: out to Instagram's login and back, with the profile on the list
-    page.select_option("#igclient", str(client["id"]))
+    # Conectar Instagram: out to Meta's login and back, with the portfolio and its account
+    # on the list, and the account nobody's until an admin says whose it is
     page.get_by_role("button", name="Conectar Instagram").click()
     expect(page.locator("#toast")).to_have_text("Instagram conectado")
     expect(page).to_have_url(re.compile(r"/#/publicacoes$"))
-    row = page.locator(f"#igprofiles [data-profile='{client['id']}']")
+    portfolio = page.locator("#igprofiles [data-connection]").first
+    expect(portfolio).to_contain_text("Du7 Portfólio")
+    expect(portfolio).to_contain_text("conectado")
+    row = page.locator(f"#igprofiles [data-account-row='{IG_ID}']")
     expect(row).to_contain_text(f"@{USERNAME}")
-    expect(row).to_contain_text(f"@{USERNAME} · conectado")
-    expect(page.locator("#igclient option")).to_have_text(["Padaria Trigo de Ouro"])
+    expect(row.locator("select")).to_have_value("")
+    expect(page.get_by_role("link", name="Nova publicação")).to_have_count(0)
+    row.locator("select").select_option(str(client["id"]))
+    expect(page.locator("#toast")).to_have_text("Conta de Du7")
+    expect(row.locator("select")).to_have_value(str(client["id"]))
 
     # a new post: a shape Instagram refuses is told at once; a PNG becomes a JPEG
     page.get_by_role("link", name="Nova publicação").click()
@@ -148,23 +157,43 @@ def test_connect_publish_schedule_edit_delete(live, device, ig, fake_ig):
     expect(page.locator("#toast")).to_have_text("Publicado no Instagram")
     expect(page.locator("#ppublished .prow")).to_have_count(2)
 
-    # Desconectar: the profile goes, the published posts stay on the list
+    # Desconectar: the portfolio goes; its account stays, with its client and no connection;
+    # no post changes, and one that is scheduled says why it will not go out
+    page.get_by_role("link", name="Nova publicação").click()
+    page.set_input_files("#pfile", picture("d.png", 1000, 1000))
+    expect(page.locator("#ppreview")).to_be_visible()
+    page.fill("#pdue", "2031-03-15T10:30")
+    page.get_by_role("button", name="Agendar").click()
+    expect(page.locator("#toast")).to_have_text("Agendada para 15/03 10:30")
     page.get_by_role("button", name="Desconectar").click()
     expect(page.locator("#toast")).to_have_text("Instagram desconectado")
-    expect(page.locator("#igprofiles .empty")).to_be_visible()
+    loose = page.locator("#igprofiles [data-connection='']")
+    expect(loose).to_contain_text("Sem conexão")
+    expect(loose.locator(f"[data-account-row='{IG_ID}'] select")).to_have_value(str(client["id"]))
+    still = page.locator("#pscheduled .prow")
+    expect(still.locator(".pstatus")).to_have_text("agendada")
+    expect(still.locator(".pblocked")).to_have_text(NO_PROFILE)
+    expect(page.get_by_role("link", name="Nova publicação")).to_have_count(0)
     expect(page.locator("#ppublished .prow")).to_have_count(2)
+    # Remover: an account that is not connected leaves Pauta, and its post has no account
+    loose.get_by_role("button", name="Remover").click()
+    expect(page.locator("#toast")).to_have_text("Conta removida")
+    expect(page.locator("#igprofiles .empty")).to_be_visible()
+    expect(page.locator("#pscheduled .prow .pblocked")).to_have_text(NO_ACCOUNT_POST)
 
 
 def connected(page, base, auth, store):
-    """Renato (admin) signed in, on Publicações, with the client's Instagram connected."""
+    """Renato (admin) signed in, on Publicações, the portfolio connected and its account
+    given to the client."""
     client = store.save_client({"name": "Du7"})
     token, _ = auth.create_invite(admin=True)
     page.on("dialog", lambda d: d.accept())
     join(page, base, token, "Renato Lima")
     page.locator("#nav a[data-nav='#/publicacoes']").click()
-    page.select_option("#igclient", str(client["id"]))
     page.get_by_role("button", name="Conectar Instagram").click()
     expect(page.locator("#toast")).to_have_text("Instagram conectado")
+    page.locator(f"[data-account-row='{IG_ID}'] select").select_option(str(client["id"]))
+    expect(page.locator("#toast")).to_have_text("Conta de Du7")
     return client
 
 
@@ -272,3 +301,78 @@ def test_editing_a_video_draft_shows_the_video(live, device, ig, fake_ig):
     with store.db() as db:
         kept = db.execute("SELECT media FROM post").fetchone()[0]
     assert Posts(store).media_path(kept).suffix == ".mov"
+
+
+def test_two_accounts_of_one_client(live, device, ig, fake_ig):
+    base, auth, store = live
+    du7 = store.save_client({"name": "Du7", "instagram": "@du7dev"})
+    other = store.save_client({"name": "Padaria"})
+    fake_ig.accounts = [
+        {"id": "17841000000000001", "username": "du7dev"},
+        {"id": "17841000000000002", "username": "pautacc"},
+    ]
+    first, second = (a["id"] for a in fake_ig.accounts)
+    token, _ = auth.create_invite(admin=True)
+    page = device().page
+    asked, say = [], {"yes": True}
+    page.on(
+        "dialog", lambda d: (asked.append(d.message), d.accept() if say["yes"] else d.dismiss())
+    )
+    join(page, base, token, "Renato Lima")
+    page.locator("#nav a[data-nav='#/publicacoes']").click()
+    page.get_by_role("button", name="Conectar Instagram").click()
+    expect(page.locator("#toast")).to_have_text("Instagram conectado")
+
+    def chooser(ig_id):
+        return page.locator(f"[data-account-row='{ig_id}'] select")
+
+    # one login brought both; the first is the one Du7's cadastro names
+    expect(page.locator(f"[data-account-row='{first}']")).to_contain_text("sugestão: Du7")
+    expect(page.locator(f"[data-account-row='{second}']")).not_to_contain_text("sugestão")
+    # to another client than the cadastro says: asked first, and a no leaves it nobody's
+    say["yes"] = False
+    chooser(first).select_option(str(other["id"]))
+    expect(chooser(first)).to_have_value("")
+    assert asked == ["O cadastro de Du7 diz @du7dev. Colocar esta conta em Padaria mesmo assim?"]
+    assert Posts(store).account(first)["client"] is None
+    # to the client it names, and a second account to the same client: nothing to ask
+    say["yes"] = True
+    chooser(first).select_option(str(du7["id"]))
+    expect(chooser(first)).to_have_value(str(du7["id"]))
+    chooser(second).select_option(str(du7["id"]))
+    expect(chooser(second)).to_have_value(str(du7["id"]))
+    assert len(asked) == 1
+
+    # the client is on the form once per account, and a post goes to the one chosen
+    page.get_by_role("link", name="Nova publicação").click()
+    expect(page.locator("#pclient option")).to_have_text(["Du7 (@du7dev)", "Du7 (@pautacc)"])
+    page.select_option("#pclient", second)
+    page.set_input_files("#pfile", picture("a.png", 800, 1000))
+    expect(page.locator("#ppreview")).to_be_visible()
+    page.get_by_role("button", name="Publicar agora").click()
+    expect(page.locator("#toast")).to_have_text("Publicado no Instagram")
+    assert [sent["ig_id"] for sent in fake_ig.published] == [second]
+
+    # a draft made for the first account moves to the second when edited, and is scheduled
+    page.get_by_role("link", name="Nova publicação").click()
+    page.set_input_files("#pfile", picture("b.png", 1000, 1000))
+    expect(page.locator("#ppreview")).to_be_visible()
+    page.get_by_role("button", name="Salvar rascunho").click()
+    expect(page.locator("#toast")).to_have_text("Rascunho salvo")
+    page.locator("#pdrafts .prow").get_by_role("link", name="Editar").click()
+    expect(page.locator("#pclient")).to_have_value(first)
+    page.select_option("#pclient", second)
+    page.fill("#pdue", "2031-03-15T10:30")
+    page.get_by_role("button", name="Agendar").click()
+    expect(page.locator("#toast")).to_have_text("Agendada para 15/03 10:30")
+    waiting = page.locator("#pscheduled .prow")
+    expect(waiting).to_contain_text("@pautacc")
+    expect(waiting.locator(".pblocked")).to_have_count(0)
+
+    # that account goes to another client: asked, naming both, and the post says why it waits
+    asked.clear()
+    chooser(second).select_option(str(other["id"]))
+    expect(chooser(second)).to_have_value(str(other["id"]))
+    assert asked == ["@pautacc está com Du7. Passar para Padaria?"]
+    expect(waiting.locator(".pstatus")).to_have_text("agendada")
+    expect(waiting.locator(".pblocked")).to_have_text(MOVED)

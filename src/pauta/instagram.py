@@ -1,20 +1,23 @@
-"""A client's Instagram profile, through the Instagram API with Unified Login
+"""A portfolio's Instagram accounts, through the Instagram API with Unified Login
 (docs/publishing-spec.md). A second integration, apart from meta.py on purpose: that one
-reads ad accounts with `ads_read` and never writes; this one publishes to a profile, with
+reads ad accounts with `ads_read` and never writes; this one publishes to an account, with
 its own Meta app, its own secret and its own tokens.
 
 Meta closed "Instagram Login" to apps created from late 2026 on: a new app gets Unified
 Login, which is Facebook Login for Business with a configuration whose asset is an Instagram
-account. An admin clicks "Conectar Instagram" on a client. Pauta sends them to Meta's login
-with the app id and that configuration; they sign in (with Facebook or with Instagram),
-pick the profile, and Meta sends the browser back to `/api/instagram/callback` with a
-one-time code. Pauta exchanges it, with the app secret, for a system-user token and asks
-which Instagram account it was given. The token does not expire (the configuration says
-so); a revoked one marks the profile "conecte de novo".
+account. An admin clicks "Conectar Instagram". Pauta sends them to Meta's login with the
+app id and that configuration; they sign in (with Facebook or with Instagram), pick the
+portfolio and its accounts, and Meta sends the browser back to `/api/instagram/callback`
+with a one-time code. Pauta exchanges it, with the app secret, for a system-user token, and
+asks which portfolio it belongs to and which Instagram accounts it was given: a connection
+is a portfolio, as on the ads side, and which client each account is for is an admin's
+choice afterwards (publishing.py). The token does not expire (the configuration says so);
+a revoked one marks the connection "conecte de novo".
 
 Files, next to the database (never in it, so an export or a backup of the DB has no token):
   <db>.ig-secret   the Meta app secret of the publishing app, one line, mode 600
-  <db>.ig-tokens   {ig_id: {"token", "expires" (epoch seconds or null), "obtained"}}, mode 600
+  <db>.ig-tokens   {"biz-<portfolio id>": {"token", "expires" (epoch seconds or null),
+                   "obtained"}}, mode 600: one token per connection
 
 Configuration (the unit's environment; publishing is off without all three):
   PAUTA_IG_APP_ID     the publishing app's Meta app id (its own app, not the ads one)
@@ -27,6 +30,7 @@ Nothing here logs a URL, a token or Meta's message text.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import http.client
@@ -53,6 +57,7 @@ DEV_ORIGIN = "http://localhost:8088"
 TIMEOUT = 20
 STATE_SECONDS = 10 * 60
 MAX_PENDING = 50
+ACCOUNT_PAGES = 20  # requests for one login's list of accounts: 100 accounts each
 READY_TRIES, READY_PAUSE = 20, 2.0  # an image container is ready at once; a slow one gets 40 s
 
 UNAVAILABLE = "não deu para falar com o Instagram agora; tente de novo em instantes"
@@ -70,15 +75,7 @@ SLOW_VIDEO = "o Instagram demorou demais para preparar o vídeo; tente de novo"
 BAD_STATE = "este pedido de conexão venceu; comece de novo"
 DENIED = "a conexão foi cancelada no Instagram"
 NOT_PROFESSIONAL = "o perfil precisa ser profissional (Empresa ou Criador de conteúdo)"
-NO_ACCOUNT = "nenhum perfil do Instagram veio com o login: escolha o perfil do cliente"
-# several profiles and nothing to tell them apart: the client's @ is what decides
-MANY_ACCOUNTS = (
-    "o login trouxe mais de um perfil: escreva o @ deste cliente no cadastro dele e conecte de novo"
-)
-NOT_SHARED = (
-    "o perfil {want} não veio neste login: marque só ele na tela da Meta, ou confira o @ "
-    "no cadastro do cliente"
-)
+NO_ACCOUNT = "nenhuma conta do Instagram veio com o login: escolha as contas na tela da Meta"
 
 RESTRICTED = "o Instagram restringiu este perfil; veja o aviso no aplicativo do Instagram"
 BAD_CAPTION = "o Instagram recusou a legenda"
@@ -92,6 +89,16 @@ IMAGE_SUBCODES = {2207004, 2207005, 2207009}  # over 8 MiB; format; aspect ratio
 CAPTION_SUBCODES = {2207010}
 NOT_READY_SUBCODES = {2207027, 2207008}  # not ready yet; container missing or expired
 RESTRICTED_SUBCODES = {2207050, 2207051}  # account restricted; spam restriction
+
+
+def _digits(value) -> str:
+    return "".join(c for c in str(value or "") if c.isdigit())
+
+
+def _key(conn: str) -> str:
+    """Where a connection's token is in the tokens file. Keys without the prefix are from
+    before connections (one per profile id): a login drops them (`finish`)."""
+    return f"biz-{conn}"
 
 
 def handle(value) -> str:
@@ -132,8 +139,8 @@ class Instagram:
         self.secret_file = Path(f"{db_path}.ig-secret")
         self.tokens_file = Path(f"{db_path}.ig-tokens")
         self._lock = threading.Lock()
-        # state -> (client, account, expiry)
-        self._states: dict[str, tuple[int, int | None, float]] = {}
+        # state -> (the user who started the login, expiry)
+        self._states: dict[str, tuple[int | None, float]] = {}
         self.sleep = time.sleep  # the tests don't wait
 
     def at(self, origin: str) -> None:
@@ -178,38 +185,39 @@ class Instagram:
             json.dump(doc, f)
         os.replace(tmp, self.tokens_file)
 
-    def _token(self, ig_id: str) -> str:
-        entry = self._tokens().get(str(ig_id)) or {}
+    def _token(self, conn: str) -> str:
+        entry = self._tokens().get(_key(conn)) or {}
         token = entry.get("token") or ""
         if not token:
             raise InstagramError(REVOKED, step="token", revoked=True, status=409)
         return token
 
-    def _keep(self, ig_id: str, token: str, expires_in) -> str | None:
-        """Store a token; returns when it expires as the database writes moments, or None
-        for one that doesn't (a system-user token of a "never" configuration)."""
+    def _keep(self, conn: str, token: str, expires_in) -> str | None:
+        """Store a connection's token; returns when it expires as the database writes
+        moments, or None for one that doesn't (a system-user token of a "never"
+        configuration)."""
         try:
             until = time.time() + int(expires_in) if expires_in else None
         except (TypeError, ValueError):
             until = None
         with self._lock:
             doc = self._tokens()
-            doc[str(ig_id)] = {"token": token, "expires": until, "obtained": time.time()}
+            doc[_key(conn)] = {"token": token, "expires": until, "obtained": time.time()}
             self._write_tokens(doc)
         if until is None:
             return None
         return datetime.fromtimestamp(until, UTC).strftime("%Y-%m-%d %H:%M:%S")
 
-    def forget(self, ig_id: str) -> None:
+    def forget(self, conn: str) -> None:
         with self._lock:
             doc = self._tokens()
-            if doc.pop(str(ig_id), None) is not None:
+            if doc.pop(_key(conn), None) is not None:
                 self._write_tokens(doc)
 
-    def expires_in(self, ig_id: str, now: datetime | None = None) -> timedelta | None:
-        """How long the profile's token still has: None when there is no token, and
+    def expires_in(self, conn: str, now: datetime | None = None) -> timedelta | None:
+        """How long the connection's token still has: None when there is no token, and
         `timedelta.max` for one that doesn't expire."""
-        entry = self._tokens().get(str(ig_id)) or {}
+        entry = self._tokens().get(_key(conn)) or {}
         if not entry.get("token"):
             return None
         if not entry.get("expires"):
@@ -293,17 +301,18 @@ class Instagram:
         tail = f"{code}/{sub}" if sub else f"{code or status}"
         return InstagramError(f"o Instagram recusou ({tail})", code=code, step=step)
 
-    # ---- connecting a profile -------------------------------------------------------------
+    # ---- connecting a portfolio -----------------------------------------------------------
 
-    def start(self, client: int, account: int | None) -> str:
-        """A one-time state for this admin and client, and the address of Instagram's login."""
+    def start(self, by: int | None) -> str:
+        """A one-time state for the user who pressed the button (None only in local mode,
+        which has no users), and the address of Instagram's login."""
         state = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
-            self._states = {s: v for s, v in self._states.items() if v[2] > now}
+            self._states = {s: v for s, v in self._states.items() if v[1] > now}
             while len(self._states) >= MAX_PENDING:
-                self._states.pop(min(self._states, key=lambda s: self._states[s][2]))
-            self._states[state] = (client, account, now + STATE_SECONDS)
+                self._states.pop(min(self._states, key=lambda s: self._states[s][1]))
+            self._states[state] = (by, now + STATE_SECONDS)
         # as the dashboard's own "Login URL" has it: no scope (the configuration carries the
         # permissions), and prompt=login so the person can sign in with Instagram itself
         query = {
@@ -317,24 +326,25 @@ class Instagram:
         }
         return f"{self.dialog}?{urllib.parse.urlencode(query)}"
 
-    def take_state(self, state: str) -> tuple[int, int | None]:
-        """Use up a state: (the client it was started for, the account that started it)."""
+    def take_state(self, state: str) -> int | None:
+        """Use up a state: the user who started that login."""
         with self._lock:
             entry = self._states.pop(state or "", None)
-        if not entry or entry[2] < time.time():
+        if not entry or entry[1] < time.time():
             obs.event("ig_bad_state", logging.WARNING)
             raise InstagramError(BAD_STATE, step="state", status=400)
-        return entry[0], entry[1]
+        return entry[0]
 
-    def finish(self, code: str, want: str = "") -> tuple[dict, str | None]:
-        """Exchange the callback's code. Returns (who: {ig_id, username, name, account_type},
-        when the token expires or None); the token is kept under the profile's id.
+    def finish(self, code: str) -> tuple[dict, list[dict], str | None]:
+        """Exchange the callback's code. Returns (the portfolio: {business_id,
+        business_name}, its Instagram accounts: [{ig_id, username}], when the token expires
+        or None); the token is kept under the portfolio's id.
 
         The token is the portfolio's system user, so it carries every Instagram account the
-        team has shared with the app, not only the one picked on Meta's last screen: an
-        agency with ten clients in one portfolio gets ten. `want` is this client's @ (from
-        its own record) and decides which of them this connection is for. Without it, a
-        single account still connects; several ask for the @."""
+        business shared with the app, not only the one picked on Meta's last screen: an
+        agency with ten clients in one portfolio gets ten. Which client each is for is an
+        admin's choice afterwards, never this login's. Nothing is stored unless all of it
+        was read."""
         code = (code or "").split("#")[0]
         status, doc = self._get(
             f"{self.graph}/oauth/access_token",
@@ -349,43 +359,62 @@ class Instagram:
         if not isinstance(token, str) or not token:
             raise self._fail(status, doc, "code")
         expires_in = doc.get("expires_in")  # absent for a token that doesn't expire
-        # the token is a system user's: the Instagram accounts it was given are listed apart
-        status, doc = self._get(
-            f"{self.graph}/me/assigned_instagram_accounts", {"fields": "id,username"}, token
-        )
+        # which portfolio: its id is the connection's key, the system user's own when Meta
+        # sends none (as meta.py's finish_connect does); digits only, it goes into a path
+        status, me = self._get(f"{self.graph}/me", {"fields": "id,name,client_business_id"}, token)
         if status != 200:
-            raise self._fail(status, doc, "me")
-        rows = [r for r in doc.get("data") or [] if isinstance(r, dict) and r.get("id")]
-        if not rows:
+            raise self._fail(status, me, "me")
+        business = _digits(me.get("client_business_id"))
+        conn = business or _digits(me.get("id"))
+        if not conn:
+            raise InstagramError(UNAVAILABLE, step="me", status=503)
+        name = str(me.get("name") or "")
+        if business:
+            with contextlib.suppress(InstagramError):  # the name is a nicety
+                status, biz = self._get(f"{self.graph}/{business}", {"fields": "name"}, token)
+                if status == 200 and biz.get("name"):
+                    name = str(biz["name"])
+        accounts = self._accounts(token)
+        if not accounts:
             raise InstagramError(NO_ACCOUNT, step="me", status=400)
-        wanted = handle(want)
-        row = (
-            next((r for r in rows if handle(r.get("username")) == wanted), None) if wanted else None
-        )
-        if row is None:
-            if wanted and len(rows) > 1:
-                raise InstagramError(NOT_SHARED.format(want=f"@{wanted}"), step="me", status=400)
-            if len(rows) > 1:
-                raise InstagramError(MANY_ACCOUNTS, step="me", status=400)
-            row = rows[0]
-            if wanted and handle(row.get("username")) != wanted:
-                # one account, and it isn't the one the client's record names: connecting it
-                # would quietly publish a client's posts on somebody else's profile
-                raise InstagramError(NOT_SHARED.format(want=f"@{wanted}"), step="me", status=400)
-        ig_id = str(row["id"])
-        expires = self._keep(ig_id, token, expires_in)
-        who = {
-            "ig_id": ig_id,
-            "username": str(row.get("username") or ""),
-            "name": "",
-            "account_type": "",
-        }
-        return who, expires
+        expires = self._keep(conn, token, expires_in)
+        with self._lock:  # the keys from before connections, one per account: superseded
+            doc = self._tokens()
+            old = [a["ig_id"] for a in accounts if a["ig_id"] in doc]
+            if old:
+                for key in old:
+                    del doc[key]
+                self._write_tokens(doc)
+        return {"business_id": conn, "business_name": name}, accounts, expires
+
+    def _accounts(self, token: str) -> list[dict]:
+        """Every Instagram account the token was given, a page at a time as meta.py's
+        `_pages` reads a list: each request is built here from the cursor, and the address
+        in `paging.next` is never followed. A list that does not end is a failure: half a
+        list would disconnect the accounts it missed."""
+        out: list[dict] = []
+        query = {"fields": "id,username", "limit": "100"}
+        for _ in range(ACCOUNT_PAGES):
+            status, doc = self._get(f"{self.graph}/me/assigned_instagram_accounts", query, token)
+            if status != 200:
+                raise self._fail(status, doc, "accounts")
+            for row in doc.get("data") or []:
+                if isinstance(row, dict) and row.get("id"):
+                    out.append(
+                        {"ig_id": str(row["id"]), "username": str(row.get("username") or "")}
+                    )
+            paging = doc.get("paging") if isinstance(doc.get("paging"), dict) else {}
+            after = (paging.get("cursors") or {}).get("after")
+            if not paging.get("next") or not after or after == query.get("after"):
+                return out
+            query = {**query, "after": after}
+        raise InstagramError(UNAVAILABLE, step="accounts", status=503)
 
     # ---- publishing -----------------------------------------------------------------------
 
     def create_container(
         self,
+        conn: str,
         ig_id: str,
         url: str,
         caption: str,
@@ -405,25 +434,25 @@ class Instagram:
             form.update(media_type="REELS", share_to_feed="true")
         if alt_text and kind == "feed":
             form["alt_text"] = alt_text
-        status, doc = self._post(f"{self.graph}/{ig_id}/media", form, self._token(ig_id))
+        status, doc = self._post(f"{self.graph}/{ig_id}/media", form, self._token(conn))
         if status != 200 or not doc.get("id"):
             raise self._fail(status, doc, "container")
         return str(doc["id"])
 
-    def container_state(self, ig_id: str, container: str) -> str:
+    def container_state(self, conn: str, container: str) -> str:
         """One read of where a container stands: IN_PROGRESS, FINISHED, PUBLISHED, ERROR,
         EXPIRED."""
         status, doc = self._get(
-            f"{self.graph}/{container}", {"fields": "status_code"}, self._token(ig_id)
+            f"{self.graph}/{container}", {"fields": "status_code"}, self._token(conn)
         )
         if status != 200:
             raise self._fail(status, doc, "status")
         return str(doc.get("status_code") or "")
 
-    def wait_ready(self, ig_id: str, container: str) -> None:
+    def wait_ready(self, conn: str, container: str) -> None:
         """Until Instagram has fetched and prepared the image."""
         for attempt in range(READY_TRIES):
-            state = self.container_state(ig_id, container)
+            state = self.container_state(conn, container)
             if state in ("FINISHED", "PUBLISHED"):
                 return
             if state in ("ERROR", "EXPIRED"):
@@ -433,31 +462,31 @@ class Instagram:
                 self.sleep(READY_PAUSE)
         raise InstagramError(NOT_READY, step="status")
 
-    def publish(self, ig_id: str, container: str) -> str:
+    def publish(self, conn: str, ig_id: str, container: str) -> str:
         status, doc = self._post(
-            f"{self.graph}/{ig_id}/media_publish", {"creation_id": container}, self._token(ig_id)
+            f"{self.graph}/{ig_id}/media_publish", {"creation_id": container}, self._token(conn)
         )
         if status != 200 or not doc.get("id"):
             raise self._fail(status, doc, "publish")
         return str(doc["id"])
 
-    def permalink(self, ig_id: str, media_id: str) -> str:
+    def permalink(self, conn: str, media_id: str) -> str:
         status, doc = self._get(
-            f"{self.graph}/{media_id}", {"fields": "permalink"}, self._token(ig_id)
+            f"{self.graph}/{media_id}", {"fields": "permalink"}, self._token(conn)
         )
         if status != 200:
             raise self._fail(status, doc, "permalink")
         link = str(doc.get("permalink") or "")
         return link if link.startswith("https://") else ""
 
-    def quota(self, ig_id: str) -> dict | None:
+    def quota(self, conn: str, ig_id: str) -> dict | None:
         """How many posts the profile made through the API in the last 24 h and its limit;
         None when Instagram won't say (never a reason to stop)."""
         try:
             status, doc = self._get(
                 f"{self.graph}/{ig_id}/content_publishing_limit",
                 {"fields": "quota_usage,config"},
-                self._token(ig_id),
+                self._token(conn),
             )
         except InstagramError:
             return None

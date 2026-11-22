@@ -3,7 +3,8 @@ Login's dialog (Facebook Login for Business with an Instagram configuration), th
 exchange for a system-user token, the Instagram accounts that token was given, and the
 three publishing calls. Like the real one it fetches the image itself from the address it
 is given, so a test fails when that address isn't public at that moment, and it checks the
-app secret's proof on every call.
+app secret's proof on every call. A login's token is a portfolio's: `/me` says which
+(`business_id`), and the list of accounts comes a page at a time.
 
   dialog   <base>/dialog/oauth         (www.facebook.com)
   graph    <base>/graph                (graph.facebook.com: /v27.0/oauth/access_token, ...)
@@ -26,6 +27,8 @@ IG_CONFIG_ID = "1692300000000950"
 IG_SECRET = "ig-app-secret-for-tests"
 IG_ID = "17841400000000001"  # the professional account's id: what the paths take
 USERNAME = "du7dev"
+BUSINESS_ID = "2251000000000741"  # the portfolio a login is for
+SYSTEM_USER = "122000000000000496"
 
 
 def ig_secret(db_path) -> Path:
@@ -92,6 +95,10 @@ class FakeInstagram:
         self.ig_id = IG_ID
         # the Instagram accounts the person shared in the login (None: this one profile)
         self.accounts: list[dict] | None = None
+        self.business_id: str | None = BUSINESS_ID  # None: /me names no portfolio
+        self.no_business_name = False  # the portfolio's own name can't be read
+        self.fail_page: int | None = None  # which request for a login's accounts answers 500
+        self.pages = 0  # requests for the list of accounts since the last code exchange
         self.not_professional = False  # the container call answers (#10)
         self.bad_proof = 0  # calls that came without the app secret's proof
         self.revoked = False  # every token answers 190
@@ -197,22 +204,28 @@ class FakeInstagram:
             return h._send(400, graph_error(100, 36009, "This authorization code has been used."))
         token = self._next("suat-")
         self.tokens.add(token)
+        self.pages = 0
         doc = {"access_token": token, "token_type": "bearer"}
         if self.expires_in:
             doc["expires_in"] = self.expires_in
         return h._send(200, doc)
 
     def _graph(self, h, method, parts, q, form):
+        if parts == ["me"]:
+            doc = {"id": SYSTEM_USER, "name": "Pauta System User"}
+            if self.business_id:
+                doc["client_business_id"] = self.business_id
+            return h._send(200, doc)
+        if parts == [self.business_id] and not self.no_business_name:
+            return h._send(200, {"name": "Du7 Portfólio", "id": self.business_id})
         if parts == ["me", "assigned_instagram_accounts"]:
-            rows = self.accounts
-            if rows is None:
-                rows = [{"id": self.ig_id, "username": self.username}]
-            return h._send(200, {"data": rows, "paging": {"cursors": {}}})
-        if method == "POST" and parts == [self.ig_id, "media"]:
-            return self._container(h, form)
-        if method == "POST" and parts == [self.ig_id, "media_publish"]:
+            return self._assigned(h, q)
+        ig_id = parts[0] if parts[0] in {a["id"] for a in self.listed()} else None
+        if method == "POST" and ig_id and parts[1:] == ["media"]:
+            return self._container(h, form, ig_id)
+        if method == "POST" and ig_id and parts[1:] == ["media_publish"]:
             return self._publish(h, form)
-        if parts == [self.ig_id, "content_publishing_limit"]:
+        if ig_id and parts[1:] == ["content_publishing_limit"]:
             used = len(self.published)
             row = {"quota_usage": used, "config": {"quota_total": 50, "quota_duration": 86400}}
             return h._send(200, {"data": [row]})
@@ -228,7 +241,28 @@ class FakeInstagram:
             return h._send(200, {"permalink": f"https://www.instagram.com/p/{parts[0]}/"})
         return h._send(404, graph_error(100, 33, "unknown object"))
 
-    def _container(self, h, form):
+    def listed(self) -> list[dict]:
+        """The accounts a login lists: `accounts`, or the single default profile."""
+        if self.accounts is None:
+            return [{"id": self.ig_id, "username": self.username}]
+        return self.accounts
+
+    def _assigned(self, h, q):
+        """A page of the accounts, `limit` at a time, after the one whose id is `after`.
+        Like the real Graph: a cursor on every page, `next` only while more remain."""
+        self.pages += 1
+        if self.fail_page == self.pages:
+            return h._send(500, graph_error(2, message="down"))
+        rows, size = self.listed(), int(q.get("limit") or 25)
+        ids = [r["id"] for r in rows]
+        start = ids.index(q["after"]) + 1 if q.get("after") in ids else 0
+        page = rows[start : start + size]
+        paging = {"cursors": {"after": page[-1]["id"]}} if page else {"cursors": {}}
+        if start + size < len(rows):
+            paging["next"] = f"{self.graph}/next-page-nobody-may-follow"
+        return h._send(200, {"data": page, "paging": paging})
+
+    def _container(self, h, form, ig_id):
         video = "video_url" in form
         url = form.get("video_url") or form.get("image_url", "")
         kind = form.get("media_type", "")
@@ -255,6 +289,7 @@ class FakeInstagram:
             return h._send(400, graph_error(9004, 2207052, "could not fetch"))
         cid = self._next("1790")
         self.containers[cid] = {
+            "ig_id": ig_id,  # the account in the request's path: where the post goes
             "image": url,
             "caption": form.get("caption", ""),
             "alt_text": form.get("alt_text", ""),
@@ -272,5 +307,5 @@ class FakeInstagram:
         if self.at_limit:
             return h._send(400, graph_error(9, 2207042, "max posts reached"))
         mid = self._next("1800")
-        self.published.append({"id": mid, "ig_id": self.ig_id, **box})
+        self.published.append({"id": mid, **box})
         return h._send(200, {"id": mid})

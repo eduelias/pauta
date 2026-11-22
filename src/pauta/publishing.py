@@ -1,8 +1,12 @@
 """Publicações (docs/publishing-spec.md): posts for a client's Instagram, kept here and
 published at their time.
 
-A post is one file and, except for a Story, a caption, for one client whose Instagram
-profile is connected (instagram.py holds the tokens; `ig_profile` holds who, never a token).
+A connection is a business portfolio a person logged in for at Meta (`ig_connection`); it
+gives access to that portfolio's Instagram accounts (`ig_account`), and an admin says which
+client each account is for, as ad accounts are assigned (instagram.py holds the tokens, one
+per connection; the tables hold who, never a token). A post is one file and, except for a
+Story, a caption, for one of those accounts and the client it is assigned to. It goes out
+only while its account is connected and still that client's (`why_not`).
 Its `kind` says where it goes: `feed` (a JPEG), `story` (a JPEG or a video) or `reel` (a
 video). Instagram's API has no scheduling: Pauta keeps the post and publishes it when it is
 due. Instagram fetches the file itself from a public address, so each lives under
@@ -64,6 +68,9 @@ ORPHAN_SECONDS = 24 * 3600  # an uploaded image no post took
 
 UNSURE = "não sabemos se esta publicação saiu: confira no Instagram antes de publicar de novo"
 NO_PROFILE = "conecte o Instagram deste cliente primeiro"
+NO_ACCOUNT_POST = "escolha a conta do Instagram desta publicação"
+MOVED = "a conta desta publicação não é mais deste cliente: escolha outra conta"
+NO_ACCOUNT = "conta do Instagram não encontrada"
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
 
 # the baseline and progressive start-of-frame markers carry the picture's size
@@ -209,8 +216,23 @@ def clean_due(v) -> str | None:
     return _utc(dt)
 
 
+def why_not(post_client: int, account: dict | None) -> str:
+    """Why a post cannot go out as it stands, or "" when it can. `account` is the post's
+    `ig_account` row with its connection's `state` ("" when it has no connection), or None
+    when the post has no account. The one rule: asked when a post is scheduled, when it is
+    sent, and for the notice on the list."""
+    if account is None:
+        return NO_ACCOUNT_POST
+    if account["client"] != post_client:
+        return MOVED
+    if not account["business_id"] or account["state"] != "ok":
+        return NO_PROFILE
+    return ""
+
+
 class Posts:
-    """The profiles and the posts, over the Store's database, and the images next to it."""
+    """The connections, their accounts and the posts, over the Store's database, and the
+    posts' files next to it."""
 
     def __init__(self, store: Store):
         self.store = store
@@ -290,121 +312,185 @@ class Posts:
                     gone += 1
         return gone
 
-    # ---- profiles -------------------------------------------------------------------------
+    # ---- connections and accounts ---------------------------------------------------------
 
-    _PROFILE = (
-        "SELECT p.*, c.name AS client_name, a.name AS by_name FROM ig_profile p "
-        "JOIN client c ON c.id=p.client LEFT JOIN account a ON a.id=p.connected_by "
+    _ACCOUNT = (
+        "SELECT g.*, c.name AS client_name, COALESCE(n.state, '') AS state FROM ig_account g "
+        "LEFT JOIN client c ON c.id=g.client "
+        "LEFT JOIN ig_connection n ON n.business_id=g.business_id AND g.business_id<>'' "
     )
 
-    def profiles(self) -> list[dict]:
+    def connections(self) -> list[dict]:
+        """Every connected portfolio, oldest first, with how many accounts it has."""
         with self.store.db() as db:
-            rows = db.execute(self._PROFILE + "ORDER BY c.name COLLATE NOCASE").fetchall()
+            rows = db.execute(
+                "SELECT n.*, a.name AS by_name, (SELECT COUNT(*) FROM ig_account g "
+                "WHERE g.business_id=n.business_id) AS accounts FROM ig_connection n "
+                "LEFT JOIN account a ON a.id=n.connected_by "
+                "ORDER BY n.connected_at, n.business_id"
+            ).fetchall()
         return [dict(r) for r in rows]
 
-    def profile(self, client: int) -> dict | None:
+    def accounts(self) -> list[dict]:
+        """Every Instagram account, with its client's name and its connection's state
+        ("" when it has no connection)."""
         with self.store.db() as db:
-            row = db.execute(self._PROFILE + "WHERE p.client=?", (client,)).fetchone()
+            rows = db.execute(self._ACCOUNT + "ORDER BY g.username, g.ig_id").fetchall()
+        return [dict(r) for r in rows]
+
+    def account(self, ig_id: str) -> dict | None:
+        with self.store.db() as db:
+            return self._account(db, ig_id)
+
+    def _account(self, db, ig_id: str) -> dict | None:
+        row = db.execute(self._ACCOUNT + "WHERE g.ig_id=?", (str(ig_id or ""),)).fetchone()
         return dict(row) if row else None
 
-    def save_profile(self, client: int, who: dict, expires: str | None, by: int | None) -> dict:
-        """The Instagram profile an admin just connected for `client`. One profile serves
-        one client: connecting it for a second one is refused, naming the first."""
+    def save_connection(
+        self, portfolio: dict, accounts: list[dict], expires: str | None, by: int | None
+    ) -> None:
+        """What a login gave: the portfolio and the accounts it lists. An account is new, or
+        known and now under this portfolio whichever held it before (the last login wins);
+        its client is never touched. An account of this portfolio the login no longer lists
+        is no longer connected: the new token does not reach it."""
+        business = portfolio["business_id"]
+        listed = [a["ig_id"] for a in accounts]
         with self.store.db() as db:
-            if not db.execute("SELECT 1 FROM client WHERE id=?", (client,)).fetchone():
-                raise NotFound("cliente não encontrado")
-            other = db.execute(
-                "SELECT c.name FROM ig_profile p JOIN client c ON c.id=p.client "
-                "WHERE p.ig_id=? AND p.client<>?",
-                (who["ig_id"], client),
-            ).fetchone()
-            if other:
-                raise Invalid(f"este perfil já está ligado a {other['name']}")
             db.execute(
-                "INSERT INTO ig_profile(client, ig_id, username, name, account_type, state, "
-                "error, expires, connected_by, connected_at) VALUES (?,?,?,?,?,'ok','',?,?,?) "
-                "ON CONFLICT(client) DO UPDATE SET ig_id=excluded.ig_id, "
-                "username=excluded.username, name=excluded.name, "
-                "account_type=excluded.account_type, state='ok', error='', "
-                "expires=excluded.expires, connected_by=excluded.connected_by, "
-                "connected_at=excluded.connected_at",
-                (
-                    client,
-                    who["ig_id"],
-                    who.get("username") or "",
-                    who.get("name") or "",
-                    who.get("account_type") or "",
-                    expires,
-                    by,
-                    now(),
-                ),
+                "INSERT INTO ig_connection(business_id, business_name, connected_by, "
+                "connected_at, state, error, expires) VALUES (?,?,?,?,'ok','',?) "
+                "ON CONFLICT(business_id) DO UPDATE SET business_name=excluded.business_name, "
+                "connected_by=excluded.connected_by, connected_at=excluded.connected_at, "
+                "state='ok', error='', expires=excluded.expires",
+                (business, portfolio.get("business_name") or "", by, now(), expires),
             )
-        obs.event("ig_connected", account=by, client=client)
-        return self.profile(client)
+            db.execute(
+                "UPDATE ig_account SET business_id='' WHERE business_id=? "
+                f"AND ig_id NOT IN ({','.join('?' for _ in listed)})",
+                (business, *listed),
+            )
+            for a in accounts:
+                db.execute(
+                    "INSERT INTO ig_account(ig_id, username, business_id) VALUES (?,?,?) "
+                    "ON CONFLICT(ig_id) DO UPDATE SET username=excluded.username, "
+                    "business_id=excluded.business_id",
+                    (a["ig_id"], a.get("username") or "", business),
+                )
+        obs.event("ig_connected", account=by, business=business, accounts=len(listed))
 
-    def set_profile(self, client: int, **fields) -> None:
+    def assign(self, ig_id: str, client: int | None, by: int | None) -> dict:
+        """Say which client an account is for (None: none). No post changes: one whose
+        account is no longer its client's says so and is refused when it would go out."""
+        with self.store.db() as db:
+            if not self._account(db, ig_id):
+                raise NotFound(NO_ACCOUNT)
+            known = db.execute("SELECT 1 FROM client WHERE id=?", (client,)).fetchone()
+            if client is not None and not known:
+                raise NotFound("cliente não encontrado")
+            db.execute("UPDATE ig_account SET client=? WHERE ig_id=?", (client, ig_id))
+            account = self._account(db, ig_id)
+        obs.event("ig_account_assigned", account=by, ig=ig_id, client=client)
+        return account
+
+    def set_connection(self, business_id: str, **fields) -> None:
         allowed = {k: v for k, v in fields.items() if k in ("state", "error", "expires")}
         if not allowed:
             return
         sets = ", ".join(f"{k}=?" for k in allowed)
         with self.store.db() as db:
-            db.execute(f"UPDATE ig_profile SET {sets} WHERE client=?", (*allowed.values(), client))
-
-    def remove_profile(self, client: int) -> dict | None:
-        """Forget the profile; what was scheduled for it goes back to a draft."""
-        was = self.profile(client)
-        if not was:
-            return None
-        with self.store.db() as db:
-            db.execute("DELETE FROM ig_profile WHERE client=?", (client,))
             db.execute(
-                "UPDATE post SET status='draft', updated=? WHERE client=? AND status='scheduled'",
-                (now(), client),
+                f"UPDATE ig_connection SET {sets} WHERE business_id=?",
+                (*allowed.values(), business_id),
             )
-        obs.event("ig_disconnected", client=client)
-        return was
+
+    def remove_connection(self, business_id: str) -> bool:
+        """Forget the portfolio. Its accounts stay, with their clients and no connection, so
+        connecting again loses no assignment; no post changes."""
+        with self.store.db() as db:
+            gone = db.execute(
+                "DELETE FROM ig_connection WHERE business_id=?", (business_id,)
+            ).rowcount
+            if gone:
+                db.execute(
+                    "UPDATE ig_account SET business_id='' WHERE business_id=?", (business_id,)
+                )
+        if gone:
+            obs.event("ig_disconnected", business=business_id)
+        return bool(gone)
+
+    def remove_account(self, ig_id: str, by: int | None) -> None:
+        """Take an account that is not connected off Pauta. Its posts keep their text and
+        file, and have no account from then on."""
+        with self.store.db() as db:
+            account = self._account(db, ig_id)
+            if not account:
+                raise NotFound(NO_ACCOUNT)
+            if account["business_id"]:
+                raise Invalid("desconecte o portfólio desta conta antes de remover")
+            db.execute("DELETE FROM ig_account WHERE ig_id=?", (ig_id,))
+        obs.event("ig_account_removed", account=by, ig=ig_id)
+
+    def _ready(self, db, post_client: int, ig_id: str) -> dict:
+        """The post's account, when the post can go out; Invalid with the reason otherwise."""
+        account = self._account(db, ig_id) if ig_id else None
+        why = why_not(post_client, account)
+        if why:
+            raise Invalid(why)
+        return account
+
+    def ready(self, post_client: int, ig_id: str) -> dict:
+        with self.store.db() as db:
+            return self._ready(db, post_client, ig_id)
 
     # ---- posts ----------------------------------------------------------------------------
 
     _POST = (
         "SELECT p.*, c.name AS client_name, a.name AS by_name, g.username AS ig_username, "
-        "g.state AS ig_state FROM post p JOIN client c ON c.id=p.client "
-        "LEFT JOIN account a ON a.id=p.account LEFT JOIN ig_profile g ON g.client=p.client "
+        "g.ig_id AS ig_known, g.client AS ig_client, g.business_id AS ig_business, "
+        "n.state AS ig_state FROM post p JOIN client c ON c.id=p.client "
+        "LEFT JOIN account a ON a.id=p.account LEFT JOIN ig_account g ON g.ig_id=p.ig_id "
+        "LEFT JOIN ig_connection n ON n.business_id=g.business_id AND g.business_id<>'' "
     )
+
+    @staticmethod
+    def _row(row) -> dict:
+        """A post as the rest of the app gets it: with `blocked`, why it cannot go out as it
+        stands ("" when it can, and for one that is going out or went)."""
+        post = dict(row)
+        known, client = post.pop("ig_known"), post.pop("ig_client")
+        business, state = post.pop("ig_business"), post.pop("ig_state")
+        account = (
+            {"client": client, "business_id": business, "state": state or ""} if known else None
+        )
+        post["blocked"] = why_not(post["client"], account) if post["status"] in EDITABLE else ""
+        return post
 
     def posts(self) -> list[dict]:
         with self.store.db() as db:
             rows = db.execute(self._POST + "ORDER BY p.id DESC LIMIT 500").fetchall()
-        return [dict(r) for r in rows]
+        return [self._row(r) for r in rows]
 
     def post(self, pid: int) -> dict:
         with self.store.db() as db:
             row = db.execute(self._POST + "WHERE p.id=?", (pid,)).fetchone()
         if not row:
             raise NotFound("publicação não encontrada")
-        return dict(row)
+        return self._row(row)
 
-    def _when(self, db, client: int, status, due) -> tuple[str, str | None]:
+    def _when(self, db, client: int, ig_id: str, status, due) -> tuple[str, str | None]:
         """`status` and `due` as a person may set them: a draft, or scheduled for a moment,
-        which needs the client's profile connected."""
+        which needs the post's account connected and its client's."""
         if status not in ("draft", "scheduled"):
             raise Invalid("uma publicação é um rascunho ou fica agendada")
         when = clean_due(due)
         if status == "scheduled":
             if not when:
                 raise Invalid("escolha quando publicar")
-            ok = db.execute(
-                "SELECT 1 FROM ig_profile WHERE client=? AND state='ok'", (client,)
-            ).fetchone()
-            if not ok:
-                raise Invalid(NO_PROFILE)
+            self._ready(db, client, ig_id)
         return status, when
 
     def create(self, body: dict, by: int | None) -> dict:
-        try:
-            client = int(body.get("client"))
-        except (TypeError, ValueError):
-            raise Invalid("escolha o cliente") from None
+        ig_id = str(body.get("ig_id") or "")
         kind = clean_kind(body.get("kind"))
         media = str(body.get("media") or "")
         path = self.media_path(media)
@@ -424,16 +510,22 @@ class Posts:
         alt = CONTROL.sub("", str(body.get("alt_text") or "")).strip()[:ALT_MAX]
         alt = alt if kind == "feed" else ""
         with self.store.db() as db:
-            if not db.execute("SELECT 1 FROM client WHERE id=?", (client,)).fetchone():
-                raise NotFound("cliente não encontrado")
+            # the account says whom the post is for: one with no client is nobody's yet
+            account = self._account(db, ig_id) if ig_id else None
+            if not account or account["client"] is None:
+                raise Invalid(NO_ACCOUNT_POST)
+            client = account["client"]
             if db.execute("SELECT 1 FROM post WHERE media=?", (media,)).fetchone():
                 raise Invalid("envie o arquivo de novo")  # one file, one post
-            status, due = self._when(db, client, body.get("status") or "draft", body.get("due"))
+            status, due = self._when(
+                db, client, ig_id, body.get("status") or "draft", body.get("due")
+            )
             pid = db.execute(
-                "INSERT INTO post(client, caption, alt_text, media, width, height, kind, "
-                "media_type, status, due, account) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO post(client, ig_id, caption, alt_text, media, width, height, kind, "
+                "media_type, status, due, account) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     client,
+                    ig_id,
                     caption,
                     alt,
                     media,
@@ -450,7 +542,8 @@ class Posts:
         return self.post(pid)
 
     def update(self, pid: int, body: dict) -> dict:
-        """Caption, description, moment and draft/scheduled, while the post hasn't gone out."""
+        """Caption, description, moment, draft/scheduled and, among its client's accounts,
+        the account, while the post hasn't gone out."""
         post = self.post(pid)
         if post["status"] not in EDITABLE:
             raise Invalid("esta publicação já saiu ou está saindo")
@@ -467,11 +560,18 @@ class Posts:
                 "draft" if post["status"] == "failed" else post["status"]
             )
             due_in = body["due"] if "due" in body else post["due"]
-            status, due = self._when(db, post["client"], status, due_in)
+            ig_id = str(body.get("ig_id") or "") or post["ig_id"]
+            if ig_id != post["ig_id"]:
+                account = self._account(db, ig_id)
+                if not account:
+                    raise Invalid(NO_ACCOUNT_POST)
+                if account["client"] != post["client"]:
+                    raise Invalid(MOVED)
+            status, due = self._when(db, post["client"], ig_id, status, due_in)
             done = db.execute(
-                "UPDATE post SET caption=?, alt_text=?, status=?, due=?, error='', updated=? "
-                f"WHERE id=? AND status IN ({','.join('?' for _ in EDITABLE)})",
-                (caption, alt, status, due, now(), pid, *EDITABLE),
+                "UPDATE post SET caption=?, alt_text=?, ig_id=?, status=?, due=?, error='', "
+                f"updated=? WHERE id=? AND status IN ({','.join('?' for _ in EDITABLE)})",
+                (caption, alt, ig_id, status, due, now(), pid, *EDITABLE),
             ).rowcount
         if not done:
             raise Invalid("esta publicação já saiu ou está saindo")
@@ -558,19 +658,20 @@ def check_video(seconds: float, size: int, kind: str) -> None:
         raise Invalid(f"o vídeo de um {name} tem no máximo {limit}")
 
 
-def _failed(posts: Posts, post: dict, e: InstagramError) -> dict:
-    """An Instagram refusal is the post's state, with a reason a person can act on."""
+def _failed(posts: Posts, post: dict, conn: str, e: InstagramError) -> dict:
+    """An Instagram refusal is the post's state, with a reason a person can act on. A token
+    Instagram no longer takes is its connection's (`conn`, "" when the post has none)."""
     posts.mark(post["id"], status="failed", error=str(e))
-    if e.revoked:
-        posts.set_profile(post["client"], state="revoked", error=str(e))
+    if e.revoked and conn:
+        posts.set_connection(conn, state="revoked", error=str(e))
     obs.event("post_failed", logging.WARNING, post=post["id"], code=e.code, step=e.step)
     return posts.post(post["id"])
 
 
-def _published(posts: Posts, ig: Instagram, post: dict, ig_id: str, media_id: str) -> dict:
+def _published(posts: Posts, ig: Instagram, post: dict, conn: str, media_id: str) -> dict:
     link = ""
     with contextlib.suppress(InstagramError):  # the post is out; the link is a nicety
-        link = ig.permalink(ig_id, media_id)
+        link = ig.permalink(conn, media_id)
     posts.mark(
         post["id"], status="published", media_id=media_id, permalink=link, published_at=now()
     )
@@ -585,11 +686,10 @@ def publish(posts: Posts, ig: Instagram, pid: int, origin: str) -> dict:
     reason on it (an Instagram refusal is the post's state, not this call's error), or, for
     a video, still `publishing`: Instagram has it, and the publisher's tick takes it from
     there (`advance`). Raises Invalid only for what the person can fix before anything is
-    sent."""
+    sent: no account, an account that is not its client's any more or is not connected."""
     post = posts.post(pid)
-    profile = posts.profile(post["client"])
-    if not profile or profile["state"] != "ok":
-        raise Invalid(NO_PROFILE)
+    account = posts.ready(post["client"], post["ig_id"])
+    conn = account["business_id"]
     path = posts.media_path(post["media"])
     if not path:
         raise Invalid("o arquivo desta publicação se perdeu: crie de novo")
@@ -599,36 +699,39 @@ def publish(posts: Posts, ig: Instagram, pid: int, origin: str) -> dict:
     url = f"{origin.rstrip('/')}/api/media/{post['media']}{path.suffix}"
     try:
         container = ig.create_container(
-            profile["ig_id"], url, post["caption"], post["alt_text"], post["kind"], video
+            conn, post["ig_id"], url, post["caption"], post["alt_text"], post["kind"], video
         )
         posts.mark(pid, container=container)
         if video:
             obs.event("post_waiting", post=pid, kind=post["kind"])
             return posts.post(pid)
-        ig.wait_ready(profile["ig_id"], container)
-        media_id = ig.publish(profile["ig_id"], container)
+        ig.wait_ready(conn, container)
+        media_id = ig.publish(conn, post["ig_id"], container)
     except InstagramError as e:
-        return _failed(posts, post, e)
+        return _failed(posts, post, conn, e)
     except Exception:
         # a surprise after the first call: whether it went out is not known
         posts.mark(pid, status="failed", error=UNSURE)
         obs.event("post_failed", logging.ERROR, post=pid, step="unknown")
         raise
-    return _published(posts, ig, post, profile["ig_id"], media_id)
+    return _published(posts, ig, post, conn, media_id)
 
 
 def advance(posts: Posts, ig: Instagram, pid: int) -> dict:
     """One look at a video Instagram is preparing: published when it is ready, failed when
-    Instagram gave up on it or took too long, left as it is otherwise. Until `media_publish`
-    is called nothing has gone out, so these failures are safe to try again."""
+    Instagram gave up on it or took too long, or its account is no longer connected or its
+    client's, left as it is otherwise. Until `media_publish` is called nothing has gone out,
+    so these failures are safe to try again."""
     post = posts.post(pid)
     if post["status"] != "publishing" or not post["container"]:
         return post
-    profile = posts.profile(post["client"])
+    conn = ""
     try:
-        if not profile or profile["state"] != "ok":
-            raise InstagramError(NO_PROFILE, step="status")
-        state = ig.container_state(profile["ig_id"], post["container"])
+        try:
+            conn = posts.ready(post["client"], post["ig_id"])["business_id"]
+        except Invalid as e:
+            raise InstagramError(str(e), step="status") from None
+        state = ig.container_state(conn, post["container"])
         if state == "IN_PROGRESS":
             started = datetime.fromisoformat(post["started"]).replace(tzinfo=UTC)
             if datetime.now(UTC) - started > timedelta(seconds=VIDEO_WAIT_SECONDS):
@@ -638,10 +741,10 @@ def advance(posts: Posts, ig: Instagram, pid: int) -> dict:
         if state != "FINISHED":
             obs.event("ig_container_failed", logging.WARNING, state=state)
             raise InstagramError(BAD_VIDEO, step="status")
-        media_id = ig.publish(profile["ig_id"], post["container"])
+        media_id = ig.publish(conn, post["ig_id"], post["container"])
     except InstagramError as e:
-        return _failed(posts, post, e)
-    return _published(posts, ig, post, profile["ig_id"], media_id)
+        return _failed(posts, post, conn, e)
+    return _published(posts, ig, post, conn, media_id)
 
 
 class Publisher:
@@ -675,7 +778,7 @@ class Publisher:
             for pid in self.posts.due(_utc(self.clock())):
                 try:
                     out.append(publish(self.posts, self.ig, pid, self.origin))
-                except Invalid as e:  # the profile went away since it was scheduled
+                except Invalid as e:  # its account is not connected, or not its client's
                     self.posts.mark(pid, status="failed", error=str(e))
                     out.append(self.posts.post(pid))
             now_ = self.clock()
@@ -687,12 +790,14 @@ class Publisher:
         return out
 
     def chores(self) -> None:
-        """Say so on the profile when its token is gone or lapsed (a system-user token of a
-        "never" configuration doesn't lapse); clear images no post took."""
+        """Say so on the connection when its token is gone or lapsed (a system-user token of
+        a "never" configuration doesn't lapse); clear files no post took."""
         self.posts.sweep_media()
-        for p in self.posts.profiles():
-            if p["state"] != "ok":
+        for n in self.posts.connections():
+            if n["state"] != "ok":
                 continue
-            left = self.ig.expires_in(p["ig_id"], self.clock())
+            left = self.ig.expires_in(n["business_id"], self.clock())
             if left is None or left <= timedelta(0):
-                self.posts.set_profile(p["client"], state="expired", error="a conexão venceu")
+                self.posts.set_connection(
+                    n["business_id"], state="expired", error="a conexão venceu"
+                )

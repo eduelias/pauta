@@ -1,4 +1,5 @@
-"""Publicações (docs/publishing-spec.md): a client's Instagram profile and the posts for it."""
+"""Publicações (docs/publishing-spec.md): the connected portfolios, their Instagram accounts
+and the client each is for, and the posts."""
 
 from __future__ import annotations
 
@@ -9,9 +10,11 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import obs
 from ..db import Invalid, NotFound
-from ..instagram import InstagramError
+from ..instagram import InstagramError, handle
 from ..publishing import CHUNK, MAX_IMAGE, MAX_VIDEO, VIDEO_TYPES, Posts, publish
 from . import ID, SENT, TOKEN, Reply
+
+IG = r"([0-9]{5,20})"  # an Instagram account's id, or a portfolio's
 
 OFF = "as publicações não estão ligadas neste servidor"
 # why a connection didn't happen, as the callback's redirect says it (the screen has the text)
@@ -30,10 +33,25 @@ def install(route, store, auth, ig):
     def _post(post: dict) -> dict:
         return {k: v for k, v in post.items() if k != "container"}
 
+    def _accounts() -> list[dict]:
+        """The accounts, each with `match`: the one client whose Instagram field is a clean
+        handle equal to the account's. A suggestion and a reason to ask, never an
+        assignment."""
+        by_handle: dict[str, list[dict]] = {}
+        for c in store.clients():
+            by_handle.setdefault(handle(c.get("instagram")), []).append(c)
+        out = []
+        for a in posts.accounts():
+            same = by_handle.get(handle(a["username"])) or []
+            one = same[0] if len(same) == 1 and handle(a["username"]) else None
+            out.append({**a, "match": {"id": one["id"], "name": one["name"]} if one else None})
+        return out
+
     def _state() -> dict:
         return {
             "enabled": True,
-            "profiles": posts.profiles(),
+            "connections": posts.connections(),
+            "accounts": _accounts(),
             "posts": [_post(p) for p in posts.posts()],
             "limits": {
                 "image_mb": MAX_IMAGE // (1024 * 1024),
@@ -43,25 +61,24 @@ def install(route, store, auth, ig):
 
     @route("GET", "/api/publishing")
     def publishing(self, viewer, _body):
-        """The connected profiles and every post, newest first. `enabled: false` and nothing
-        else on a server without the Instagram app configured."""
+        """The connected portfolios, their accounts and every post, newest first.
+        `enabled: false` and nothing else on a server without the Instagram app configured."""
         if not ig.enabled:
-            return {"enabled": False, "profiles": [], "posts": []}
+            return {"enabled": False, "connections": [], "accounts": [], "posts": []}
         return _state()
 
-    # ---- a client's Instagram profile -----------------------------------------------------
+    # ---- a portfolio's connection and its accounts ----------------------------------------
 
-    @route("POST", f"/api/clients/{ID}/instagram", "admin")
-    def connect(self, viewer, _body, cid):
-        """Where to send the admin: Instagram's login, with a one-time state for this
-        client. Whoever is signed in to Instagram in that browser is the profile connected."""
+    @route("POST", "/api/instagram/connect", "admin")
+    def connect(self, viewer, _body):
+        """Where to send the admin: Meta's login, with a one-time state. Whatever portfolio
+        and accounts they pick there is what gets connected."""
         _on()
-        store.client(int(cid))  # NotFound for a client that isn't there
-        return {"url": ig.start(int(cid), viewer["account"])}
+        return {"url": ig.start(viewer["account"])}
 
     @route("GET", "/api/instagram/callback", "open")
     def callback(self, viewer, _body):
-        """Instagram's login sends the browser back here without the session cookie
+        """Meta's login sends the browser back here without the session cookie
         (SameSite=Strict, a cross-site redirect): the one-time state is the authorization."""
         q = parse_qs(urlparse(self.path).query)
         state, code = q.get("state", [""])[0], q.get("code", [""])[0]
@@ -69,40 +86,45 @@ def install(route, store, auth, ig):
         try:
             if not ig.enabled:
                 raise InstagramError(OFF, step="off")
-            if q.get("error") or not code:  # cancelled in Instagram's dialog
+            if q.get("error") or not code:  # cancelled in Meta's dialog
                 with contextlib.suppress(InstagramError):
                     ig.take_state(state)
                 obs.event("ig_connect_cancelled", logging.WARNING)
                 why = "cancelado"
             else:
-                client, account = ig.take_state(state)
-                # the client's own @ picks its profile out of everything the portfolio shares
-                want = ""
-                with contextlib.suppress(NotFound):
-                    want = store.client(client).get("instagram") or ""
-                who, expires = ig.finish(code, want)
-                try:
-                    posts.save_profile(client, who, expires, account)
-                except (Invalid, NotFound):
-                    # linked to another client (whose connection this login just renewed:
-                    # the token stays), or the client is gone (nobody uses it: it goes)
-                    if not any(p["ig_id"] == who["ig_id"] for p in posts.profiles()):
-                        ig.forget(who["ig_id"])
-                    why = "perfil"
+                by = ig.take_state(state)
+                portfolio, accounts, expires = ig.finish(code)
+                posts.save_connection(portfolio, accounts, expires, by)
         except InstagramError as e:
             why = "vencido" if e.step == "state" else "perfil" if e.step == "me" else "instagram"
         self._redirect(f"/#/publicacoes?ig=erro&motivo={why}" if why else "/#/publicacoes?ig=ok")
         return SENT
 
-    @route("DELETE", f"/api/clients/{ID}/instagram", "admin")
-    def disconnect(self, viewer, _body, cid):
-        """Forget the profile and its token. Scheduled posts go back to drafts; nothing
-        already on Instagram changes."""
+    @route("PATCH", f"/api/instagram/accounts/{IG}", "admin")
+    def assign(self, viewer, body, ig_id):
+        """Which client this account is for (`null`: none)."""
         _on()
-        was = posts.remove_profile(int(cid))
-        if not was:
-            raise NotFound("este cliente não tem Instagram conectado")
-        ig.forget(was["ig_id"])
+        client = body.get("client", "")
+        if client is not None and (not isinstance(client, int) or isinstance(client, bool)):
+            raise Invalid("informe o cliente (ou null para deixar sem cliente)")
+        posts.assign(ig_id, client, viewer["account"])
+        return _state()
+
+    @route("DELETE", f"/api/instagram/accounts/{IG}", "admin")
+    def remove_account(self, viewer, _body, ig_id):
+        """An account that is not connected leaves Pauta; nothing on Instagram changes."""
+        _on()
+        posts.remove_account(ig_id, viewer["account"])
+        return _state()
+
+    @route("DELETE", f"/api/instagram/connections/{IG}", "admin")
+    def disconnect(self, viewer, _body, business_id):
+        """Forget the portfolio and its token. Its accounts stay listed with their clients,
+        not connected; no post changes; nothing on Instagram changes."""
+        _on()
+        if not posts.remove_connection(business_id):
+            raise NotFound("esta conexão não existe")
+        ig.forget(business_id)
         return _state()
 
     # ---- images ---------------------------------------------------------------------------

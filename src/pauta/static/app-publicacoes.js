@@ -34,7 +34,7 @@ const POST_STATUS = {
 const IG_WHY = {
   cancelado: "A conexão foi cancelada no Instagram.",
   vencido: "O pedido de conexão venceu. Comece de novo.",
-  perfil: "Este perfil não pôde ser ligado: o login precisa trazer um só perfil, profissional, que não esteja em outro cliente.",
+  perfil: "Este login não trouxe nenhuma conta profissional do Instagram.",
   instagram: "O Instagram não completou a conexão. Tente de novo.",
 };
 
@@ -70,29 +70,47 @@ function postRow(p) {
       <p class="pcap">${p.caption ? esc(p.caption) : p.kind === "story" ? "" : `<span class="muted">sem legenda</span>`}</p>
       <span class="muted small">${esc(when)}${p.by_name ? ` · ${esc(firstName(p.by_name))}` : ""}</span>
       ${p.status === "failed" && p.error ? `<p class="perr">${esc(p.error)}</p>` : ""}
+      ${p.blocked && p.blocked !== p.error ? `<p class="perr pblocked">${esc(p.blocked)}</p>` : ""}
     </div>
     <div class="pacts">${acts}</div>
   </div>`;
 }
 
+// Where a post can go: an account that has a client and whose portfolio is connected.
+const postable = (doc) => doc.accounts.filter((a) => a.client && a.state === "ok");
+
+// A connection is a portfolio, as on the ads side (Configurações → Meta): one login brings
+// every Instagram account of it, and an admin says which client each account is for. An
+// account whose portfolio was disconnected, or that a later login no longer listed, stays
+// with its client under "Sem conexão".
+function accountRow(a, clients, loose) {
+  const who = ME.is_admin
+    ? `<select class="input" data-account="${esc(a.ig_id)}" aria-label="Cliente de @${esc(a.username)}"><option value="">Sem cliente</option>${clients.map((c) => `<option value="${c.id}"${c.id === a.client ? " selected" : ""}>${esc(c.name)}</option>`).join("")}</select>`
+    : `<span class="muted small">${a.client ? esc(a.client_name) : "sem cliente"}</span>`;
+  return `<div class="member" data-account-row="${esc(a.ig_id)}"><div class="who"><b>@${esc(a.username)}</b>
+      ${!a.client && a.match ? `<span class="muted small">sugestão: ${esc(a.match.name)}</span>` : ""}</div>
+    <div class="row-gap">${who}${loose && ME.is_admin ? `<button class="btn small ghost" data-remove="${esc(a.ig_id)}" data-name="${esc(a.username)}">Remover</button>` : ""}</div></div>`;
+}
+
 function profilesPanel(doc, clients) {
-  const taken = new Set(doc.profiles.map((p) => p.client));
-  const free = clients.filter((c) => !taken.has(c.id));
-  const rows = doc.profiles.map((p) => {
-    const ok = p.state === "ok";
-    const line = ok ? `conectado${p.expires ? ` até ${stamp(p.expires).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}` : ""}`
-      : `${p.state === "expired" ? "a conexão venceu" : "o Instagram não aceita mais a conexão"}: conecte de novo`;
-    return `<div class="member" data-profile="${p.client}">${avatar(p.client_name)}<div class="who"><b>${esc(p.client_name)}</b>
-      <span class="muted small">@${esc(p.username)} · <span class="${ok ? "" : "pbad"}">${esc(line)}</span></span></div>
-      ${ME.is_admin ? `<div class="row-gap">${ok ? "" : `<button class="btn small" data-connect="${p.client}">Conectar de novo</button>`}<button class="btn small ghost" data-disconnect="${p.client}" data-name="${esc(p.client_name)}">Desconectar</button></div>` : ""}</div>`;
+  const blocks = doc.connections.map((n) => {
+    const ok = n.state === "ok";
+    const state = ok ? `conectado${n.expires ? ` até ${stamp(n.expires).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}` : ""}`
+      : `${n.state === "expired" ? "a conexão venceu" : "o Instagram não aceita mais a conexão"}: conecte de novo`;
+    const rows = doc.accounts.filter((a) => a.business_id === n.business_id);
+    return `<div class="pconn" data-connection="${esc(n.business_id)}"><div class="member">${avatar(n.business_name || "Instagram")}<div class="who"><b>${esc(n.business_name || "Portfólio")}</b>
+        <span class="muted small"><span class="${ok ? "" : "pbad"}">${esc(state)}</span>${rows.length ? "" : " · nenhuma conta"}</span></div>
+      ${ME.is_admin ? `<div class="row-gap">${ok ? "" : `<button class="btn small" data-connect="1">Conectar de novo</button>`}<button class="btn small ghost" data-disconnect="${esc(n.business_id)}">Desconectar</button></div>` : ""}</div>
+      ${rows.map((a) => accountRow(a, clients, false)).join("")}</div>`;
   }).join("");
+  const loose = doc.accounts.filter((a) => !a.business_id);
+  const apart = loose.length ? `<div class="pconn" data-connection=""><div class="member"><div class="who"><b>Sem conexão</b></div></div>${loose.map((a) => accountRow(a, clients, true)).join("")}</div>` : "";
   const add = ME.is_admin
-    ? free.length ? `<div class="row-gap pconnect"><select class="input" id="igclient" aria-label="Cliente">${free.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><button class="btn" id="igconnect">${icon("plus")}Conectar Instagram</button></div>
-      <p class="muted small">Abre o login da Meta. Escolha entrar com o Instagram e use o perfil do cliente: ele precisa ser profissional (Empresa ou Criador de conteúdo). Compartilhe só esse perfil.</p>`
-      : `<p class="muted small">Todos os clientes já têm um perfil conectado.</p>`
-    : doc.profiles.length ? "" : `<p class="muted small">Um administrador conecta o Instagram de cada cliente.</p>`;
-  return `<section class="panel" id="igprofiles"><div class="panel-head"><h2>${icon("user")}Perfis do Instagram</h2></div>
-    ${rows || `<div class="empty">Nenhum perfil conectado ainda.</div>`}${add}</section>`;
+    ? `<div class="row-gap pconnect"><button class="btn" id="igconnect">${icon("plus")}Conectar Instagram</button></div>
+      <p class="muted small">Abre o login da Meta. Escolha o portfólio e as contas do Instagram em que a Pauta pode publicar: elas precisam ser profissionais (Empresa ou Criador de conteúdo). Depois escolha aqui o cliente de cada conta.</p>`
+    : doc.accounts.length ? "" : `<p class="muted small">Um administrador conecta o Instagram e escolhe o cliente de cada conta.</p>`;
+  return `<section class="panel" id="igprofiles"><div class="panel-head"><h2>${icon("user")}Contas do Instagram</h2></div>
+    ${blocks + apart || `<div class="empty">Nenhuma conta do Instagram conectada ainda.</div>`}${add}</section>`;
 }
 
 async function viewPublishing(query) {
@@ -106,7 +124,7 @@ async function viewPublishing(query) {
   const by = (statuses) => doc.posts.filter((p) => statuses.includes(p.status));
   const scheduled = by(["scheduled", "publishing"]).sort((a, b) => (a.due || "").localeCompare(b.due || ""));
   const group = (title, id, list) => list.length ? `<section class="panel mt" id="${id}"><div class="panel-head"><h2>${title}</h2><span class="muted small">${list.length}</span></div><div class="prows">${list.map(postRow).join("")}</div></section>` : "";
-  const ready = doc.profiles.some((p) => p.state === "ok");
+  const ready = postable(doc).length > 0;
   app.innerHTML = `<div style="max-width:980px">
     <div class="head"><div><h1>Publicações <span class="pbeta">beta</span></h1><p>O que vai sair no Instagram dos clientes. A Pauta guarda a publicação e publica na hora marcada.</p></div>
       ${ready ? `<a class="btn primary" href="#/publicacoes/nova">${icon("plus")}Nova publicação</a>` : ""}</div>
@@ -114,14 +132,14 @@ async function viewPublishing(query) {
     ${group("Agendadas", "pscheduled", scheduled)}
     ${group("Rascunhos e falhas", "pdrafts", by(["draft", "failed"]))}
     ${group("Publicadas", "ppublished", by(["published"]))}
-    ${doc.posts.length ? "" : `<section class="panel mt"><div class="empty"><span class="big">📸</span>${ready ? "Nenhuma publicação ainda." : "Conecte um perfil para criar a primeira publicação."}</div></section>`}
+    ${doc.posts.length ? "" : `<section class="panel mt"><div class="empty"><span class="big">📸</span>${ready ? "Nenhuma publicação ainda." : "Conecte o Instagram e escolha o cliente de uma conta para criar a primeira publicação."}</div></section>`}
   </div>`;
   const again = () => viewPublishing(new URLSearchParams());
   // a video Instagram is still preparing ends by itself: look again while this list is up
   const root = app.firstElementChild;
   if (doc.posts.some((p) => p.status === "publishing")) setTimeout(() => { if (root.isConnected) again().catch(() => {}); }, 15000);
-  const connect = async (client) => {
-    try { location.assign((await api("POST", `/api/clients/${client}/instagram`, {})).url); }
+  const connect = async () => {
+    try { location.assign((await api("POST", "/api/instagram/connect", {})).url); }
     catch (e) { toast(e.message, true); }
   };
   // on this render's own root (gone with the next one): #app itself outlives every screen,
@@ -130,12 +148,17 @@ async function viewPublishing(query) {
     const b = e.target.closest("button");
     if (!b || b.disabled) return;
     try {
-      if (b.id === "igconnect") return void (await connect($("#igclient").value));
-      if (b.dataset.connect) return void (await connect(b.dataset.connect));
+      if (b.id === "igconnect" || b.dataset.connect) return void (await connect());
       if (b.dataset.disconnect) {
-        if (!confirm(`Desconectar o Instagram de ${b.dataset.name}? O que estava agendado volta a ser rascunho. Nada muda no Instagram.`)) return;
-        await api("DELETE", `/api/clients/${b.dataset.disconnect}/instagram`);
+        if (!confirm("Desconectar este portfólio? As contas dele continuam na lista, sem conexão, e o que estiver agendado para elas não sai até conectar de novo. Nada muda no Instagram.")) return;
+        await api("DELETE", `/api/instagram/connections/${b.dataset.disconnect}`);
         toast("Instagram desconectado");
+        return void (await again());
+      }
+      if (b.dataset.remove) {
+        if (!confirm(`Remover @${b.dataset.name} da Pauta? As publicações dela ficam sem conta. Nada muda no Instagram.`)) return;
+        await api("DELETE", `/api/instagram/accounts/${b.dataset.remove}`);
+        toast("Conta removida");
         return void (await again());
       }
       if (b.dataset.pub) {
@@ -153,6 +176,24 @@ async function viewPublishing(query) {
         return void (await again());
       }
     } catch (err) { toast(err.message, true); await again(); }
+  });
+  root.addEventListener("change", async (e) => {
+    const sel = e.target.closest("select[data-account]");
+    if (!sel) return;
+    const a = doc.accounts.find((x) => x.ig_id === sel.dataset.account);
+    const chosen = clients.find((c) => String(c.id) === sel.value);
+    // the first that applies: the account is another client's, or the cadastro of another
+    // client has this @
+    const ask = !chosen ? ""
+      : a.client && a.client !== chosen.id ? `@${a.username} está com ${a.client_name}. Passar para ${chosen.name}?`
+      : a.match && a.match.id !== chosen.id ? `O cadastro de ${a.match.name} diz @${a.username}. Colocar esta conta em ${chosen.name} mesmo assim?`
+      : "";
+    if (ask && !confirm(ask)) { sel.value = a.client ? String(a.client) : ""; return; }
+    try {
+      await api("PATCH", `/api/instagram/accounts/${a.ig_id}`, { client: chosen ? chosen.id : null });
+      toast(chosen ? `Conta de ${chosen.name}` : "Conta sem cliente");
+    } catch (err) { toast(err.message, true); }
+    await again();
   });
 }
 
@@ -221,8 +262,13 @@ async function viewPost(_query, id) {
   const post = id === "nova" ? null : doc.posts.find((p) => p.id === Number(id));
   if (id !== "nova" && !post) throw new Error("publicação não encontrada");
   if (post && !["draft", "scheduled", "failed"].includes(post.status)) { location.hash = "#/publicacoes"; return; }
-  const profiles = doc.profiles.filter((p) => p.state === "ok");
-  if (!post && !profiles.length) { location.hash = "#/publicacoes"; return; }
+  // a new post goes to an account it can leave from; an existing one may change to another
+  // account of its client. Without the post's own account among them (it has none, or the
+  // account is another client's now, or was removed) nothing is chosen for the person
+  const choices = post ? doc.accounts.filter((a) => a.client === post.client) : postable(doc);
+  if (!post && !choices.length) { location.hash = "#/publicacoes"; return; }
+  const mine = post && choices.some((a) => a.ig_id === post.ig_id);
+  const option = (a) => `<option value="${esc(a.ig_id)}"${post && a.ig_id === post.ig_id ? " selected" : ""}>${esc(a.client_name)} (@${esc(a.username)})</option>`;
   let kind = post?.kind || "feed";
   let image = null;  // {blob, width, height, preview}, a new post's picture
   let video = null;  // {media, seconds, bytes}, a new post's video, already on the server
@@ -235,8 +281,8 @@ async function viewPost(_query, id) {
     <div class="head"><div><h1>${post ? "Editar publicação" : "Nova publicação"}</h1><p>Uma imagem ou um vídeo, para o Instagram de um cliente.</p></div></div>
     <form class="panel" id="postform" autocomplete="off"><div class="form-grid">
       <div class="field wide"><label for="pclient">Cliente</label>${post
-        ? `<input class="input" id="pclient" value="${esc(post.client_name)}${post.ig_username ? ` (@${esc(post.ig_username)})` : ""}" disabled>`
-        : `<select class="input" id="pclient">${profiles.map((p) => `<option value="${p.client}">${esc(p.client_name)} (@${esc(p.username)})</option>`).join("")}</select>`}</div>
+        ? `<select class="input" id="pclient">${mine ? "" : `<option value="" selected>escolha a conta (${esc(post.client_name)})</option>`}${choices.map(option).join("")}</select>`
+        : `<select class="input" id="pclient">${choices.map(option).join("")}</select>`}</div>
       <div class="field wide"><label>Formato</label>${post
         ? `<input class="input" id="pkindshown" value="${POST_KIND[kind] || esc(kind)}" disabled>`
         : `<div class="seg" id="pkind" role="group" aria-label="Formato">${Object.entries(POST_KIND).map(([k, label]) => `<button type="button" data-v="${k}">${label}</button>`).join("")}</div>`}</div>
@@ -324,10 +370,12 @@ async function viewPost(_query, id) {
     try {
       const fields = { caption: $("#pcaption").value, alt_text: $("#palt").value, status: go === "scheduled" ? "scheduled" : "draft", due: go === "scheduled" ? due : "" };
       let saved;
-      if (post) saved = await api("PATCH", `/api/posts/${post.id}`, fields);
+      // an Instagram id is sent as the text it is: it has more digits than a number holds
+      const account = $("#pclient").value;
+      if (post) saved = await api("PATCH", `/api/posts/${post.id}`, account && account !== post.ig_id ? { ...fields, ig_id: account } : fields);
       else {
         const media = video ? video.media : (await sendPostImage(image.blob, kind)).media;
-        saved = await api("POST", "/api/posts", { ...fields, kind, client: Number($("#pclient").value), media });
+        saved = await api("POST", "/api/posts", { ...fields, kind, ig_id: account, media });
       }
       if (go === "now") {
         b.textContent = "Publicando…";
