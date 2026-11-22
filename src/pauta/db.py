@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS post (
     caption TEXT NOT NULL DEFAULT '', alt_text TEXT NOT NULL DEFAULT '',
     media TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
     kind TEXT NOT NULL DEFAULT 'feed', media_type TEXT NOT NULL DEFAULT 'image',
+    ig_id TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'draft', due TEXT,
     container TEXT NOT NULL DEFAULT '', media_id TEXT NOT NULL DEFAULT '',
     permalink TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
@@ -194,6 +195,17 @@ CREATE TABLE IF NOT EXISTS post (
     published_at TEXT
 );
 CREATE INDEX IF NOT EXISTS post_due ON post(status, due);
+CREATE TABLE IF NOT EXISTS ig_connection (
+    business_id TEXT PRIMARY KEY, business_name TEXT NOT NULL DEFAULT '',
+    connected_by INTEGER REFERENCES account(id), connected_at TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'ok', error TEXT NOT NULL DEFAULT '', expires TEXT
+);
+CREATE TABLE IF NOT EXISTS ig_account (
+    ig_id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '',
+    business_id TEXT NOT NULL DEFAULT '',
+    client INTEGER REFERENCES client(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS ig_account_client ON ig_account(client);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -243,7 +255,8 @@ EXPORT_TABLES = (
     "insight",
     "meta_connection",
     "meta_log",
-    "ig_profile",  # who is connected, never a token
+    "ig_connection",  # which portfolios are connected, never a token
+    "ig_account",
     "post",
 )
 
@@ -717,6 +730,28 @@ class Store:
                 db.execute("ALTER TABLE post ADD COLUMN kind TEXT NOT NULL DEFAULT 'feed'")
             if "media_type" not in cols:
                 db.execute("ALTER TABLE post ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'")
+            # v17: Publicações follows Meta's model (docs/designs/2026-11-22_publishing-
+            # mirrors-meta.md): a portfolio's connection, its Instagram accounts, and a post
+            # that has an account. Once per file, and all of it or none: each old profile
+            # becomes an account with its client and no connection (the owner logs in once),
+            # each post gets its client's account, and the old rows are marked expired, so
+            # the release before this one, which publishes by client, sends nothing until
+            # someone connects again in it. sqlite3 commits a schema statement at once
+            # unless a transaction is open, hence the BEGIN
+            cols = {r[1] for r in db.execute("PRAGMA table_info(post)")}
+            if "ig_id" not in cols:
+                if not db.in_transaction:
+                    db.execute("BEGIN")
+                db.execute("ALTER TABLE post ADD COLUMN ig_id TEXT NOT NULL DEFAULT ''")
+                db.execute(
+                    "INSERT OR IGNORE INTO ig_account(ig_id, username, client) "
+                    "SELECT ig_id, username, client FROM ig_profile"
+                )
+                db.execute(
+                    "UPDATE post SET ig_id=COALESCE("
+                    "(SELECT ig_id FROM ig_profile WHERE client=post.client), '')"
+                )
+                db.execute("UPDATE ig_profile SET state='expired'")
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),
