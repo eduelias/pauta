@@ -167,7 +167,8 @@ app. The ids are the drop-in `/etc/systemd/system/pauta-acc.service.d/instagram.
 (`Environment=PAUTA_IG_APP_ID=…` and `PAUTA_IG_CONFIG_ID=…`); its App Secret is
 `/var/lib/pauta-acc/pauta.db.ig-secret` (owner `pauta-acc`, mode 600), rendered from the
 1Password item "pauta-acc instagram app secret" (Du7 Tech) and pushed, never typed or
-committed. The profiles' tokens are `/var/lib/pauta-acc/pauta.db.ig-tokens` and the posts'
+committed. The connections' tokens (one per portfolio) are
+`/var/lib/pauta-acc/pauta.db.ig-tokens` and the posts'
 images `/var/lib/pauta-acc/pauta.db.media/`. Without the drop-in or the secret the module
 is off. Check: the journal says `publisher_started` after a restart. Production has neither.
 

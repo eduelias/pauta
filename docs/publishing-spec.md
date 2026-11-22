@@ -17,13 +17,13 @@
 
 | | |
 |---|---|
-| Connect | An admin picks a client and clicks **Conectar Instagram**. Meta's login opens; the profile shared there becomes that client's. One profile serves one client, and the client's own `@` (its record) says which profile is which |
+| Connect | An admin clicks **Conectar Instagram**, with no client chosen. Meta's login opens; the portfolio picked there is connected, and every Instagram account it shares is listed. The admin then says which client each account is for (a suggestion shows when one client's `@` is the account's). A client can have several accounts; an account serves one client. Since 2026-11-22: [`designs/2026-11-22_publishing-mirrors-meta.md`](designs/2026-11-22_publishing-mirrors-meta.md) |
 | Formats | A picture for the feed, a Story (a picture or a video) or a Reel: see "Stories and Reels" below |
 | Compose | **Nova publicação**: the client, one image, the caption (2.200 characters, 30 hashtags, 20 mentions, Instagram's limits), an optional description of the image, an optional moment |
 | The image | Any picture the browser can open. The form turns it into a JPEG at most 1440 px wide and refuses a proportion outside 4:5 to 1,91:1 before anything is sent. The server checks again (JPEG, 8 MB, proportion, 320 px) by reading the file's own header |
 | Publish | **Publicar agora** waits for Instagram (a few seconds) and says how it ended. **Agendar** keeps the post; a background thread publishes what is due, every 20 seconds |
 | States | rascunho, agendada, saindo, publicada (with the link to the post), falhou (with the reason, and the post still there to send again) |
-| Who | Members create, schedule, publish and delete their own; admins connect and disconnect profiles and delete anyone's |
+| Who | Members create, schedule, publish and delete their own; admins connect and disconnect portfolios, say which client an account is for, remove an account that is not connected, and delete anyone's post |
 
 ## A second integration, on purpose
 
@@ -35,9 +35,9 @@ writes. Publishing writes to a client's public profile. They share nothing:
 | Meta app | **Pauta** (production), **Pauta (acc)** (its test version) | Its own: **Pauta Publicações (acc)** on acceptance |
 | Login | Facebook Login for Business, a system user per ads portfolio | The same dialog with another configuration ("Unified Login"): the asset is an Instagram account, and the person may sign in with Instagram itself |
 | Ids and secret | `PAUTA_META_APP_ID`, `PAUTA_META_CONFIG_ID`, `<db>.meta-secret` | `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID`, `<db>.ig-secret` |
-| Tokens | `<db>.meta-token.<business>`, never expire | `<db>.ig-tokens`, one per profile, never expire (the configuration says so) |
+| Tokens | `<db>.meta-token.<business>`, never expire | `<db>.ig-tokens`, one per portfolio (`biz-<portfolio id>`), never expire (the configuration says so) |
 | Permissions | `ads_read` | `instagram_basic`, `instagram_content_publish`, nothing else |
-| Belongs to | The team (a portfolio) | A client (a profile) |
+| Belongs to | The team (a portfolio) | The team (a portfolio), whose Instagram accounts are each given to a client |
 | A Facebook Page | Not involved | Not needed |
 
 **Why not "Instagram Login", as first built.** The first cut used the Instagram API with
@@ -70,18 +70,22 @@ moment asks Instagram to fetch the image from a public address.
 
 A refusal from Instagram is the post's state (`failed`, with a reason a person can act on:
 the daily limit, the image could not be fetched, the profile was restricted, connect
-again). A token Instagram no longer takes marks the profile, and every screen says
+again). A token Instagram no longer takes marks the connection, and every screen says
 "conecte de novo". A post found `publishing` ten minutes after it started (the server died
 between steps 2 and 4) is marked failed with "confira no Instagram antes de publicar de
 novo": whether it went out is not known, and a blind retry could post it twice.
 
 ## Data
 
-- `ig_profile(client, ig_id, username, name, account_type, state, error, expires,
-  connected_by, connected_at)`: who, never a token. `post(id, client, caption, alt_text,
-  media, width, height, status, due, container, media_id, permalink, error, account,
-  created, updated, started, published_at)`. Schema v15, two new tables, nothing else moves.
-  Schema v16 adds `kind` and `media_type` to `post`.
+- `ig_connection(business_id, business_name, connected_by, connected_at, state, error,
+  expires)`: a connected portfolio, never a token. `ig_account(ig_id, username,
+  business_id, client)`: an Instagram account, the portfolio that reaches it (empty when
+  none does) and the client it is for (empty until an admin says). `post(id, client,
+  ig_id, caption, alt_text, media, width, height, kind, media_type, status, due, container,
+  media_id, permalink, error, account, created, updated, started, published_at)`: `ig_id`
+  is the account it goes to, `client` whom it was made for. Schema v17.
+- `ig_profile`, the table of schemas v15 and v16 (one profile per client), is still in the
+  file and no longer read: the change that brings the beta up to `main` drops it.
 - Files: `<db>.media/<token>.<jpg|mp4|mov>`, removed with their post (a video as soon as it
   is published); one nobody attached to a post goes after a day.
 - Moments are UTC in the database and the browser's own time on screen.
@@ -111,15 +115,16 @@ app secret" (Du7 Tech). `PAUTA_ORIGIN` is already there. Then
 `sudo systemctl restart pauta-acc`; the journal says `publisher_started` and the Publicações
 tab appears.
 
-**Which profile a login is for.** The token is the portfolio's system user, so it carries
-**every** Instagram account the team has ever shared with the app, not only the one ticked
+**Which accounts a login is for.** The token is the portfolio's system user, so it carries
+**every** Instagram account the business has shared with the app, not only the one ticked
 on Meta's last screen. The first client hid this (one account, one profile); the second
-exposed it at once. So `finish()` takes the client's own `@` from its record and picks that
-account out of the list. Without an `@`: a single account still connects, several are
-refused with "escreva o @ deste cliente". With an `@` that nobody shared: refused too, since
-connecting the only account on offer would quietly publish one client's posts on another's
-profile. For an agency with ten clients in one portfolio, the `@` on the client record is
-therefore not decoration: it is what keeps the posts apart.
+exposed it at once. Until 2026-11-22 a login was made for one client and the client's own
+`@` picked its account out of the list, which refused a client whose record held no clean
+handle. Now a login is for the portfolio: every account it lists appears on the panel, and
+an admin says which client each is for. The `@` on a client's record gives a suggestion,
+and Pauta asks before an account goes to a client other than the one whose record names
+it. For an agency with ten clients in one portfolio that assignment is what keeps the
+posts apart.
 
 **What the first connection showed (2026-11-13).** @du7dev sits in the app's own portfolio
 (Du7 Technology Services), the case Meta's docs do not promise. Two attempts:
@@ -153,7 +158,9 @@ Tech Provider step, the paste-ready justifications and the screencast script.
 Publishing to a profile the app's own people do not manage needs **Advanced Access** for
 `instagram_content_publish` and `instagram_basic`: App Review with a screencast, and Business
 Verification. That is the gate between this beta and a client of Piero's. Until then every
-profile is one added by hand to the app's roles.
+profile is one added by hand to the app's roles. With Advanced Access a client connects its
+own portfolio, which then appears on the panel as a connection of its own, with its
+accounts under it.
 
 ## Stories and Reels (built 2026-11-22, on acceptance)
 
@@ -199,7 +206,7 @@ under the file field.
 | A video comes in as it is | The browser cannot convert a video and du7 does not transcode. The upload goes straight to the disk, a piece at a time (the unit has under 200 MB of memory), with its progress on the form. The server reads the file's own header (`ftyp`, then `moov` → `mvhd`, wherever in the file it is) for the length, and refuses what is not an MP4 or MOV, under 3 seconds, or over what its kind takes |
 | What is left to Instagram | The codec, the frame rate, the proportion and where `moov` sits are not checked here: phones write `moov` at the end, and refusing those files would refuse most of them. When Instagram cannot prepare a video the post fails with "confira o formato (MP4 ou MOV, H.264 e AAC)" |
 | The preview | A `<video>` reading the uploaded file from `/api/posts/media/<token>` (signed in), which answers byte ranges: a player asks for nothing else, and the page's policy allows no `blob:` addresses |
-| The way out | "Publicar agora" on a video answers at once with the post `publishing` ("saindo…"): the container exists and Instagram is fetching. The publisher's tick looks at each such container once a minute and publishes it when it says `FINISHED` (`advance`). `ERROR`, a profile gone meanwhile, or fifteen minutes without an answer fail the post with a reason; nothing went out, so it can be sent again. A video found `publishing` after thirty minutes gets the "confira no Instagram" failure, where a picture gets it after ten |
+| The way out | "Publicar agora" on a video answers at once with the post `publishing` ("saindo…"): the container exists and Instagram is fetching. The publisher's tick looks at each such container once a minute and publishes it when it says `FINISHED` (`advance`). `ERROR`, an account no longer connected or no longer its client's, or fifteen minutes without an answer fail the post with a reason; nothing went out, so it can be sent again. A video found `publishing` after thirty minutes gets the "confira no Instagram" failure, where a picture gets it after ten |
 | The public address | `/api/media/<token>.<jpg|mp4|mov>`, still only while the post is `publishing`, now streamed and range-capable |
 | Room | A video is removed from du7 once it is published (the post and its link stay). Unused uploads, and what a died upload left, go after a day with the other orphans |
 | A Reel on the grid | Always (`share_to_feed=true`) |
@@ -221,8 +228,7 @@ unreliable), and a server setting for the largest upload (it is Instagram's 300 
 2. Do their Stories carry links or polls? Same answer.
 3. Are the clients' profiles Business or Creator accounts? Meta's reference now says
    "professional accounts" for publishing in general, but an older page limited Stories to
-   Business accounts: to be tried with a Creator profile. `ig_profile.account_type` already
-   records which is which.
+   Business accounts: to be tried with a Creator profile.
 4. How long and how heavy is a typical video? That says whether du7's line carries it.
 5. Should a Reel stay off the profile's grid sometimes?
 

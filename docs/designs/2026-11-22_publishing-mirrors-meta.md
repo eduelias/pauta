@@ -1,9 +1,9 @@
 # Publicações follows Meta's model: a portfolio's Instagram accounts, assigned to clients
 
-- **Status:** proposed on 2026-11-22, for review before any code. It changes the publishing
-  beta (`feat/publishing-beta`, on acceptance only) before it reaches production. Revised
-  the same day after each review stage; the reports are in
-  [`egm-review-publishing-mirrors-meta/`](egm-review-publishing-mirrors-meta/).
+- **Status:** built on 2026-11-22, on the publishing beta (`feat/publishing-beta`, on
+  acceptance only), after the review whose reports are in
+  [`egm-review-publishing-mirrors-meta/`](egm-review-publishing-mirrors-meta/). The plan
+  at the end is kept as it was followed.
 - **Reads with:** [`publishing-spec.md`](../publishing-spec.md) (what the beta does today),
   [`app-review.md`](../app-review.md) (Meta's review, not yet submitted), and decision 8,
   [`0008-campaign-tracking.md`](../decisions/0008-campaign-tracking.md) (how the ads side

@@ -126,12 +126,17 @@ code changes.
 **`instagram_basic`**
 
 > Pauta is a work-management tool for small marketing agencies in Brazil. An agency records
-> one row per client. After a client's Instagram professional account is shared with our app
-> through Facebook Login for Business, we call `/me/assigned_instagram_accounts` and read
-> only the account id and username. We use them for two things: to show the agency which
-> profile is connected to which client, and to confirm that the shared profile matches the
-> handle the agency recorded for that client, so a post cannot be published to the wrong
-> client's profile. We do not read or store media, insights, or any other profile data.
+> one row per client. After a business shares its Instagram professional accounts with our
+> app through Facebook Login for Business, we call `/me/assigned_instagram_accounts` and read
+> only each account's id and username. We use them for two things: to show the agency which
+> accounts it can publish to, so that an administrator assigns each one to the client it
+> belongs to, and to ask that administrator to confirm when an account's handle is the one
+> recorded for a different client, so a post is not published to the wrong client's profile.
+> We do not read or store media, insights, or any other profile data.
+
+This text changed on 2026-11-22, when the username stopped being a condition for
+connecting. An earlier version is saved in Meta's dashboard: the owner saves this one there
+before submitting.
 
 **`instagram_content_publish`**
 
@@ -149,15 +154,15 @@ code changes.
 Record one pass, no cuts, showing a real account:
 
 1. Sign in to Pauta and open **Publicações**.
-2. Pick a client and press **Conectar Instagram**. Show Meta's login, the portfolio and the
-   Instagram account being selected, and the confirmation screen.
-3. Back in Pauta, show the client's row listing the connected `@` — this is `instagram_basic`
-   being used, and the only thing it is used for.
+2. Press **Conectar Instagram**. Show Meta's login, the portfolio and the Instagram account
+   being selected, and the confirmation screen.
+3. Back in Pauta, show the account listed with its `@`, and choose its client: this is
+   `instagram_basic` being used.
 4. Press **Nova publicação**, choose the client, add the image and caption, and set a time a
    few minutes ahead. Show the post listed as *agendada*.
 5. Wait for it to publish by itself. Show it as *publicada* and open **Ver no Instagram** —
    this is `instagram_content_publish`.
-6. Press **Desconectar** on the profile to show that the agency can revoke it.
+6. Press **Desconectar** on the portfolio to show that the agency can revoke it.
 
 ## Notes
 
