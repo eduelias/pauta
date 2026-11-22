@@ -150,6 +150,32 @@ to @du7dev. Instagram fetched `/api/media/<token>.jpg` once (a GET, 2 ms), and t
 publish call took 9,9 seconds: the wait is Instagram preparing the container. The permalink
 came back and opens. The scheduler has not published a real post yet.
 
+**The first connection under the portfolio model (2026-11-22).** After the upgrade on
+acceptance no login at Meta went through, so the connection was registered by hand from a
+token acceptance already held:
+
+- Signing in with a personal Instagram account, and with `@pautacc` (whose Instagram Tester
+  invitation is still pending), each ended in Meta's "Feature Unavailable: Facebook Login is
+  currently unavailable for this app". Neither holds an accepted role on the app, and the
+  app is live with no App Review approved.
+- One attempt through **Continue with Facebook** ended the same way. Afterwards the
+  browser's Meta session was the business identity of `@pautacc`, not the personal Facebook
+  account that administers the app, so it is not established that the administrator's own
+  login is refused. That is the first thing to try again.
+- From the work VPN, Instagram's login page answered 429 before any of this.
+- Meta asks for the Facebook password even with a session open, because the dialog is
+  opened with `prompt=login`.
+
+What was done instead, on du7, with the app's own code and one of the two tokens of the old
+per-profile connections: `/me` gave the portfolio (`client_business_id` and its name),
+`/me/assigned_instagram_accounts` both accounts, the token was kept under `biz-<id>` and
+the two old keys dropped, and `Posts.save_connection` stored the connection. It is what a
+login's `finish` and callback do, without the code exchange. Both accounts kept their
+clients, the notices left the 7 scheduled posts, and a read of each account's publishing
+limit worked through the new key. The token file from before is
+`pauta.db.ig-tokens.bak-pre-adopt` on acceptance. A real login under this model has still
+not been seen to work.
+
 ## What it would take for other people's profiles
 
 `app-review.md` holds the live checklist: what is already set on the app, the irreversible
