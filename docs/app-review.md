@@ -8,9 +8,12 @@
   App settings, Data handling and Reviewer instructions. Only **Allowed usage** is open, and
   everything left in it is the owner's to do or Meta's to catch up on. Nothing has been
   submitted yet.
-- **Status, 2026-11-22:** the screencast is recorded and uploaded under both permissions,
-  and both descriptions at Meta say what the code now does. What is left in **Allowed
-  usage** is the three agreements, then Submit: both are the owner's.
+- **Status, 2026-11-22: submitted.** The owner ticked the three agreements, accepted the
+  Platform Terms and submitted; Meta shows **Review in progress** and says most
+  submissions are reviewed within 20 days. A submission in review can no longer be edited
+  or cancelled. Before submitting, the reviewer instructions were rewritten for the
+  current flow (portfolio, accounts per client, formats). What is left is to wait, to
+  answer Meta if it writes, and to send the reviewer invitation if it asks for access.
 - **The app:** Pauta Publicações (acc), App ID `29400025989594205`, in the Du7 Technology
   Services portfolio. Permissions `instagram_basic` and `instagram_content_publish`, both at
   "Ready for testing" (Standard Access).
