@@ -27,6 +27,14 @@ Concluído. UI is Brazilian Portuguese; code, comments and docs are English.
   `tests/fakegraph.py`; never call the real one.
 - `src/pauta/obs.py`: JSON request logs (route patterns, never raw paths, bodies or personal
   data) and the numbers behind `GET /metrics` (loopback only, for du7's watchdog).
+- `src/pauta/push.py`: notifications on people's own devices (Web Push), switched on per
+  device on Perfil. A push is empty: it wakes the device's service worker (`static/sw.js`,
+  notifications only, no cache), which reads what to show from `POST /api/push/news` as the
+  person signed in, so nothing of the team's data goes through a push service and the only
+  crypto is the VAPID signature (`cryptography`, which `webauthn` already brings). The
+  `Store` calls `on_news` after a new request, a status change or a comment; the signing key
+  is a file next to the DB; a device's address is only called on a known push service.
+  Tests use `tests/fakepush.py`; never call a real one.
 - `src/pauta/usage.py`: the usage log (decision 11): the fixed table of events and prop keys,
   the cleaning `POST /api/usage` (`routes/usage.py`, a quiet route) applies to the client's
   batches, and the `pauta usage` report. Rows hold the account id, never a name, nothing

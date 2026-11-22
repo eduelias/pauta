@@ -34,6 +34,7 @@ from .db import (
 )
 from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
+from .push import Push
 from .ratelimit import RateLimiter
 from .routes import META_DOWN as META_DOWN  # the tests import it from here
 from .routes import (
@@ -47,6 +48,7 @@ from .routes import (
     team,
     usage,
 )
+from .routes import push as push_routes
 
 STATIC = assets.STATIC
 MAX_BODY = 256 * 1024
@@ -100,11 +102,14 @@ def make_handler(
     metrics: obs.Metrics | None = None,
     drive: OneDrive | None = None,
     meta: Meta | None = None,
+    push: Push | None = None,
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
+    push = push or Push(store, contact=auth.home or "")
+    store.on_news = push.tell_others  # a new request, a status, a comment: the others' devices
     meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
     meta.on_change = store.sync_connections  # the connection rows follow the token files...
     store.sync_connections(meta.connections())  # ...from the start (a migrated file too)
@@ -493,4 +498,5 @@ def make_handler(
     # the rest of /api, by area; same table, same order as before the split
     for area in (requests, clients, campaigns, finance, team, account, usage):
         area.install(route, store, auth, drive, meta)
+    push_routes.install(route, store, auth, push)
     return Handler

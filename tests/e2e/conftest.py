@@ -42,11 +42,17 @@ def live(store, drive, meta):
 
 
 @pytest.fixture(scope="session")
-def browser():
+def chromium():
+    """Playwright itself, once per worker: a second one in the same process is refused."""
     with pw.sync_playwright() as p:
-        b = p.chromium.launch()
-        yield b
-        b.close()
+        yield p.chromium
+
+
+@pytest.fixture(scope="session")
+def browser(chromium):
+    b = chromium.launch()
+    yield b
+    b.close()
 
 
 @pytest.hookimpl(wrapper=True)

@@ -12,6 +12,8 @@ authors = [{ name = "Eduardo Elias Saleh" }]
 dependencies = [
     # the one exception to "stdlib only": passkey signature checks need real crypto
     "webauthn>=2.2,<4",
+    # webauthn's own crypto library, named because push.py signs with it too
+    "cryptography>=42",
 ]
 
 [project.urls]

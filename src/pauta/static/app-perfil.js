@@ -55,6 +55,9 @@ async function viewProfile() {
       <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
       <div id="mv-me"></div>
     </section>
+    <section class="panel mt" id="push"><div class="panel-head"><h2>${icon("bell")}Notificações</h2></div>
+      <p class="muted small" style="margin-top:-6px">Um aviso neste aparelho quando outra pessoa cria um pedido, muda o status ou comenta. Vale por aparelho: ative em cada um em que quiser receber.</p>
+      <div id="pushbody"></div></section>
     <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
       <p class="muted small" style="margin-top:-6px">Sair encerra a Pauta em todos os aparelhos em que você entrou; as passkeys continuam valendo para entrar de novo.</p>
       <button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></section>` : ""}
@@ -73,6 +76,7 @@ async function viewProfile() {
   $("#addkey")?.addEventListener("click", async () => { if (await addPasskey()) viewProfile(); });
   $("#newlink")?.addEventListener("click", () => makeMoveLink("me", ME.name, true));
   $("#logout")?.addEventListener("click", logout);
+  loadPush();
   $$("[data-relabel]").forEach((b) => b.addEventListener("click", async () => {
     const label = prompt("Nome deste aparelho (por exemplo “iPhone do Piero”)", b.dataset.label);
     if (label === null) return;
@@ -84,6 +88,64 @@ async function viewProfile() {
     try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
     catch (e) { toast(e.message, true); }
   }));
+}
+
+// ---------- notificações (pauta/push.py) --------------------------------------------------------
+
+// The switch is per device: the browser holds the subscription, the server keeps its address
+// under the person signed in. Switching on registers the worker (sw.js), which only shows
+// notifications. On an iPhone the browser offers none of this until the Pauta is installed.
+const pushCapable = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const b64bytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+async function pushSubscription() {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function pushOn() {
+  // first thing after the tap: an iPhone only asks the person from a tap
+  if (await Notification.requestPermission() !== "granted") throw new Error("as notificações não foram liberadas neste aparelho");
+  const { key } = await api("GET", "/api/push");
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64bytes(key) });
+  await api("POST", "/api/push", { endpoint: sub.endpoint });
+}
+
+async function pushOff() {
+  const sub = await pushSubscription();
+  if (!sub) return;
+  await api("POST", "/api/push/off", { endpoint: sub.endpoint });
+  await sub.unsubscribe();
+}
+
+// A device with notifications on says so again each time the Pauta opens: signing out
+// forgets the person's devices, and whoever signs in here next is who gets the pushes.
+async function pushResume() {
+  if (!ME.auth || !pushCapable() || Notification.permission !== "granted") return;
+  const sub = await pushSubscription();
+  if (sub) await api("POST", "/api/push", { endpoint: sub.endpoint });
+}
+
+async function loadPush() {
+  const box = $("#pushbody");
+  if (!box) return;
+  const blocked = pushCapable() && Notification.permission === "denied";
+  const on = pushCapable() && !blocked && Boolean(await pushSubscription());
+  if (!box.isConnected) return;
+  box.innerHTML = !pushCapable() ? `<p class="muted small">Este navegador não recebe notificações. No iPhone, instale a Pauta primeiro: no Safari, toque em Compartilhar e em “Adicionar à Tela de Início”, abra a Pauta por lá e volte a esta tela.</p>`
+    : blocked ? `<p class="muted small">As notificações da Pauta estão bloqueadas neste aparelho. Libere nos ajustes do aparelho (ou do navegador) e volte aqui.</p>`
+    : on ? `<div class="member"><div class="who"><b>Ativadas neste aparelho</b></div><button class="btn ghost small" id="pushoff">Desativar</button></div>`
+    : `<button class="btn" id="pushon">${icon("bell")}Ativar neste aparelho</button>`;
+  const flip = (b, work, done) => b?.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await work(); track("settings_changed", { section: "notificacoes" }); toast(done); }
+    catch (e) { toast(e.message, true); }
+    loadPush();
+  });
+  flip($("#pushon"), pushOn, "Notificações ativadas neste aparelho");
+  flip($("#pushoff"), pushOff, "Notificações desativadas neste aparelho");
 }
 
 // The OneDrive card: connect with a code (device code flow), see the account, disconnect.

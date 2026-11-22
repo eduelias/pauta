@@ -7,6 +7,17 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Notificações no celular e no computador.** Em Perfil → Notificações, "Ativar neste
+  aparelho" faz a Pauta avisar quando outra pessoa cria um pedido, muda o status ou comenta
+  (quem fez a mudança não recebe o próprio aviso). Tocar no aviso abre o pedido. Vale por
+  aparelho: cada pessoa ativa nos que quiser, e "Sair em todos os aparelhos" desliga todos.
+  No iPhone é preciso ter a Pauta instalada na Tela de Início (Safari → Compartilhar →
+  Adicionar à Tela de Início) e abrir por lá. O aviso em si não leva nenhum dado do time:
+  ele só acorda o aparelho, que busca o texto direto na Pauta, com a pessoa que está
+  conectada nele.
+
 ## [1.16.1] - 2026-11-20
 
 ### Changed

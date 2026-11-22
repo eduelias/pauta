@@ -481,6 +481,7 @@ name = "pauta"
 version = "1.16.1"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "webauthn" },
 ]
 
@@ -498,6 +499,7 @@ e2e = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "playwright", marker = "extra == 'e2e'", specifier = ">=1.45" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest", marker = "extra == 'e2e'", specifier = ">=8" },
