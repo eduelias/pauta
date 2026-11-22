@@ -7,7 +7,7 @@ import pytest
 
 from pauta import auth as auth_mod
 from pauta.auth import COOKIE, Auth, AuthError, device_label
-from pauta.db import STARTS, Invalid, NotFound, Store
+from pauta.db import SCHEMA_VERSION, STARTS, Invalid, NotFound, Store
 from softpasskey import SoftPasskey
 
 
@@ -389,7 +389,8 @@ def test_schema_v14_gains_the_start_screen(tmp_path):
     conn.close()
     store = Store(tmp_path / "old.db")
     with store.db() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == "15"
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
     assert _account(store, aid)["start"] == ""
     Auth(store, enabled=True, rp_id="localhost", origins=["http://localhost"]).set_start(
         aid, "quadro"

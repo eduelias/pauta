@@ -103,6 +103,8 @@ def install(route, store, auth, drive, meta):
     def logout(self, viewer, _body):
         if auth.enabled:  # ends this person's sessions on every device, not just this one
             auth.end_sessions(viewer["account"])
+            # signed out everywhere: no device of theirs is told anything from here on
+            store.push_forget(account=viewer["account"])
         return {"ok": True}, auth.clear_cookie(self._secure())
 
     # ---- the person's own passkeys (Perfil, decision 10) ------------------------------

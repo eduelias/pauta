@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, meta, obs
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Raise this in a release whose server no longer works with the page an earlier release
 # loaded: every open tab then reloads itself instead of only offering to. It is half of the
@@ -34,6 +34,7 @@ SCHEMA_VERSION = 15
 RELOAD_EPOCH = 1
 # how long the server trusts its copy of the mark before reading the file again
 RELOAD_RECHECK_SECONDS = 2.0
+PUSH_DEVICES = 10  # devices with notifications on, per person
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -180,6 +181,12 @@ CREATE TABLE IF NOT EXISTS report_link (
     created_by INTEGER REFERENCES account(id), expires TEXT NOT NULL, revoked TEXT
 );
 CREATE INDEX IF NOT EXISTS report_link_campaign ON report_link(campaign);
+CREATE TABLE IF NOT EXISTS push_sub (
+    id INTEGER PRIMARY KEY,
+    account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE, seen INTEGER NOT NULL DEFAULT 0,
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -644,6 +651,9 @@ class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._reload: tuple[float, str] = (0.0, "")  # (good until, the mark)
+        # called with who did it after a new request, a status change or a comment is
+        # saved; server.py points it at the notifications (push.py)
+        self.on_news = lambda by: None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript(SCHEMA)
@@ -709,6 +719,7 @@ class Store:
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
+            # v16: push_sub (a device that asked for notifications, push.py) is one more
             # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "
@@ -2033,6 +2044,7 @@ class Store:
             db.execute(
                 "INSERT INTO event(request, account, kind) VALUES (?,?,'created')", (rid, by)
             )
+        self.on_news(by)
         return self.request(rid)
 
     def update_request(self, rid: int, data: dict, by: int | None) -> dict:
@@ -2064,6 +2076,8 @@ class Store:
                     "INSERT INTO event(request, account, kind, text) VALUES (?,?,'edited',?)",
                     (rid, by, ", ".join(edited)),
                 )
+        if "status" in changed:
+            self.on_news(by)
         return self.request(rid)
 
     def comment(self, rid: int, text: str, by: int | None) -> dict:
@@ -2078,7 +2092,82 @@ class Store:
                 (rid, by, text),
             )
             db.execute("UPDATE request SET updated=datetime('now') WHERE id=?", (rid,))
+        self.on_news(by)
         return self.request(rid)
+
+    # ---- notifications (push.py) -------------------------------------------------------------
+
+    def push_subscribe(self, account: int, endpoint: str) -> None:
+        """This device gets a push from now on (nothing older than this moment). A device
+        belongs to whoever enabled it last; a person keeps their PUSH_DEVICES newest."""
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO push_sub(account, endpoint, seen) "
+                "VALUES (?, ?, (SELECT COALESCE(MAX(id), 0) FROM event)) "
+                "ON CONFLICT(endpoint) DO UPDATE SET account=excluded.account, "
+                "seen=CASE WHEN push_sub.account=excluded.account THEN push_sub.seen "
+                "ELSE excluded.seen END",
+                (account, endpoint),
+            )
+            db.execute(
+                "DELETE FROM push_sub WHERE account=? AND id NOT IN "
+                "(SELECT id FROM push_sub WHERE account=? ORDER BY id DESC LIMIT ?)",
+                (account, account, PUSH_DEVICES),
+            )
+
+    def push_forget(self, endpoint: str | None = None, account: int | None = None) -> None:
+        """Drop one device (it was switched off, or its push service says it is gone), one
+        person's device, or all of a person's (they signed out everywhere)."""
+        where = [f"{k}=?" for k, v in (("endpoint", endpoint), ("account", account)) if v]
+        if where:
+            with self.db() as db:
+                db.execute(
+                    f"DELETE FROM push_sub WHERE {' AND '.join(where)}",
+                    tuple(v for v in (endpoint, account) if v),
+                )
+
+    def push_targets(self, by: int | None) -> list[str]:
+        """The devices to tell about something `by` did: everyone else's who can sign in."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT p.endpoint FROM push_sub p JOIN account a ON a.id=p.account "
+                "WHERE a.disabled=0 AND p.account IS NOT ? ORDER BY p.id",
+                (by,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def push_news(self, account: int, endpoint: str) -> list[dict]:
+        """What this device has not shown yet of what others did (new requests, status
+        changes, comments), oldest first, and it counts as shown from here on. With nothing
+        new it is the latest one of the last day again: a push always has something to show
+        (two changes in a row send two, and the first one's read takes both)."""
+        news = (
+            "SELECT e.id, e.kind, e.text, e.request, a.name AS by_name, c.name AS client, "
+            "r.kind AS request_kind, r.what, r.missing FROM event e "
+            "JOIN request r ON r.id=e.request JOIN client c ON c.id=r.client "
+            "LEFT JOIN account a ON a.id=e.account "
+            "WHERE e.kind IN ('created','status','comment') AND e.account IS NOT ? "
+        )
+        with self.db() as db:
+            sub = db.execute(
+                "SELECT id, seen FROM push_sub WHERE endpoint=? AND account=?",
+                (endpoint, account),
+            ).fetchone()
+            if not sub:
+                raise NotFound("este aparelho não está com as notificações ativadas")
+            rows = db.execute(
+                f"{news} AND e.id > ? ORDER BY e.id DESC LIMIT 3", (account, sub["seen"])
+            ).fetchall()
+            if not rows:
+                rows = db.execute(
+                    f"{news} AND e.at >= datetime('now','-1 day') ORDER BY e.id DESC LIMIT 1",
+                    (account,),
+                ).fetchall()
+            db.execute(
+                "UPDATE push_sub SET seen=(SELECT COALESCE(MAX(id), 0) FROM event) WHERE id=?",
+                (sub["id"],),
+            )
+        return [dict(r) for r in reversed(rows)]
 
     # ---- files (the bytes are in OneDrive) ---------------------------------------------------
 

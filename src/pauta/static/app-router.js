@@ -110,6 +110,7 @@ async function enter() {
   // of the Painel (replaceState: Back doesn't return to an address that would come here again)
   if (hashParts().path === "/" && startScreen()) history.replaceState(null, "", `#/${startScreen()}`);
   renderShell();
+  pushResume().catch(() => {});  // not worth a message: Perfil shows how it stands
   await route();
 }
 
@@ -118,6 +119,8 @@ async function start() {
   USAGE.dev = deviceClass();
   const open = () => /^\/(entrar|mudar)\//.test(hashParts().path);
   window.addEventListener("hashchange", () => (ME.logged_in || open()) ? route() : showGate());
+  // a tap on a notification while the Pauta is open: the worker (sw.js) names the request
+  navigator.serviceWorker?.addEventListener("message", (e) => { if (String(e.data?.go || "").startsWith("#/")) location.hash = e.data.go; });
   if (open()) return route();
   if (!ME.logged_in) { enterScreen("entrar"); return showGate(); }
   await enter();
