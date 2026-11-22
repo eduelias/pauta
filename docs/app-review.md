@@ -8,6 +8,9 @@
   App settings, Data handling and Reviewer instructions. Only **Allowed usage** is open, and
   everything left in it is the owner's to do or Meta's to catch up on. Nothing has been
   submitted yet.
+- **Status, 2026-11-22:** the screencast is recorded and uploaded under both permissions,
+  and both descriptions at Meta say what the code now does. What is left in **Allowed
+  usage** is the three agreements, then Submit: both are the owner's.
 - **The app:** Pauta Publicações (acc), App ID `29400025989594205`, in the Du7 Technology
   Services portfolio. Permissions `instagram_basic` and `instagram_content_publish`, both at
   "Ready for testing" (Standard Access).
@@ -31,9 +34,8 @@ The declaration added a **Review** section to the dashboard (Testing, Verificati
 Review) and opened a submission that already lists what will be reviewed:
 `instagram_content_publish`, `instagram_basic` and `public_profile`, each "In 1 use case".
 
-1. **The screencasts.** One unbroken recording per the script below, uploaded under each of
-   `instagram_content_publish` and `instagram_basic`. It has to be made by hand on a real
-   account; nothing automates it.
+1. **The screencasts.** Done on 2026-11-22: one recording per the script below, uploaded
+   under each of `instagram_content_publish` and `instagram_basic` (see "The recording").
 2. **The three "agree to allowed usage" checkboxes**, one per permission. They are legal
    undertakings about how Du7 will use the data, so the owner ticks them.
 3. **The API test calls** to register themselves, which is Meta's side (see below).
@@ -50,8 +52,8 @@ texts below). What is left inside it, per permission:
 | | `instagram_content_publish` | `instagram_basic` | `public_profile` |
 |---|---|---|---|
 | Description | done | done | not asked |
-| Screencast | **to record** | **to record** | not asked |
-| API test calls | 0 of 1 | 0 of 1 | 0, none required |
+| Screencast | uploaded 2026-11-22 | uploaded 2026-11-22 | not asked |
+| API test calls | completed | completed | none required |
 | Agree to allowed usage | **owner** | **owner** | **owner** |
 
 On the API test calls: the acceptance unit on du7 runs with
@@ -135,19 +137,29 @@ code changes.
 > We do not read or store media, insights, or any other profile data.
 
 This text changed on 2026-11-22, when the username stopped being a condition for
-connecting. An earlier version is saved in Meta's dashboard: the owner saves this one there
-before submitting.
+connecting, and was saved in Meta's dashboard the same day.
 
 **`instagram_content_publish`**
 
-> Inside Pauta, an agency member composes a post for one client: a single image and a
-> caption, with an optional image description. The post is saved and can be reviewed before
-> it goes out. The agency either publishes it immediately or sets a time. The Instagram API
-> has no scheduling, so our server keeps the post and, at that moment, creates a media
-> container with `image_url` and the caption, waits for the container to be ready, and calls
-> `media_publish`. The image is served from an unguessable address on our own domain that
-> answers only while that post is being published, and is closed again immediately after.
-> Nothing is published without an agency member creating it first.
+> Pauta is a work-management tool used by small marketing agencies in Brazil. An agency
+> keeps one record per client. An administrator connects a business portfolio through
+> Facebook Login for Business and assigns each of its Instagram professional accounts to
+> the client it belongs to. Inside Pauta, an agency member composes a post for one of a
+> client's accounts: a feed post (one image, a caption and an optional image description),
+> a Story (one image or a short video) or a Reel (one video and a caption). The post is
+> saved so it can be reviewed before it goes out. The agency then either publishes it
+> straight away or sets a date and time. The Instagram API has no scheduling, so our server
+> keeps the post and, at the chosen moment, calls `/{ig-user-id}/media` with `image_url` or
+> `video_url` (and `media_type` `STORIES` or `REELS` where that applies) and the caption,
+> polls the container until its `status_code` is `FINISHED`, and calls
+> `/{ig-user-id}/media_publish`. We then read the permalink so the agency can open the
+> published post from our interface. The file is served from an unguessable address on our
+> own domain that answers only while that post is being published, and is closed again
+> immediately afterwards. Nothing is published unless an agency member created the post in
+> Pauta first.
+
+Saved in Meta's dashboard on 2026-11-22, in place of the text that described a single image
+only.
 
 ## Screencast script
 
@@ -163,6 +175,18 @@ Record one pass, no cuts, showing a real account:
 5. Wait for it to publish by itself. Show it as *publicada* and open **Ver no Instagram** —
    this is `instagram_content_publish`.
 6. Press **Desconectar** on the portfolio to show that the agency can revoke it.
+
+### The recording (2026-11-22)
+
+Made on acceptance with the owner's browser, signed in to Facebook as the app's
+administrator. It follows the six steps with a feed post to `@du7dev`, scheduled two
+minutes ahead and published by the scheduler
+(`https://www.instagram.com/p/DgC298ZlNa4/`). What was uploaded is an edit of that one
+pass: cropped to the page, the wait for the scheduled minute sped up 16 times, English
+captions under the picture because the interface is in Portuguese, 3 min 40 s. The
+browser was driven by an assistant, and its "working here" marker shows at the top of the
+page throughout; the question Pauta asks before **Desconectar** was answered for it, so
+that one question is not in the picture. Acceptance was reconnected straight afterwards.
 
 ## Notes
 
