@@ -153,14 +153,86 @@ Publishing to a profile the app's own people do not manage needs **Advanced Acce
 Verification. That is the gate between this beta and a client of Piero's. Until then every
 profile is one added by hand to the app's roles.
 
+## Next phase: Stories and Reels (planned, not built)
+
+Planned on 2026-11-22. A scheduler that only posts one image to the feed does not replace
+the tool it was compared with, which publishes every format. Both formats go through the
+permission and the two-step flow the beta already uses (`instagram_content_publish`, a
+container, then `media_publish`): no new permission, no second review, and nothing to add to
+the App Review submission. It is two steps of very different size.
+
+What Instagram takes, read from Meta's documentation on 2026-11-22:
+
+| | Story, image | Story, video | Reel |
+|---|---|---|---|
+| Container | `media_type=STORIES`, `image_url` | `media_type=STORIES`, `video_url` | `media_type=REELS`, `video_url` |
+| File | sRGB JPEG, 8 MB | MOV or MP4, 100 MB, 3 to 60 s | MOV or MP4, 300 MB, 3 s to 15 min |
+| Shape | 9:16 recommended | 9:16 recommended | 9:16 recommended, at most 1920 px wide |
+| Caption | none | none | yes |
+| Also | user tags | user tags | `thumb_offset` or `cover_url` (JPEG, 8 MB), `share_to_feed`, up to 3 collaborators, `audio_name` |
+
+A video is H264 or HEVC with AAC sound, 23 to 60 frames a second, at most 25 Mbps, with no
+edit lists and the `moov` atom at the front of the file. Instagram fetches it from a public
+address, as it does an image, or takes it through a resumable upload
+(`rupload.facebook.com/ig-api-upload/<container>`, open to Facebook Login for Business apps,
+which this is). It then prepares the container: Meta says to read `status_code` once a
+minute, for five minutes at most.
+
+**What the API cannot do**, and no code here changes it:
+
+- A Story takes no sticker: no link, no poll, no location. Mentions go in as user tags.
+- A Reel's sound is the file's own. Music from Instagram's library cannot be attached
+  ("music tagging is only available for original audio"); neither can filters or shopping tags.
+- A Reel cannot be an item of a carousel.
+
+A Reel with library audio, or a Story with a link, is still posted by hand.
+
+### Step 1: image Stories (small)
+
+- `post` gains `kind` (`feed`, `story`, `reel`; an added column, `feed` for every row there is).
+- The form asks which. A Story has no caption and no description field, and its picture is
+  checked against 9:16 where a feed post is checked against 4:5 to 1,91:1.
+- `create_container` sends `media_type=STORIES`. Claiming, the public address that answers
+  only while the post is `publishing`, the states and the failures stay as they are.
+
+### Step 2: Reels and video Stories (the real work)
+
+| Needs | Why, and the plan |
+|---|---|
+| A video comes in as it is | The browser turns a picture into a JPEG; it cannot do that for a video, and du7 does not transcode. The server reads the file's own header: container, size, length, `moov` first. A file that fails is refused with what to change in the export |
+| Room for it | Images are 0,2 MB and stay with their post. A video is up to 300 MB: it is removed once the post is published (the permalink stays), and the upload limit is its own setting |
+| A slower way out | An image is ready at once and the publish call waits 40 seconds. A video takes minutes: the post stays `publishing` with its container, the scheduler's tick reads the status and publishes when it says `FINISHED`, and "Publicar agora" answers at once with "saindo". The rule that fails a post found `publishing` after ten minutes gets a longer clock for video |
+| du7's line | du7 receives the file and Instagram fetches it back, both over du7's own connection. The public address is tried first, since it is what works today; the resumable upload is the fallback if Instagram's fetch of a large file proves unreliable |
+| A cover | `thumb_offset` (a moment in the video) first: no second upload. A separate cover picture later, if asked for |
+| A preview | 9:16, from the file's own address for whoever is signed in. The page's policy allows no `blob:` addresses |
+
+### To ask the team before step 2
+
+1. How many of the Reels they post use music from Instagram's library? Those cannot go
+   through Pauta.
+2. Do their Stories carry links or polls? Same answer.
+3. Are the clients' profiles Business or Creator accounts? Meta's reference now says
+   "professional accounts" for publishing in general, but an older page limited Stories to
+   Business accounts: to be tried with a Creator profile. `ig_profile.account_type` already
+   records which is which.
+4. How long and how heavy is a typical video? That sets the upload limit and says whether
+   du7's line carries it.
+5. Should a Reel also show on the profile's grid (`share_to_feed`) by default?
+
+**Order.** Nothing here starts before Advanced Access is granted. Step 1 can ride along with
+anything. Whether step 2 comes before or after the client's approval link is the owner's
+call: the approval link is what this module set out to sell, and step 2 is what makes it a
+replacement for a scheduler.
+
 ## Not built, and why
 
 | | |
 |---|---|
+| Stories and Reels | Planned as the next phase, above |
 | The client's approval on a link | The step agencies lose hours on. The public report link (decision 12) is the pattern. Next, if the beta is kept |
 | AI drafts for caption and art | Cents per post; needs the brand kit first. Since June 2026 Instagram takes `is_ai_generated` on the container: generated art must send it |
 | A calendar view | The list by state is enough for one profile |
-| Carousels, Reels, Stories, Facebook Pages | One image to the feed proves the path; each of the others is its own container type |
+| Carousels, Facebook Pages | One image to the feed proves the path; each of the others is its own container type. A carousel takes up to 20 items, cropped to the first one's proportion |
 | The tab on the phone | The phone's bar has five fixed slots. The screens work on a phone at `/#/publicacoes`; the bar waits for a decision on which slot gives way |
 | Usage events, `/metrics` | Decision 11's table is the owner's to extend |
 | A post created in Pauta and deleted on Instagram | Pauta is not told. "Tirar da lista" removes it here only |
