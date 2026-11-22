@@ -4,11 +4,12 @@ each refusal becomes."""
 
 import json
 import stat
+import struct
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from fakeinstagram import IG_ID, USERNAME, jpeg
+from fakeinstagram import IG_ID, USERNAME, jpeg, mp4
 from pauta import instagram, publishing
 from pauta.db import Invalid, NotFound
 from pauta.instagram import InstagramError, handle
@@ -231,9 +232,9 @@ def test_a_draft_needs_only_a_client_and_an_image(posts, client):
     assert (p["status"], p["due"], p["caption"], p["client_name"]) == ("draft", None, "Oi", "Du7")
     assert (p["width"], p["height"]) == (1080, 1350)
     assert posts.media_path(p["media"]).read_bytes() == jpeg()
-    with pytest.raises(Invalid, match="envie a imagem de novo"):
+    with pytest.raises(Invalid, match="envie o arquivo de novo"):
         posts.create({"client": client, "media": p["media"]}, None)  # one image, one post
-    with pytest.raises(Invalid, match="envie a imagem de novo"):
+    with pytest.raises(Invalid, match="envie o arquivo de novo"):
         posts.create({"client": client, "media": "x" * 43}, None)
     with pytest.raises(Invalid, match="escolha o cliente"):
         posts.create({"media": p["media"]}, None)
@@ -312,3 +313,186 @@ def test_the_publisher_says_when_a_connection_lapsed(ig_on, fake_ig, posts, clie
     pub.tick()
     p = posts.profile(client)
     assert p["state"] == "expired" and p["error"] == "a conexão venceu"
+
+
+# ---- kinds and video -----------------------------------------------------------------------
+
+
+def reader(raw: bytes):
+    """What the upload route hands keep_video: the next bytes of the body, on request."""
+    left = [raw]
+
+    def read(n: int) -> bytes:
+        chunk, left[0] = left[0][:n], left[0][n:]
+        return chunk
+
+    return read
+
+
+def video(posts, client, kind="reel", seconds=30, **over):
+    raw = mp4(seconds)
+    media = posts.keep_video(reader(raw), len(raw), "mp4")
+    assert (media["media_type"], media["seconds"], media["bytes"]) == ("video", seconds, len(raw))
+    body = {"client": client, "media": media["media"], "caption": "Oi", "kind": kind, **over}
+    return posts.create(body, None)
+
+
+def test_a_videos_length_comes_from_its_own_header(tmp_path):
+    path = tmp_path / "v.mp4"
+    big = struct.pack(">I4sQ", 1, b"mdat", 16 + 40) + bytes(40)  # a box with a 64-bit size
+    good = (
+        (mp4(10), 10),
+        (mp4(42.5, pad=5000, moov_last=True), 42.5),  # the index at the end, as phones write it
+        (mp4(900, wide=True), 900),
+        (mp4(7)[:28] + big + mp4(7)[28:], 7),
+    )
+    for raw, seconds in good:
+        path.write_bytes(raw)
+        assert publishing.video_seconds(path) == seconds
+    to_the_end = struct.pack(">I4s", 0, b"mdat") + bytes(64)  # size 0: the rest of the file
+    bad = (
+        jpeg(),
+        b"",
+        mp4()[:40],  # cut short
+        mp4()[28:],  # no `ftyp` first
+        mp4().replace(b"mvhd", b"free"),  # an index that says nothing of time
+        mp4().replace(b"moov", b"free"),
+        mp4()[:28] + to_the_end,
+        mp4()[:28] + struct.pack(">I4s", 4, b"moov"),  # a box smaller than its own header
+        mp4()[:28] + struct.pack(">I4s", 8 + publishing.MOOV_MAX + 1, b"moov"),
+    )
+    for raw in bad:
+        path.write_bytes(raw)
+        with pytest.raises(Invalid, match="MP4 ou MOV"):
+            publishing.video_seconds(path)
+    zero = mp4(5).replace(struct.pack(">II", 1000, 5000), struct.pack(">II", 0, 5000))
+    path.write_bytes(zero)  # no time scale: no length
+    with pytest.raises(Invalid, match="MP4 ou MOV"):
+        publishing.video_seconds(path)
+
+
+def test_instagrams_rules_by_kind():
+    assert publishing.check_image(jpeg(1080, 1920), "story") == (1080, 1920)
+    with pytest.raises(Invalid, match="9:16"):
+        publishing.check_image(jpeg(1080, 1350), "story")
+    assert publishing.clean_kind(None) == "feed" and publishing.clean_kind("reel") == "reel"
+    with pytest.raises(Invalid, match="Story ou é um Reel"):
+        publishing.clean_kind("carousel")
+    mb = 1024 * 1024
+    publishing.check_video(3, mb, "story")
+    publishing.check_video(60, 100 * mb, "story")
+    publishing.check_video(15 * 60, 300 * mb, "reel")
+    for seconds, size, kind, why in (
+        (30, mb, "feed", "Reel ou como Story"),
+        (2.9, mb, "reel", "pelo menos 3 segundos"),
+        (61, mb, "story", "Story tem no máximo 60 segundos"),
+        (30, 100 * mb + 1, "story", "Story tem no máximo 100 MB"),
+        (15 * 60 + 1, mb, "reel", "Reel tem no máximo 15 minutos"),
+        (30, 300 * mb + 1, "reel", "Reel tem no máximo 300 MB"),
+    ):
+        with pytest.raises(Invalid, match=why):
+            publishing.check_video(seconds, size, kind)
+
+
+def test_what_a_post_keeps_by_kind(posts, client):
+    tall = posts.keep_media(jpeg(1080, 1920), "story")
+    body = {"client": client, "media": tall["media"], "kind": "story"}
+    story = posts.create({**body, "caption": "ninguém vê", "alt_text": "nem isto"}, None)
+    assert (story["kind"], story["media_type"]) == ("story", "image")
+    assert (story["caption"], story["alt_text"]) == ("", "")  # a Story has neither
+    assert posts.update(story["id"], {"caption": "de novo", "alt_text": "x"})["caption"] == ""
+    reel = video(posts, client, alt_text="só imagem do feed tem")
+    assert (reel["kind"], reel["media_type"], reel["caption"]) == ("reel", "video", "Oi")
+    assert (reel["alt_text"], reel["width"], reel["height"]) == ("", 0, 0)
+    assert posts.update(reel["id"], {"alt_text": "x"})["alt_text"] == ""
+    assert posts.media_path(reel["media"]).suffix == ".mp4"
+    assert video(posts, client, kind="story", seconds=45)["kind"] == "story"
+    assert draft(posts, client)["kind"] == "feed"  # what every post was before
+
+    feed_picture = posts.keep_media(jpeg())["media"]
+    for over, why in (
+        ({"media": feed_picture, "kind": "reel"}, "um Reel precisa de um vídeo"),
+        ({"media": feed_picture, "kind": "story"}, "9:16"),  # sent as a feed picture
+        ({"media": feed_picture, "kind": "carousel"}, "Story ou é um Reel"),
+    ):
+        with pytest.raises(Invalid, match=why):
+            posts.create({"client": client, **over}, None)
+    with pytest.raises(Invalid, match="Reel ou como Story"):
+        video(posts, client, kind="feed")
+    with pytest.raises(Invalid, match="60 segundos"):
+        video(posts, client, kind="story", seconds=90)
+
+
+def test_a_video_goes_straight_to_the_disk_or_is_not_kept(posts, monkeypatch):
+    def kept() -> list[str]:
+        return sorted(p.name for p in posts.media_dir.iterdir()) if posts.media_dir.is_dir() else []
+
+    raw = mp4(20, pad=700_000)  # more than one read of it
+    media = posts.keep_video(reader(raw), len(raw), "mov")
+    assert posts.media_path(media["media"]).read_bytes() == raw
+    assert kept() == [f"{media['media']}.mov"]
+    for body, length, ext, why in (
+        (raw[:1000], len(raw), "mp4", "parou no meio"),  # the upload stopped
+        (jpeg(), len(jpeg()), "mp4", "MP4 ou MOV"),
+        (mp4(2), len(mp4(2)), "mp4", "3 segundos"),
+        (mp4(16 * 60), len(mp4(16 * 60)), "mp4", "15 minutos"),
+        (raw, len(raw), "jpg", "300 MB"),  # not a video's name
+        (raw, 0, "mp4", "300 MB"),
+    ):
+        with pytest.raises(Invalid, match=why):
+            posts.keep_video(reader(body), length, ext)
+    monkeypatch.setattr(publishing, "MAX_VIDEO", len(raw) - 1)
+    with pytest.raises(Invalid, match="passa de"):
+        posts.keep_video(reader(raw), len(raw), "mp4")
+    assert kept() == [f"{media['media']}.mov"]  # nothing half-written stays
+    # what a died upload left, and a video no post took, go with the other orphans
+    (posts.media_dir / ".dead.123.tmp").write_bytes(b"x")
+    assert posts.sweep_media(older_than=3600) == 0
+    assert posts.sweep_media(older_than=-1) == 2 and kept() == []
+
+
+def test_what_instagram_is_asked_for_each_kind(ig_on, fake_ig, posts, client):
+    """Against the fake, which refuses what the real one does: a caption on a Story, a Reel
+    that is a picture, a video with no kind."""
+    ig_on.at(ORIGIN)
+    connect(ig_on, fake_ig, posts, client)
+    fake_ig.fail_fetch = True  # nothing listens at ORIGIN; the form is what is looked at here
+    sent = []
+    real = ig_on._post
+
+    def spy(url, form, token=""):
+        sent.append({k: v for k, v in form.items() if k != "appsecret_proof"})
+        return real(url, form, token)
+
+    ig_on._post = spy
+    for args in (
+        (f"{ORIGIN}/u.jpg", "Oi", "alt"),
+        (f"{ORIGIN}/u.jpg", "Oi", "alt", "story"),
+        (f"{ORIGIN}/u.mp4", "Oi", "alt", "story", True),
+        (f"{ORIGIN}/u.mp4", "Oi", "alt", "reel", True),
+    ):
+        with pytest.raises(InstagramError, match="baixar"):
+            ig_on.create_container(IG_ID, *args)
+    jpg, clip = f"{ORIGIN}/u.jpg", f"{ORIGIN}/u.mp4"
+    assert sent == [
+        {"image_url": jpg, "caption": "Oi", "alt_text": "alt"},
+        {"image_url": jpg, "media_type": "STORIES"},
+        {"video_url": clip, "media_type": "STORIES"},
+        {"video_url": clip, "caption": "Oi", "media_type": "REELS", "share_to_feed": "true"},
+    ]
+
+
+def test_a_video_waits_longer_before_it_counts_as_died(posts, client):
+    picture, reel = draft(posts, client), video(posts, client)
+    assert posts.claim(picture["id"]) and posts.claim(reel["id"])
+    with posts.store.db() as db:
+        db.execute("UPDATE post SET started=datetime('now','-11 minutes')")
+    assert posts.fail_stuck() == 1  # the picture: ten minutes is long for one
+    assert posts.post(picture["id"])["status"] == "failed"
+    assert posts.post(reel["id"])["status"] == "publishing"
+    with posts.store.db() as db:
+        db.execute("UPDATE post SET started=datetime('now','-31 minutes')")
+    assert posts.fail_stuck() == 1
+    assert "confira no Instagram" in posts.post(reel["id"])["error"]
+    # nothing to look at: a post that is not waiting comes back as it is
+    assert publishing.advance(posts, None, picture["id"])["status"] == "failed"

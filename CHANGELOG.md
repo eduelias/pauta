@@ -26,6 +26,14 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   Esquema v15 (`ig_profile`, `post`). API: `GET
   /api/publishing`, `POST`/`DELETE /api/clients/{id}/instagram`, `/api/posts…`. Desenho,
   limites e o que falta: `docs/publishing-spec.md`.
+- **Publicações: Stories e Reels (beta).** Em Nova publicação, **Formato** escolhe entre
+  Feed, Story e Reel. Um Story é uma imagem vertical 9:16 ou um vídeo de 3 a 60 segundos,
+  sem legenda; um Reel é um vídeo de 3 segundos a 15 minutos, com legenda, que também
+  aparece na grade do perfil. O vídeo (MP4 ou MOV, até 300 MB) sobe como foi exportado, com
+  o progresso na tela, e dá para assistir antes de publicar. Como o Instagram leva alguns
+  minutos para preparar um vídeo, a publicação fica como "saindo…" e a lista mostra quando
+  saiu ou por que falhou. O que a API do Instagram não permite continua manual: link ou
+  enquete no Story e música da biblioteca do Instagram no Reel.
 
 ### Changed
 

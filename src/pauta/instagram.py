@@ -62,6 +62,11 @@ DAILY_LIMIT = "este perfil atingiu o limite de publicações do Instagram nas ú
 NO_FETCH = "o Instagram não conseguiu baixar a imagem; tente de novo"
 BAD_IMAGE = "o Instagram recusou a imagem (formato ou proporção)"
 NOT_READY = "o Instagram demorou para preparar a imagem; tente de novo"
+BAD_VIDEO = (
+    "o Instagram não conseguiu preparar o vídeo: confira o formato (MP4 ou MOV, H.264 e "
+    "AAC) e tente de novo"
+)
+SLOW_VIDEO = "o Instagram demorou demais para preparar o vídeo; tente de novo"
 BAD_STATE = "este pedido de conexão venceu; comece de novo"
 DENIED = "a conexão foi cancelada no Instagram"
 NOT_PROFESSIONAL = "o perfil precisa ser profissional (Empresa ou Criador de conteúdo)"
@@ -379,23 +384,46 @@ class Instagram:
 
     # ---- publishing -----------------------------------------------------------------------
 
-    def create_container(self, ig_id: str, image_url: str, caption: str, alt_text: str = "") -> str:
-        form = {"image_url": image_url, "caption": caption}
-        if alt_text:
+    def create_container(
+        self,
+        ig_id: str,
+        url: str,
+        caption: str,
+        alt_text: str = "",
+        kind: str = "feed",
+        video: bool = False,
+    ) -> str:
+        """What Instagram is asked to fetch and prepare: a picture for the feed, a Story (a
+        picture or a video, no caption) or a Reel (a video, also shown on the profile's
+        grid)."""
+        form = {"video_url" if video else "image_url": url}
+        if kind == "story":
+            form["media_type"] = "STORIES"
+        else:
+            form["caption"] = caption
+        if kind == "reel":
+            form.update(media_type="REELS", share_to_feed="true")
+        if alt_text and kind == "feed":
             form["alt_text"] = alt_text
         status, doc = self._post(f"{self.graph}/{ig_id}/media", form, self._token(ig_id))
         if status != 200 or not doc.get("id"):
             raise self._fail(status, doc, "container")
         return str(doc["id"])
 
+    def container_state(self, ig_id: str, container: str) -> str:
+        """One read of where a container stands: IN_PROGRESS, FINISHED, PUBLISHED, ERROR,
+        EXPIRED."""
+        status, doc = self._get(
+            f"{self.graph}/{container}", {"fields": "status_code"}, self._token(ig_id)
+        )
+        if status != 200:
+            raise self._fail(status, doc, "status")
+        return str(doc.get("status_code") or "")
+
     def wait_ready(self, ig_id: str, container: str) -> None:
         """Until Instagram has fetched and prepared the image."""
-        token = self._token(ig_id)
         for attempt in range(READY_TRIES):
-            status, doc = self._get(f"{self.graph}/{container}", {"fields": "status_code"}, token)
-            if status != 200:
-                raise self._fail(status, doc, "status")
-            state = str(doc.get("status_code") or "")
+            state = self.container_state(ig_id, container)
             if state in ("FINISHED", "PUBLISHED"):
                 return
             if state in ("ERROR", "EXPIRED"):

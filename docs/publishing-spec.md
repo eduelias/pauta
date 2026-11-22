@@ -18,6 +18,7 @@
 | | |
 |---|---|
 | Connect | An admin picks a client and clicks **Conectar Instagram**. Meta's login opens; the profile shared there becomes that client's. One profile serves one client, and the client's own `@` (its record) says which profile is which |
+| Formats | A picture for the feed, a Story (a picture or a video) or a Reel: see "Stories and Reels" below |
 | Compose | **Nova publicação**: the client, one image, the caption (2.200 characters, 30 hashtags, 20 mentions, Instagram's limits), an optional description of the image, an optional moment |
 | The image | Any picture the browser can open. The form turns it into a JPEG at most 1440 px wide and refuses a proportion outside 4:5 to 1,91:1 before anything is sent. The server checks again (JPEG, 8 MB, proportion, 320 px) by reading the file's own header |
 | Publish | **Publicar agora** waits for Instagram (a few seconds) and says how it ended. **Agendar** keeps the post; a background thread publishes what is due, every 20 seconds |
@@ -80,8 +81,9 @@ novo": whether it went out is not known, and a blind retry could post it twice.
   connected_by, connected_at)`: who, never a token. `post(id, client, caption, alt_text,
   media, width, height, status, due, container, media_id, permalink, error, account,
   created, updated, started, published_at)`. Schema v15, two new tables, nothing else moves.
-- Images: `<db>.media/<token>.jpg`, removed with their post; one nobody attached to a post
-  goes after a day.
+  Schema v16 adds `kind` and `media_type` to `post`.
+- Files: `<db>.media/<token>.<jpg|mp4|mov>`, removed with their post (a video as soon as it
+  is published); one nobody attached to a post goes after a day.
 - Moments are UTC in the database and the browser's own time on screen.
 
 ## Setting it up (acceptance)
@@ -153,13 +155,15 @@ Publishing to a profile the app's own people do not manage needs **Advanced Acce
 Verification. That is the gate between this beta and a client of Piero's. Until then every
 profile is one added by hand to the app's roles.
 
-## Next phase: Stories and Reels (planned, not built)
+## Stories and Reels (built 2026-11-22, on acceptance)
 
-Planned on 2026-11-22. A scheduler that only posts one image to the feed does not replace
-the tool it was compared with, which publishes every format. Both formats go through the
-permission and the two-step flow the beta already uses (`instagram_content_publish`, a
-container, then `media_publish`): no new permission, no second review, and nothing to add to
-the App Review submission. It is two steps of very different size.
+Planned and built the same day, at the owner's request, ahead of Advanced Access: it is on
+acceptance only, like the rest of this module. A scheduler that only posts one image to the
+feed does not replace the tool it was compared with, which publishes every format. Both
+formats go through the permission and the two-step flow the beta already used
+(`instagram_content_publish`, a container, then `media_publish`): no new permission, no
+second review, and nothing to add to the App Review submission. The form still opens on
+**Feed**, so the screencast script in `app-review.md` reads as before.
 
 What Instagram takes, read from Meta's documentation on 2026-11-22:
 
@@ -171,42 +175,46 @@ What Instagram takes, read from Meta's documentation on 2026-11-22:
 | Caption | none | none | yes |
 | Also | user tags | user tags | `thumb_offset` or `cover_url` (JPEG, 8 MB), `share_to_feed`, up to 3 collaborators, `audio_name` |
 
-A video is H264 or HEVC with AAC sound, 23 to 60 frames a second, at most 25 Mbps, with no
-edit lists and the `moov` atom at the front of the file. Instagram fetches it from a public
-address, as it does an image, or takes it through a resumable upload
-(`rupload.facebook.com/ig-api-upload/<container>`, open to Facebook Login for Business apps,
-which this is). It then prepares the container: Meta says to read `status_code` once a
-minute, for five minutes at most.
+A video is H264 or HEVC with AAC sound, 23 to 60 frames a second, at most 25 Mbps; Meta's
+page also asks for no edit lists and the `moov` atom at the front of the file. Instagram
+fetches it from a public address, as it does an image, and then prepares the container: Meta
+says to read `status_code` once a minute, for five minutes at most.
 
 **What the API cannot do**, and no code here changes it:
 
-- A Story takes no sticker: no link, no poll, no location. Mentions go in as user tags.
+- A Story takes no sticker: no link, no poll, no location.
 - A Reel's sound is the file's own. Music from Instagram's library cannot be attached
   ("music tagging is only available for original audio"); neither can filters or shopping tags.
 - A Reel cannot be an item of a carousel.
 
-A Reel with library audio, or a Story with a link, is still posted by hand.
+A Reel with library audio, or a Story with a link, is still posted by hand. The form says so
+under the file field.
 
-### Step 1: image Stories (small)
+### What was built
 
-- `post` gains `kind` (`feed`, `story`, `reel`; an added column, `feed` for every row there is).
-- The form asks which. A Story has no caption and no description field, and its picture is
-  checked against 9:16 where a feed post is checked against 4:5 to 1,91:1.
-- `create_container` sends `media_type=STORIES`. Claiming, the public address that answers
-  only while the post is `publishing`, the states and the failures stay as they are.
-
-### Step 2: Reels and video Stories (the real work)
-
-| Needs | Why, and the plan |
+| | |
 |---|---|
-| A video comes in as it is | The browser turns a picture into a JPEG; it cannot do that for a video, and du7 does not transcode. The server reads the file's own header: container, size, length, `moov` first. A file that fails is refused with what to change in the export |
-| Room for it | Images are 0,2 MB and stay with their post. A video is up to 300 MB: it is removed once the post is published (the permalink stays), and the upload limit is its own setting |
-| A slower way out | An image is ready at once and the publish call waits 40 seconds. A video takes minutes: the post stays `publishing` with its container, the scheduler's tick reads the status and publishes when it says `FINISHED`, and "Publicar agora" answers at once with "saindo". The rule that fails a post found `publishing` after ten minutes gets a longer clock for video |
-| du7's line | du7 receives the file and Instagram fetches it back, both over du7's own connection. The public address is tried first, since it is what works today; the resumable upload is the fallback if Instagram's fetch of a large file proves unreliable |
-| A cover | `thumb_offset` (a moment in the video) first: no second upload. A separate cover picture later, if asked for |
-| A preview | 9:16, from the file's own address for whoever is signed in. The page's policy allows no `blob:` addresses |
+| A post's kind | `post.kind`: `feed`, `story` or `reel`, chosen under **Formato** when the post is made and fixed after. `post.media_type` says whether its file is a picture or a video |
+| A Story's picture | Checked against 9:16 (a feed picture against 4:5 to 1,91:1), in the form and again on the server. A Story keeps no caption and no description; a Reel keeps a caption |
+| A video comes in as it is | The browser cannot convert a video and du7 does not transcode. The upload goes straight to the disk, a piece at a time (the unit has under 200 MB of memory), with its progress on the form. The server reads the file's own header (`ftyp`, then `moov` → `mvhd`, wherever in the file it is) for the length, and refuses what is not an MP4 or MOV, under 3 seconds, or over what its kind takes |
+| What is left to Instagram | The codec, the frame rate, the proportion and where `moov` sits are not checked here: phones write `moov` at the end, and refusing those files would refuse most of them. When Instagram cannot prepare a video the post fails with "confira o formato (MP4 ou MOV, H.264 e AAC)" |
+| The preview | A `<video>` reading the uploaded file from `/api/posts/media/<token>` (signed in), which answers byte ranges: a player asks for nothing else, and the page's policy allows no `blob:` addresses |
+| The way out | "Publicar agora" on a video answers at once with the post `publishing` ("saindo…"): the container exists and Instagram is fetching. The publisher's tick looks at each such container once a minute and publishes it when it says `FINISHED` (`advance`). `ERROR`, a profile gone meanwhile, or fifteen minutes without an answer fail the post with a reason; nothing went out, so it can be sent again. A video found `publishing` after thirty minutes gets the "confira no Instagram" failure, where a picture gets it after ten |
+| The public address | `/api/media/<token>.<jpg|mp4|mov>`, still only while the post is `publishing`, now streamed and range-capable |
+| Room | A video is removed from du7 once it is published (the post and its link stay). Unused uploads, and what a died upload left, go after a day with the other orphans |
+| A Reel on the grid | Always (`share_to_feed=true`) |
 
-### To ask the team before step 2
+Schema v16: two added columns on `post`, with defaults that make every existing post a
+picture for the feed.
+
+### Not in this cut
+
+A Reel's cover (Instagram takes the first frame), keeping a Reel off the profile's grid,
+collaborators, user tags, the resumable upload to Meta (the public address is what works
+today; it is the fallback if Instagram's fetch of a large file over du7's line proves
+unreliable), and a server setting for the largest upload (it is Instagram's 300 MB).
+
+### Still to ask the team
 
 1. How many of the Reels they post use music from Instagram's library? Those cannot go
    through Pauta.
@@ -215,20 +223,20 @@ A Reel with library audio, or a Story with a link, is still posted by hand.
    "professional accounts" for publishing in general, but an older page limited Stories to
    Business accounts: to be tried with a Creator profile. `ig_profile.account_type` already
    records which is which.
-4. How long and how heavy is a typical video? That sets the upload limit and says whether
-   du7's line carries it.
-5. Should a Reel also show on the profile's grid (`share_to_feed`) by default?
+4. How long and how heavy is a typical video? That says whether du7's line carries it.
+5. Should a Reel stay off the profile's grid sometimes?
 
-**Order.** Nothing here starts before Advanced Access is granted. Step 1 can ride along with
-anything. Whether step 2 comes before or after the client's approval link is the owner's
-call: the approval link is what this module set out to sell, and step 2 is what makes it a
-replacement for a scheduler.
+### Not tried yet
+
+No Story or Reel has gone to the real Instagram from here: everything above ran against the
+fake (`tests/fakeinstagram.py`) and, for the length reader, against real MP4 and MOV files.
+The first real one says whether Instagram takes a file with `moov` at the end and how long
+it takes over a video.
 
 ## Not built, and why
 
 | | |
 |---|---|
-| Stories and Reels | Planned as the next phase, above |
 | The client's approval on a link | The step agencies lose hours on. The public report link (decision 12) is the pattern. Next, if the beta is kept |
 | AI drafts for caption and art | Cents per post; needs the brand kit first. Since June 2026 Instagram takes `is_ai_generated` on the container: generated art must send it |
 | A calendar view | The list by state is enough for one profile |

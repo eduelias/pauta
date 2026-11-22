@@ -8,7 +8,8 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from fakeinstagram import USERNAME, png
+from fakeinstagram import USERNAME, mp4, png
+from pauta.publishing import Posts, Publisher
 
 pytestmark = pytest.mark.e2e
 
@@ -152,3 +153,122 @@ def test_connect_publish_schedule_edit_delete(live, device, ig, fake_ig):
     expect(page.locator("#toast")).to_have_text("Instagram desconectado")
     expect(page.locator("#igprofiles .empty")).to_be_visible()
     expect(page.locator("#ppublished .prow")).to_have_count(2)
+
+
+def connected(page, base, auth, store):
+    """Renato (admin) signed in, on Publicações, with the client's Instagram connected."""
+    client = store.save_client({"name": "Du7"})
+    token, _ = auth.create_invite(admin=True)
+    page.on("dialog", lambda d: d.accept())
+    join(page, base, token, "Renato Lima")
+    page.locator("#nav a[data-nav='#/publicacoes']").click()
+    page.select_option("#igclient", str(client["id"]))
+    page.get_by_role("button", name="Conectar Instagram").click()
+    expect(page.locator("#toast")).to_have_text("Instagram conectado")
+    return client
+
+
+def test_a_story_and_a_reel(live, device, ig, fake_ig):
+    base, auth, store = live
+    laptop = device()
+    laptop.expected.add((400, "/api/posts"))  # the Story the server refuses, below
+    page = laptop.page
+    connected(page, base, auth, store)
+    clip = {"name": "clip.mp4", "mimeType": "video/mp4", "buffer": mp4(65, pad=300_000)}
+
+    # the form opens as it always did: a picture for the feed, with its caption
+    page.get_by_role("link", name="Nova publicação").click()
+    expect(page.locator("#pkind button.on")).to_have_text("Feed")
+    expect(page.locator("#pcaption")).to_be_visible()
+    expect(page.locator("#palt")).to_be_visible()
+    page.set_input_files("#pfile", clip)
+    expect(page.locator("#toast")).to_contain_text("um vídeo sai como Reel ou como Story")
+
+    # a Story: a tall picture, no caption and no description
+    page.locator("#pkind").get_by_role("button", name="Story").click()
+    expect(page.locator("#pimginfo")).to_contain_text("Um Story não leva legenda")
+    expect(page.locator("#pcaption")).to_be_hidden()
+    expect(page.locator("#palt")).to_be_hidden()
+    page.set_input_files("#pfile", picture("square.png", 800, 800))
+    expect(page.locator("#pimginfo")).to_contain_text("imagem vertical 9:16")
+    page.set_input_files("#pfile", clip)  # 65 seconds: the server says a Story takes 60
+    expect(page.locator("#pvideo")).to_be_visible()
+    expect(page.locator("#pimginfo")).to_have_text("1:05, 0,3 MB")
+    page.get_by_role("button", name="Salvar rascunho").click()
+    expect(page.locator("#toast")).to_contain_text("Story tem no máximo 60 segundos")
+    page.set_input_files("#pfile", picture("tall.png", 540, 960))
+    expect(page.locator("#pimginfo")).to_contain_text("540 × 960 px")
+    expect(page.locator("#ppreview")).to_be_visible()
+    expect(page.locator("#pvideo")).to_be_hidden()
+    page.get_by_role("button", name="Publicar agora").click()
+    expect(page.locator("#toast")).to_have_text("Publicado no Instagram")
+    (story,) = fake_ig.published
+    assert (story["kind"], story["video"], story["caption"]) == ("STORIES", False, "")
+    out = page.locator("#ppublished .prow")
+    expect(out.locator(".tag")).to_have_text("Story")
+    expect(out.locator("img.pthumb")).to_be_visible()
+
+    # a Reel: the video goes up as it is, and Instagram takes its time with it
+    page.get_by_role("link", name="Nova publicação").click()
+    page.locator("#pkind").get_by_role("button", name="Reel").click()
+    expect(page.locator("#pcaption")).to_be_visible()
+    expect(page.locator("#palt")).to_be_hidden()
+    page.get_by_role("button", name="Publicar agora").click()
+    expect(page.locator("#toast")).to_have_text("escolha o vídeo")
+    page.set_input_files("#pfile", picture("post.png", 800, 1000))
+    expect(page.locator("#toast")).to_have_text("um Reel precisa de um vídeo")
+    page.set_input_files("#pfile", clip)
+    expect(page.locator("#pvideo")).to_be_visible()
+    expect(page.locator("#pvideo")).to_have_attribute("src", re.compile(r"^/api/posts/media/"))
+    page.fill("#pcaption", "Bastidores #du7")
+    fake_ig.not_ready = 1
+    page.get_by_role("button", name="Publicar agora").click()
+    expect(page.locator("#toast")).to_contain_text("O Instagram está preparando o vídeo")
+    going = page.locator("#pscheduled .prow")
+    expect(going.locator(".pstatus")).to_have_text("saindo…")
+    expect(going.locator(".tag")).to_have_text("Reel")
+    expect(going.locator(".pthumb.pvideo")).to_be_visible()
+    expect(going.get_by_role("button")).to_have_count(0)  # nothing to do while it goes out
+    assert len(fake_ig.published) == 1
+
+    # the publisher's looks, a minute apart: not ready, then out
+    pub = Publisher(Posts(store), ig, base)
+    for _ in range(2):
+        with store.db() as db:
+            db.execute("UPDATE post SET updated=datetime('now','-61 seconds')")
+        pub.tick()
+    reel = fake_ig.published[1]
+    assert (reel["kind"], reel["video"], reel["caption"]) == ("REELS", True, "Bastidores #du7")
+    page.reload()
+    done = page.locator("#ppublished .prow").first
+    expect(done.locator(".pstatus")).to_have_text("publicada")
+    expect(done.locator(".tag")).to_have_text("Reel")
+    expect(done.get_by_role("link", name="Ver no Instagram")).to_be_visible()
+    expect(page.locator("#pscheduled")).to_have_count(0)
+
+
+def test_editing_a_video_draft_shows_the_video(live, device, ig, fake_ig):
+    base, auth, store = live
+    page = device().page
+    connected(page, base, auth, store)
+    page.get_by_role("link", name="Nova publicação").click()
+    page.locator("#pkind").get_by_role("button", name="Reel").click()
+    page.set_input_files(
+        "#pfile", {"name": "IMG_0001.MOV", "mimeType": "", "buffer": mp4(12)}
+    )  # a phone's file with no type: its name says what it is
+    expect(page.locator("#pimginfo")).to_contain_text("0:12")
+    page.fill("#pcaption", "Rascunho de vídeo")
+    page.get_by_role("button", name="Salvar rascunho").click()
+    expect(page.locator("#toast")).to_have_text("Rascunho salvo")
+    draft = page.locator("#pdrafts .prow")
+    expect(draft.locator(".tag")).to_have_text("Reel")
+    draft.get_by_role("link", name="Editar").click()
+    expect(page.locator("#pkindshown")).to_have_value("Reel")
+    expect(page.locator("#pvideo")).to_be_visible()
+    expect(page.locator("#paltfield")).to_be_hidden()
+    page.fill("#pcaption", "Mudou")
+    page.get_by_role("button", name="Salvar rascunho").click()
+    expect(page.locator("#pdrafts .prow .pcap")).to_have_text("Mudou")
+    with store.db() as db:
+        kept = db.execute("SELECT media FROM post").fetchone()[0]
+    assert Posts(store).media_path(kept).suffix == ".mov"

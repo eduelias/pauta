@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, obs
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS post (
     client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
     caption TEXT NOT NULL DEFAULT '', alt_text TEXT NOT NULL DEFAULT '',
     media TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'feed', media_type TEXT NOT NULL DEFAULT 'image',
     status TEXT NOT NULL DEFAULT 'draft', due TEXT,
     container TEXT NOT NULL DEFAULT '', media_id TEXT NOT NULL DEFAULT '',
     permalink TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
@@ -709,6 +710,13 @@ class Store:
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
             # v15: ig_profile and post (Publicações, docs/publishing-spec.md) are new tables
+            # v16: what a post is (feed, story, reel) and whether its file is a picture
+            # or a video; every post there was is a picture for the feed
+            cols = {r[1] for r in db.execute("PRAGMA table_info(post)")}
+            if "kind" not in cols:
+                db.execute("ALTER TABLE post ADD COLUMN kind TEXT NOT NULL DEFAULT 'feed'")
+            if "media_type" not in cols:
+                db.execute("ALTER TABLE post ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'")
             db.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
                 (str(SCHEMA_VERSION),),

@@ -58,6 +58,23 @@ def png(width: int = 400, height: int = 400, rgb: tuple[int, int, int] = (90, 70
     )
 
 
+def mp4(seconds: float = 10, pad: int = 0, moov_last: bool = False, wide: bool = False) -> bytes:
+    """The smallest thing with an MP4's boxes and a length in its header (nothing a player
+    would show): `ftyp`, `moov` with its `mvhd`, and `mdat` of `pad` bytes."""
+
+    def box(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", 8 + len(body)) + kind + body
+
+    ticks = int(seconds * 1000)
+    if wide:  # version 1: 64-bit times
+        mvhd = b"\x01" + bytes(19) + struct.pack(">IQ", 1000, ticks) + bytes(80)
+    else:
+        mvhd = bytes(12) + struct.pack(">II", 1000, ticks) + bytes(80)
+    ftyp = box(b"ftyp", b"isom\x00\x00\x02\x00isomiso2mp41")
+    moov, mdat = box(b"moov", box(b"mvhd", mvhd)), box(b"mdat", bytes(pad))
+    return ftyp + (mdat + moov if moov_last else moov + mdat)
+
+
 def graph_error(code: int, subcode: int | None = None, message: str = "refused") -> dict:
     err = {"message": message, "type": "IGApiException", "code": code, "fbtrace_id": "T"}
     if subcode:
@@ -212,12 +229,16 @@ class FakeInstagram:
         return h._send(404, graph_error(100, 33, "unknown object"))
 
     def _container(self, h, form):
-        url = form.get("image_url", "")
-        seen = {"url": url, "status": 0, "type": "", "magic": b""}
+        video = "video_url" in form
+        url = form.get("video_url") or form.get("image_url", "")
+        kind = form.get("media_type", "")
+        seen = {"url": url, "status": 0, "type": "", "magic": b"", "video": video}
+        looks_right = False
         try:
             with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - the app's own
                 raw = r.read()
                 seen.update(status=r.status, type=r.headers.get("Content-Type", ""), magic=raw[:3])
+                looks_right = raw[4:8] == b"ftyp" if video else raw[:3] == b"\xff\xd8\xff"
         except urllib.error.HTTPError as e:
             seen["status"] = e.code
         except OSError:
@@ -226,13 +247,20 @@ class FakeInstagram:
         if self.not_professional:
             message = "(#10) Access is denied because the instagram account type is not business"
             return h._send(400, graph_error(10, message=message))
-        if self.fail_fetch or seen["status"] != 200 or seen["magic"] != b"\xff\xd8\xff":
+        # a video is a Reel or a Story, a Reel is a video, and a Story takes no caption
+        known = kind in ("", "STORIES", "REELS") and (kind != "REELS" or video)
+        if not known or (video and not kind) or (kind == "STORIES" and "caption" in form):
+            return h._send(400, graph_error(100, message="Invalid parameter"))
+        if self.fail_fetch or seen["status"] != 200 or not looks_right:
             return h._send(400, graph_error(9004, 2207052, "could not fetch"))
         cid = self._next("1790")
         self.containers[cid] = {
             "image": url,
             "caption": form.get("caption", ""),
             "alt_text": form.get("alt_text", ""),
+            "kind": kind or "FEED",
+            "video": video,
+            "share_to_feed": form.get("share_to_feed", ""),
             "waits": self.not_ready,
         }
         return h._send(200, {"id": cid})
