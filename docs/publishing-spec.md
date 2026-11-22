@@ -173,8 +173,17 @@ the two old keys dropped, and `Posts.save_connection` stored the connection. It 
 login's `finish` and callback do, without the code exchange. Both accounts kept their
 clients, the notices left the 7 scheduled posts, and a read of each account's publishing
 limit worked through the new key. The token file from before is
-`pauta.db.ig-tokens.bak-pre-adopt` on acceptance. A real login under this model has still
-not been seen to work.
+`pauta.db.ig-tokens.bak-pre-adopt` on acceptance.
+
+**The first login under the portfolio model (2026-11-22, later the same day).** The dialog
+was opened without `prompt=login`, from a browser already signed in to Facebook as the
+app's administrator. Meta asked for no password and went straight to its sharing screens:
+the portfolio, both Instagram accounts ("previously shared"), the summary, "connected".
+The callback stored the connection and both accounts kept what Pauta held about them. So
+the administrator's login is not refused, and `prompt=login` is gone from the address
+Pauta opens: it bought nothing but the password question. Signing in with Instagram
+itself, for an account that holds no role on the app, stays refused until the review
+passes.
 
 ## What it would take for other people's profiles
 

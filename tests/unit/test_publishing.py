@@ -43,7 +43,9 @@ def login(ig, fake_ig, by=None):
     import urllib.request
 
     url = ig.start(by)
-    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    assert "prompt" not in query  # a session already open at Meta is used as it is
+    state = query["state"][0]
 
     class Stop(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *a, **k):

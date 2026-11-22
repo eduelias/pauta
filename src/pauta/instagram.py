@@ -313,8 +313,8 @@ class Instagram:
             while len(self._states) >= MAX_PENDING:
                 self._states.pop(min(self._states, key=lambda s: self._states[s][1]))
             self._states[state] = (by, now + STATE_SECONDS)
-        # as the dashboard's own "Login URL" has it: no scope (the configuration carries the
-        # permissions), and prompt=login so the person can sign in with Instagram itself
+        # no scope: the configuration carries the permissions. No prompt=login either: it
+        # made Meta ask for the Facebook password with a session already open
         query = {
             "client_id": self.app_id,
             "config_id": self.config_id,
@@ -322,7 +322,6 @@ class Instagram:
             "response_type": "code",
             "override_default_response_type": "true",
             "state": state,
-            "prompt": "login",
         }
         return f"{self.dialog}?{urllib.parse.urlencode(query)}"
 
