@@ -226,12 +226,26 @@ unreliable), and a server setting for the largest upload (it is Instagram's 300 
 4. How long and how heavy is a typical video? That says whether du7's line carries it.
 5. Should a Reel stay off the profile's grid sometimes?
 
+### The first real Reel (2026-11-22, 10:44 UTC)
+
+A 6-second 1080 × 1920 test pattern (H.264, AAC, 1,5 MB, MP4 with `moov` at the **end** of
+the file, as phones write it), made a draft on acceptance for Du7 Tech (`@du7dev`) and
+published with "Publicar agora":
+
+| | |
+|---|---|
+| Container | 10:44:46 to 10:44:48 UTC: the call that creates it took 2 s |
+| Fetched | 10:44:49, one plain GET of the whole file (no byte range), 3 ms on du7's side |
+| Published | 10:46:08, at the publisher's first look: 82 s end to end |
+| Permalink | `https://www.instagram.com/reel/DgCnuCpDwVB/` |
+
+So Instagram takes a file whose index is at the end, and a short video is ready within the
+first minute. The video was removed from du7 at once; the post stays on the list.
+
 ### Not tried yet
 
-No Story or Reel has gone to the real Instagram from here: everything above ran against the
-fake (`tests/fakeinstagram.py`) and, for the length reader, against real MP4 and MOV files.
-The first real one says whether Instagram takes a file with `moov` at the end and how long
-it takes over a video.
+A Story (picture or video) on the real Instagram, a video from a phone's camera, and a
+large one: how du7's line carries 100 MB and more is still unknown.
 
 ## Not built, and why
 
