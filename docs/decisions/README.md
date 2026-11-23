@@ -10,7 +10,7 @@ both files.
 | [2](0002-collaborators-and-a-public-repo.md) | Maintainers via PRs, owner-only releases, rulesets, a job guard on du7's runner, a public repo | Accepted; shipped in 1.3.0, du7's part included |
 | [3](0003-request-files-in-onedrive.md) | Files on requests, stored in a team member's OneDrive through Pauta | Shipped in 1.4.0 |
 | [4](0004-a-domain-of-its-own.md) | Move to `pauta.cc`: the app on `app.pauta.cc`, the public site on `www.pauta.cc`, `pauta.team` a redirect; a "Mudar para app.pauta.cc" hand-off for today's team; DNS as code in `dns-zone` | Accepted; shipped in 1.6.0 and 1.6.1. The old address is still open |
-| [5](0005-other-teams.md) | Other teams: a control DB plus one SQLite file per team, team in the URL, invite-only beta, off du7 before the first outside team | Proposed |
+| [5](0005-other-teams.md) | Other teams: a control DB plus one SQLite file per team, team in the URL, invite-only beta, off du7 before the first outside team | Proposed; its layout and its address are replaced by decision 13 |
 | [6](0006-subscriptions.md) | Subscriptions sold by Du7 Technology Services through Paddle (Pix, Pix Automático, card); the Brazilian ME with Asaas as fallback | Proposed |
 | [7](0007-financeiro.md) | Financeiro: a receivables ledger per client, with the team's conventions as settings | Shipped in 1.5.0 |
 | [8](0008-campaign-tracking.md) | Campanhas (planned as "Acompanhamento"): every live campaign's numbers from Meta, with a daily "seen" mark per client | Shipped in 1.7.0, with Meta only. The manual list and the AI text were not built: see "As built" in the record |
@@ -18,3 +18,4 @@ both files.
 | [10](0010-perfil-e-configuracoes.md) | Perfil for the person (name, WhatsApp, passkeys, new-passkey link); Equipe becomes Configurações | Shipped in 1.7.0 |
 | [11](0011-analytics.md) | Analytics: a first-party usage log inside the app, Plausible (cloud, EU) on the public site; no session replay | App part shipped in 1.8.1; site part proposed |
 | [12](0012-public-report-link.md) | A public, expiring, read-only link to one campaign report for the client (amends 2: the first page that shows team data without an account) | Shipped in 1.8.2; the lifetime is 5 days since 1.8.3 |
+| [13](0013-tenants-and-sellers.md) | Tenants and sellers: Postgres, a schema and database roles per tenant, sellers as a narrower role, the tenant by host name, two channels (changes 5) | Accepted in its main lines on 2026-11-22 and 2026-11-23; a trial has run, nothing is built |

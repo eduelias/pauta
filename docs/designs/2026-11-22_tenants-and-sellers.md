@@ -1,7 +1,7 @@
 # Tenants and sellers: who sees what in Pauta, enforced by the database
 
 *   **Author:** Eduardo Elias Saleh
-*   **Status:** Proposed (drafted and reconciled with its brief on 2026-11-22; stage 0, the trial, was run the same day; decisions 12 to 15 were added on 2026-11-23; not reviewed, nothing built)
+*   **Status:** Proposed (drafted and reconciled with its brief on 2026-11-22; stage 0, the trial, was run the same day; decisions 12 to 15 were added on 2026-11-23, and the earlier multi-tenant spec was folded in the same day; not reviewed, nothing built)
 *   **Date:** 2026-11-22
 
 Context this draft starts from, and how the day's decisions went:
@@ -105,7 +105,7 @@ no seller. The **owner** is Du7's owner, who operates Pauta.
 
 | Not in this design | Why |
 |---|---|
-| What a customer agency needs beyond the wall: signing up, paying, a plan's limits, the agency's logo on reports | The multi-tenant spec (draft PR 43) and decision 6 cover them. This design gives them the layout to stand on. That spec's file-per-tenant layout (decision 5) is replaced by this one and has to be revised |
+| What a customer agency needs beyond the wall: signing up, paying, a plan's limits, the agency's logo on reports | Decision 6 covers paying and limits; the rest has no design yet. This design gives them the layout to stand on. The earlier multi-tenant spec (draft PR 43) is folded into this design and retired: its rules on people, operations and the outside prerequisites are in Part B, and its file-per-tenant layout is replaced (decision record 13) |
 | A screen where a manager edits roles, or allows and denies actions per user | Roles are fixed: admin, member, seller. With a database role per kind of member, a custom role could later be one more database role with different grants; nobody has asked yet |
 | A release per tenant | Two channels only (goal 12). Every extra live version is one more place each fix has to be weighed |
 | An ORM, or a rewrite in another language | Weighed on 2026-11-22 (see "Alternatives Considered"). `Store` keeps its hand-written SQL as it is written today, and an adapter carries it to Postgres (decision 12). The author is uneasy about hand-written SQL; it is open question 13 |
@@ -115,7 +115,8 @@ no seller. The **owner** is Du7's owner, who operates Pauta.
 | Money between the team and a seller: what a seller owes, a seller's own Financeiro view | What the team charges a seller is not settled (open question 3). Until it is, sellers do not see Financeiro at all |
 | Signing up without an invite, for a seller or an agency | Invites only, and tenants are created by the owner from the command line |
 | Publicações | The module is a beta on its own branch and is not in `main` |
-| The owner's masked support view and "assume a role" of the access spec | Not needed for either wall. Until they exist the owner enters a customer's tenant only as an invited member |
+| The owner's masked support view, "assume a role", capabilities per route and integration scopes | Set aside on 2026-11-20 in `docs/access-and-operator-spec.md`; not needed for either wall. Until they exist the owner enters a customer's tenant only as a member with an end date (Part B) |
+| A switcher between a person's tenants | Nobody is in two tenants yet. A person in two opens the other address and taps their passkey once more |
 
 ## Open Questions
 
@@ -156,6 +157,20 @@ no seller. The **owner** is Du7's owner, who operates Pauta.
 16. **The name of the people view.** Answered on 2026-11-23 (decision 13): two views,
     named `account` and `passkey`, so that the 19 statements in `Store` that read those
     names run as written.
+17. **Does the seller programme's owner get a tenant of their own?** Carried from the
+    earlier spec, default no: today's data is one team's, and splitting it means moving
+    clients and their timelines by hand. With sellers in this design, that person's own
+    clients may also fit as a seller's.
+18. **Is the owner's own account a member of the first tenant after the move?** The
+    import gives every existing account a membership. If the owner's is one of them, the
+    owner is an ordinary admin there with no end date. A fact about production, to look
+    up before the cut-over.
+19. **Where a public report link lives.** With a host per tenant, `/r/<token>` on the
+    tenant's own host names the tenant with no lookup, and the link shows the agency's
+    short name. The earlier spec chose a number in the token so that a link shows no
+    agency name. Default: the tenant's own host. To confirm before the tenants stage.
+20. **Acceptance's second tenant.** Default: `pauta demo` makes two tenants with one
+    person in both, which the two-tenant tests and the owner's own checks need.
 
 ## Critical User Journeys (CUJs)
 
@@ -246,9 +261,10 @@ trial.
  one Postgres database
  |
  |-- schema "control"            who exists, and where they belong
- |     tenant(id, name, channel)         tenant_host(host, tenant)
- |     account, passkey                  membership(account, tenant, role, is_admin)
- |     invite(tenant, ...)
+ |     tenant(id, name, channel, state)  tenant_host(host, tenant)
+ |     account, passkey                  membership(account, tenant, role, is_admin,
+ |     invite(tenant, role, ...)                    disabled, expires)
+ |     login (reserved, empty)
  |
  |-- schema "t1"                 today's team; host app.pauta.cc
  |     client, request, event, file, campaign, insight, review, meta_account,
@@ -453,6 +469,48 @@ row in `control.tenant` and the host; then it prints an invite for the first adm
 **Work that crosses tenants** runs as `pauta_system` and loops: the hourly Meta sync,
 backups, migrations, the usage report. Each pass sets the search path to one tenant.
 
+**People and memberships.** These rules were decided for the earlier multi-tenant spec
+on 2026-11-11 and 2026-11-20 and do not depend on where the data is stored. They are
+kept; the brief lists what of that spec was replaced.
+
+| Topic | Rule |
+|---|---|
+| An account | One person, one set of passkeys, any number of memberships. `account.handle`, the random id a passkey is registered under, is the person's stable id wherever an identity leaves Pauta. An id is never given to a second person |
+| A membership | `membership(account, tenant, role, is_admin, disabled, expires, created)`. `role` is the kind of access and names the database role; `is_admin` is today's flag, now per tenant. `expires` is empty for an ordinary member; after its date the membership counts as absent |
+| A name | One per account. No two active members of one tenant may have the same name, so a timeline never shows two people who look alike; two tenants may each have one |
+| An invite | Belongs to one tenant and carries the role. It makes a new account. A person who already has an account gets a second membership from the owner's command line at first (`pauta member add`); joining a second tenant by oneself waits until someone needs it |
+| At least one admin | Each tenant keeps at least one active admin, as the team does today |
+| A tenant admin's reach | An admin disables a membership, never an account: ending a person's sessions everywhere is the person's own act or the owner's. An admin may make a new-passkey link only for a person whose only membership is that tenant; a person in several uses their own link on Perfil or the owner's command. Without this rule an admin of one tenant could take over a person's access to another |
+| The owner | No flag and no special access. To help a tenant the owner runs `pauta member add <tenant> <account> --until <date>`: the command is logged, the owner appears in that tenant's people list, an admin there can disable the membership, and it ends by itself. The owner then reads what a member reads, so this is for a tenant that asked for help. A masked support view is set aside in `docs/access-and-operator-spec.md` |
+| Other sign-in methods | A `login(account, issuer, subject)` table is created empty in `control`, reserved for a federated sign-in such as Google's. Nothing reads it |
+| Authorship | The 13 columns that record who did something (`request.created_by`, `event.account`, `payment.recorded_by` and the rest) reference `control.account`. A person's rows keep their author after the membership ends |
+
+**What is per tenant in the running service.** A tenant has its own `Meta` client, its
+own OneDrive client, its own sync lock and its own thumbnail cache, found by the
+request's tenant. Their token files are in the tenant's state folder. Shared by every
+tenant of an environment: the session key, the Meta app and its secret, the OneDrive app
+registration, the rate limiter, the log.
+
+*   **One Meta app for every tenant.** A throttle or a review problem on it is every
+    tenant's at once. Decision 8 accepted that.
+*   **One scheduler thread runs the tenants in turn.** A pass takes tens of seconds, so
+    about a hundred connected tenants fill the hour and a slow one delays the rest. The
+    design is meant for tens. A tenant's revoked token ends that tenant's pass only.
+
+**Operating a tenant,** from the owner's command line:
+
+| Command | What it does |
+|---|---|
+| `pauta tenant add <name>` | Above. Prints an invite for the first admin |
+| `pauta tenant list`, `tenant host` | The tenants with their hosts, channel and state; add or change a host. The schema is named by id, so a tenant's name and host can change |
+| `pauta tenant suspend`, `resume` | `control.tenant.state`. A suspended tenant's members get "em manutenção" and its sync does not run; nothing is revoked. For a tenant that leaves or does not pay, not for maintenance |
+| `pauta tenant export <name> <dir>` | A dump of the tenant's schema, the export file admins can already download, and its memberships |
+| `pauta tenant delete <name>` | After `suspend`: the schema, its roles, its state folder and its `control` rows go. An account left with no membership is disabled and removed after 30 days; backups rotate out in 30 days. The command prints what the tenant must revoke by hand: the Meta system user and the OneDrive consent |
+| `pauta member add <tenant> <account> [--until <date>]` | A membership for an account that exists |
+| `pauta backup` | One dump per schema: `control` and each tenant, so one tenant can be restored without the others. A restore is stop, restore, start, for one tenant as for all |
+
+The log line of a request and each `/metrics` block carry the tenant's id.
+
 ### Part C: sellers
 
 **Data model, in each tenant's schema.**
@@ -592,6 +650,20 @@ actions whatever the page shows.
 
 Sellers and tenants both stand on release 1 and neither needs the other. Their order is
 open question 10.
+
+**Before the first outside tenant,** four things outside the code are needed besides
+the tenants release. An outside tenant is an agency none of whose people are in today's
+team. Each has its own lead time and can start now:
+
+| What | Why |
+|---|---|
+| Meta App Review | The production Meta app is in development mode, where only people with a role on the app can connect. An outside agency connecting its portfolio needs the reviewed permission: days to weeks (decision 8) |
+| OneDrive work accounts | Pauta signs in through Microsoft's personal-accounts address. A work or school Microsoft 365 account cannot connect today |
+| The legal texts | Terms of use, a privacy policy and a data-processing agreement in Portuguese, reviewed by someone who knows the LGPD (decision 5; open question 9) |
+| Where production runs | Decision 5 says production leaves du7 first; open question 12 |
+
+The first outside tenant does not wait for the owner's masked support view (decided
+2026-11-20).
 
 **The rollback guard (decision 4).** It was chosen when an older release would have
 treated a seller as a member. In this plan no such release exists on Postgres: from
@@ -865,9 +937,13 @@ asked; "not pursued" means it was raised and set aside without a formal choice.
 
 *   [`2026-11-22_tenants-and-sellers_brief.md`](2026-11-22_tenants-and-sellers_brief.md): what was
     asked and answered, and how the day's decisions went.
-*   `docs/multi-tenant-spec.md` and `docs/access-and-operator-spec.md` on branch
-    `docs/multi-tenant-spec` (draft PR 43): tenant identity, invites and integrations per
-    tenant, and the access roles. Their file-per-tenant layout is replaced by this design.
+*   `docs/decisions/0013-tenants-and-sellers.md`: the decision record of this design.
+*   `docs/access-and-operator-spec.md`, with `docs/access-control-research.md` and
+    `formal/Access.lean`: integration scopes, capabilities, assuming a role and the
+    owner's masked view. Set aside on 2026-11-20; its header says how to read it against
+    this design.
+*   Retired: `docs/multi-tenant-spec.md` on branch `docs/multi-tenant-spec` (draft PR
+    43). What it decided and what became of each decision is in the brief.
 *   `docs/decisions/0005-other-teams.md` and `0006-subscriptions.md`.
 
 ### Future Improvements
@@ -922,13 +998,14 @@ not" in this document.
 |---|---|---|
 | `pyproject.toml`, `uv.lock` **(owner)** | Modify | Add `psycopg[binary,pool]`. The comment that calls `webauthn` "the one exception to stdlib only" goes |
 | `src/pauta/scope.py` | Create | The connection pools for `pauta_app` and `pauta_system`; the context that holds tenant, account and role for a request; the context manager `Store.db()` uses, which raises when nothing is set, applies the three settings per transaction as one statement, and turns Postgres's "insufficient privilege" into a new `Denied` error; the adapter of decision 12, which gives `Store` a connection with `execute` and `executemany`, translates `?`, `IS ?`, `IS NOT ?` and `%` once per statement text, and returns rows that read by name and by position |
+| `src/pauta/paths.py` | Create | The one place that says where a file is: a tenant's state folder with its token files and thumbnail cache, and the two secrets of the environment (the session key, the Meta secret). Four modules derive these from the database file's location today, and there is no such file any more |
 | `src/pauta/schema.py` | Create | The SQL that creates `control` and a tenant schema, the two numbered migration lists (one for `control`, one applied to each tenant schema, with the version kept in each schema's `meta`), the roles and grants of a tenant, the `account` and `passkey` views of each tenant schema (Part B), and the shared schema `pauta` with the two stand-ins: the function `datetime('now')` that writes timestamps in today's text format and the collation `nocase`. Moved out of `db.py` so the 2,294-line file does not grow |
 | `src/pauta/db.py` | Modify | The SQL stays as written (decision 12). Fixed in place, as listed in Part A: `INSERT OR` (5), `lastrowid` to `RETURNING id` (3), `rowid` (2), `datetime('now', <an offset>)` (2), `group_concat` (1), and the integer truth tests, `GROUP BY` lists and Python booleans the tests find. The one `LIKE` is checked by hand. `members` reads `avatar` from the `account` view instead of computing it from `email`; the other 18 statements that read `account` or `passkey` stay as written. Remove the schema and the `PRAGMA` migrations (now in `schema.py`). `Store` takes a scope instead of a file path. `backup` calls `pg_dump`. Rows come back as dictionaries, as today |
 | `src/pauta/auth.py` **(owner)** | Modify | All 21 uses of the store run as `pauta_system`, in a scope whose search path puts `control` first, so that `account`, `passkey` and `invite` are the tables in `control` and not a tenant's views. `is_admin` and `disabled` move from the account to its row in `control.membership`; `viewer` takes the tenant and returns `role` and `is_admin` from the membership |
 | `src/pauta/server.py` | Modify | `_dispatch` looks the host up in `control.tenant_host`, reads the membership, sets the scope before the handler and clears it after; open routes run as system for that host's tenant; `/healthz` and `/metrics` run as system; `Denied` maps to 403; an account with no membership here gets "not a member" |
-| `src/pauta/routes/requests.py` | Modify | The thumbnail cache folder comes from the tenant's state folder; the warm-up thread declares the system scope |
-| `src/pauta/meta.py`, `src/pauta/onedrive.py` | Modify | The secret and token files are read from the tenant's state folder. Background reads declare the system scope and the tenant |
-| `src/pauta/push.py` | Modify | The signing key file is read from the state directory; the fan-out declares the system scope and the tenant |
+| `src/pauta/routes/requests.py` | Modify | The thumbnail cache folder comes from `paths.py`; the warm-up thread declares the system scope |
+| `src/pauta/meta.py`, `src/pauta/onedrive.py` | Modify | The secret and token files are found through `paths.py`. Background reads declare the system scope and the tenant |
+| `src/pauta/push.py` | Modify | The signing key file is found through `paths.py`; the fan-out declares the system scope and the tenant |
 | `src/pauta/sync.py` | Modify | The hourly pass and "Atualizar agora" declare the system scope and the tenant |
 | `src/pauta/usage.py` | Modify | Its 6 statements run through the adapter, fixed where the tests show a need; the report takes a tenant |
 | `src/pauta/obs.py` | Modify | Request log lines carry the tenant's id beside the route pattern |
@@ -951,7 +1028,7 @@ not" in this document.
 | `Makefile` **(owner)** | Modify | `make db` starts the compose file locally; `run`, `demo` and the test targets say so when no database answers |
 | `deploy/README.md` **(owner)** | Modify | The container, the roles, the passfile, the cut-over and its one-hour rollback, restoring from a `pg_dump` |
 | `CLAUDE.md`, `CONTRIBUTING.md` **(owner)**, `README.md` | Modify | "Shape" and "The loop": Postgres, `psycopg`, `make db`, the scope and who says "system", and that SQL in `Store` is written in SQLite's spelling and why. The line "stdlib HTTP server, SQLite, the only runtime dependency is `webauthn`" is rewritten |
-| `docs/decisions/` **(owner)** | Create one record, modify two | A new record, under the next free number, for decisions 6 to 15 of this design. `0005-other-teams.md` is marked as replaced in its layout. `README.md` lists the new record |
+| `docs/decisions/` **(owner)** | Modify | `0013-tenants-and-sellers.md` already records this design; its status line and the row of `README.md` say that the move has shipped |
 | `CHANGELOG.md` | Modify | A line under Unreleased: Pauta runs on Postgres; on screen only the order of names with accents changes |
 
 **Done when:** the existing tests pass on Postgres without a change to what they assert,
@@ -996,24 +1073,24 @@ interface, money, the WhatsApp buttons, what a seller may edit, comments).
 | File | | What changes and why |
 |---|---|---|
 | `src/pauta/tenants.py` | Create | Creating a tenant in one transaction: schema, roles, tables, grants, policies, its row and host, its state folder. One `Meta`, one OneDrive client and one thumbnail cache per tenant, found by the request's tenant, so that the route modules keep using `meta` and `drive` as they do today |
-| `src/pauta/cli.py` | Modify | `pauta tenant add <name>`, `tenant list`, `tenant host`; `--tenant` becomes required where there is more than one |
+| `src/pauta/cli.py` | Modify | `pauta tenant add`, `list`, `host`, `suspend`, `resume`, `export`, `delete` and `pauta member add`, as in Part B's table; `--tenant` becomes required where there is more than one; `pauta demo` makes two tenants with one person in both; `pauta backup` writes one dump per schema |
 | `src/pauta/server.py` | Modify | An unknown host is "not found"; the origin check accepts the request's own host when it is a tenant's; reserved names |
-| `src/pauta/auth.py` **(owner)** | Modify | An invite belongs to a tenant and creates a membership there; an existing account that accepts one gains a second membership |
+| `src/pauta/auth.py` **(owner)** | Modify | An invite belongs to a tenant, carries its role and creates a membership there. A membership past its `expires` date, or disabled, counts as absent. Disabling a member writes the membership, never the account. A new-passkey link made by an admin is refused for a person with a membership in another tenant |
 | `src/pauta/routes/campaigns.py`, `src/pauta/meta.py` | Modify | The one-time `state` of a Meta sign-in remembers the tenant; the callback on the fixed address finishes and sends the browser to the tenant's host |
 | `src/pauta/sync.py`, `src/pauta/push.py`, `src/pauta/usage.py` | Modify | Loop over tenants; a tenant's failure does not stop the others |
 | `src/pauta/obs.py` | Modify | `/metrics` counts per tenant, by id |
 | `deploy/Caddyfile.pauta` **(owner)** | Modify | `*.pauta.cc` with a certificate by DNS challenge |
 | `deploy/README.md` **(owner)** | Modify | Adding a tenant, the wildcard record and certificate, dumping and dropping one tenant |
 | `tests/api/test_boundaries.py` | Modify | Goal 11, the tenant half: every route as tenant 1's staff with tenant 2's ids, on tenant 1's host |
-| `tests/api/test_tenants_api.py` | Create | CUJs 6 and 7: a new tenant's first admin; one account in two tenants; a member of one at the other's address |
+| `tests/api/test_tenants_api.py` | Create | CUJs 6 and 7: a new tenant's first admin; one account in two tenants; a member of one at the other's address. A membership past its end date is "not a member". An admin's new-passkey link for a person in two tenants is refused. A suspended tenant answers "em manutenção" to its members only |
 | `tests/unit/test_tenants.py` | Create | `tenant add` leaves the same objects as tenant 1 has; a failure leaves nothing behind |
 | `tests/unit/test_sync.py`, `tests/unit/test_push.py` | Modify | The loops; no device of another tenant is woken |
 | `CHANGELOG.md`, `README.md`, `CLAUDE.md` **(owner)** | Modify | Tenants, hosts, the per-tenant state folder |
 
-**Decide before this stage:** open questions 12 and 14 (where production runs; the first
-tenant's name). The DNS record `*.pauta.cc` is added in the `dns-zone` repository, not
-here. The multi-tenant spec (draft PR 43) is revised to this layout in its own pull
-request.
+**Decide before this stage:** open questions 12, 14, 19 and 20 (where production runs;
+the first tenant's name; where a report link lives; acceptance's second tenant). The DNS
+record `*.pauta.cc` is added in the `dns-zone` repository, not here. The four things
+outside the code that a first outside tenant needs are under "The releases".
 
 **Done when:** a second tenant exists on acceptance, both halves of the boundary test
 pass, and `/security-review` has been run on the change.
