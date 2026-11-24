@@ -6,9 +6,8 @@
 #   pauta-deploy-branch ENV --rollback                        back to the release before
 #   pauta-deploy-branch ENV --status                          what is live and installed
 #
-# ENV is `acc` (https://acc.pauta.cc); `dev` is one more line in env_config below, plus its
-# unit and Caddy block. VERSION is X.Y.Z.devN+gSHA, as .github/workflows/deploy-branch.yml
-# builds it; WHEEL and LOCKFILE are absolute paths. SOURCE is a note for the log (branch@sha).
+# ENV is `acc` (https://acc.pauta.cc) or `dev` (https://dev.pauta.cc). VERSION is
+# X.Y.Z.devN+gSHA, as .github/workflows/deploy-branch.yml builds it; WHEEL and LOCKFILE are absolute paths. SOURCE is a note for the log (branch@sha).
 #
 # Lives at /usr/local/sbin/pauta-deploy-branch (root:root 0755). The GitHub runner user may
 # run it with sudo, so every argument is checked here. Unlike pauta-deploy, the wheel is
@@ -37,7 +36,8 @@ env_config() {  # ENV -> the environment's paths, unit, user and port; nothing e
     local port
     case "${1:-}" in
         acc) port=8089 ;;
-        *) die "unknown environment '${1:-}' (known: acc)" ;;
+        dev) port=8091 ;;  # 8090 is taken on du7
+        *) die "unknown environment '${1:-}' (known: acc, dev)" ;;
     esac
     ENV_NAME=$1
     ROOT=/opt/pauta-$1

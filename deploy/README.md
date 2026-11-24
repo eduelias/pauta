@@ -139,7 +139,10 @@ database. If one ever isn't, restore the matching file from `~/backups/pauta/pre
 
 https://acc.pauta.cc is a second copy of Pauta on du7 (unit `pauta-acc`, `127.0.0.1:8089`,
 user `pauta-acc`, demo data, its own accounts). It takes builds of any branch before they are
-merged or released; decision 9 says why and what that exposes.
+merged or released; decision 9 says why and what that exposes. https://dev.pauta.cc is a
+second, identical copy (unit and user `pauta-dev`, `127.0.0.1:8091`, its own data and
+accounts) for a branch that stays on a server for weeks; everything below holds for it
+with `dev` in place of `acc` (`-f environment=dev`, `make dev`).
 
 ```
 gh workflow run deploy-branch.yml -f ref=feat/meta-connect     # or Actions → Deploy branch to acceptance
@@ -167,7 +170,7 @@ acceptance's own: if a branch's schema change breaks the build before, restore t
 `/var/lib/pauta-acc/pauta.db` as `pauta-acc`, start it).
 
 **Setting it up** (re-runnable; it never starts, restarts or reads into acceptance's state):
-from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. It installs
+from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc` (or `dev`). It installs
 `pauta-deploy-branch`, the sudo rule `/etc/sudoers.d/gh-runner-pauta-branch`, the
 `pauta-acc` user and unit (`deploy/pauta-acc.service`; settings for one environment, like the
 Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the

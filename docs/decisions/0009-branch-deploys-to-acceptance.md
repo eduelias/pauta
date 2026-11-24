@@ -7,6 +7,9 @@
 - **Changes:** adds `.github/workflows/deploy-branch.yml`, `deploy/pauta-deploy-branch`,
   `deploy/provision-branch-env.sh`, `deploy/pauta-acc.service` and a third rule in
   `deploy/runner-job-guard`. Nothing changes for production.
+- **Amended 2026-11-24:** a second environment, `dev` (https://dev.pauta.cc, port 8091),
+  as the last row of the table says, for a branch that stays on a server for weeks (the
+  publishing beta has held `acc` since 2026-11-13). Same rules, its own user and data.
 
 ## Context
 
@@ -29,7 +32,7 @@ that, and installing by hand doesn't scale and bypasses every check.
 | Never production | The installer only knows the environments it lists (`acc`), and builds every path from that name: `/opt/pauta-acc`, unit and user `pauta-acc`, `/var/lib/pauta-acc`, port 8089. A second check refuses `/opt/pauta`, the `pauta` unit, the users `root`, `esaleh` and `pauta`, and port 8088 even if the list is edited badly. It never writes the state dir (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key) |
 | Isolation, checked every time | Before every deploy and rollback the installer asks systemd, not the repo: the unit runs as `pauta-acc`, that user is in no other group, the unit has `ProtectHome=yes` (or `tmpfs`), and it runs `/opt/pauta-acc/current/bin/pauta`. Any of these wrong: no deploy |
 | Data | Decision 1 holds: demo data and accounts made on acceptance, never a copy of production. Decision 8's one test ad account is the only real business data, and has no contacts |
-| More environments | `dev` is one line in `env_config`, a `deploy/pauta-dev.service`, a Caddy block, a choice in the workflow and `provision-branch-env.sh dev` |
+| More environments | `dev` (added 2026-11-24) was one line in `env_config`, a `deploy/pauta-dev.service`, a Caddy block, a choice in the workflow and `provision-branch-env.sh dev` |
 
 ## What this costs: acceptance runs unreviewed code
 
