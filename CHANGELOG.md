@@ -10,6 +10,8 @@ come along, so their headings below have no links.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-24
+
 ### Changed
 
 - O código da Pauta agora é público, em https://github.com/eduelias/pauta. A história foi
@@ -934,3 +936,6 @@ The first versioned release. It covers everything since Pauta replaced the
   and Secure behind HTTPS. Invite, sign-up and login endpoints are rate limited per IP.
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
+
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/eduelias/pauta/releases/tag/v1.18.0
