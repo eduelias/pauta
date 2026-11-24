@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from urllib.parse import parse_qs, urlparse
 
 from .. import (
+    assets,
     obs,
     overview,
     server,  # for the settings the tests patch there
@@ -73,6 +74,16 @@ def install(route, store, auth, drive, meta):
         except MetaError:
             return {}
 
+    def _reach_served(self, pairs: list[tuple[str, str]], since: str, until: str):
+        """`_reach` for the list, which never waits for Meta: what is known now, and
+        whether the rest is being read behind the page (it asks again while so)."""
+        if not pairs or not meta.connected:
+            return {}, False
+        try:
+            return meta.reach_served(pairs, date.fromisoformat(since), date.fromisoformat(until))
+        except MetaError:
+            return {}, False
+
     def _live_accounts(self) -> dict[str, dict]:
         """Meta's latest account list by id (the cached read, as the client cards use);
         {} when Meta isn't connected or won't say: a balance is never the list's
@@ -90,7 +101,9 @@ def install(route, store, auth, drive, meta):
         with its campaigns and the period's sums, Ads Manager's Resultados (`results`,
         `result_indicator`, `cost_per_result_cents`), the lead cost (`cpl_cents`: spend
         ÷ link clicks) and the campaign's budget; `reach` comes from Meta for the period
-        as a whole (null when Meta won't say: never the list's problem). A client whose
+        as a whole (null when Meta won't say: never the list's problem, and never a wait:
+        a period Pauta hasn't read yet answers without it, with `reach_pending` on while
+        Meta is read behind, and the page asks again). A client whose
         linked accounts hold no tracked campaign (a portfolio just connected, say) is
         listed with `campaigns: []`, so it doesn't look like the connection failed.
         `accounts` is the client's linked ad accounts with the balance from Meta's
@@ -121,7 +134,7 @@ def install(route, store, auth, drive, meta):
             for k in c["campaigns"]
             if k["meta_id"] and k["account_id"]
         ]
-        reach = _reach(self, pairs, since, until)
+        reach, reach_pending = _reach_served(self, pairs, since, until)
         live = _live_accounts(self)
         portfolios = {c["business_id"]: c["business_name"] for c in meta.connections()}
         seen = store.seen_on(today)
@@ -150,6 +163,7 @@ def install(route, store, auth, drive, meta):
             "last_sync": meta.last_sync,
             "sync_error": meta.sync_error,
             "syncing": sync.running(),
+            "reach_pending": reach_pending,
             # the daily check: how many of the clients with something to check someone
             # has been through today
             "seen": {
@@ -166,11 +180,13 @@ def install(route, store, auth, drive, meta):
         how cost and volume moved against the period of the same length before (`change`:
         by result when both count the same thing, else by link click; `partial` and no
         percentages when the client's numbers start after that period did), one entry per day
-        of the last 14 (`days`), what is left on its accounts and for how many days at the
-        last 7 days' pace (`balance`, null when Meta gives none), `seen_today` and its
+        of the last 14 (`days`), what is left on its ad account that runs out first and for
+        how many days at that account's last 7 days' pace (`balance`, null when Meta gives
+        none; without a pace, what is left on all of them), `seen_today` and its
         `flags` ([{key, level, text}], rules over the last 7 full days against the 7
-        before). Read from the stored daily numbers and Meta's cached account list: never
-        a wait on Meta. Why a client has no fresh numbers is spelled out to admins only."""
+        before). Read from the stored daily numbers and Meta's kept account list (a wait
+        on Meta only when none is kept, or it is over a day old). Why a client has no fresh
+        numbers is spelled out to admins only."""
         since, until, today = _period(self)
         last, before = overview.flag_windows(today)
         windows = {
@@ -183,21 +199,39 @@ def install(route, store, auth, drive, meta):
         for c in clients:
             c["sums"] = {name: overview.sums(rows) for name, rows in c.pop("rows").items()}
         live = _live_accounts(self)
-        troubled = {
+        revoked = {  # a connection out of use: every account under it
             c["business_id"]: c["error"] or c["state"]
             for c in store.connections()
-            if c["state"] != "ok" or c["error"]
+            if c["state"] != "ok"
         }
-        remaining: dict[int, int | None] = {}
+        # per ad account, in the flags' last window: what it spent ("Não acompanhar"
+        # campaigns draw on the same balance) and whether a campaign is live on it
+        spent: dict[str, int] = {}
+        running: set[str] = set()
+        for c in store.campaign_rows(*last, CAMPAIGN_STATES):
+            for k in c["campaigns"]:
+                spent[k["account_id"]] = spent.get(k["account_id"], 0) + k["spend_cents"]
+                if k["state"] == "active":
+                    running.add(k["account_id"])
+        accounts: dict[int, list[dict]] = {}
         problems: dict[int, str] = {}
         for a in store.meta_accounts():
             if not a["client"]:
                 continue
             cid = a["client"]["id"]
             left = ((live.get(a["id"]) or {}).get("balance") or {}).get("remaining_cents")
-            if left is not None:
-                remaining[cid] = (remaining.get(cid) or 0) + left
-            why = troubled.get(a["business_id"]) if meta.connected else NOT_CONNECTED
+            accounts.setdefault(cid, []).append(
+                {
+                    "remaining_cents": left,
+                    "spend_cents": spent.get(a["id"], 0),
+                    "active": a["id"] in running,
+                }
+            )
+            # else the account's own trouble in the last pass, never its neighbours' (kept
+            # in memory: empty from a restart until the first pass ends, a minute later)
+            why = revoked.get(a["business_id"]) or meta.unsynced.get(a["id"])
+            if not meta.connected:
+                why = NOT_CONNECTED
             if why:
                 problems[cid] = (
                     f"{overview.NO_DATA}: {why}" if viewer["is_admin"] else overview.NO_DATA
@@ -206,7 +240,7 @@ def install(route, store, auth, drive, meta):
             clients,
             today,
             windows["previous"][0],
-            remaining,
+            {cid: overview.balance(mine) for cid, mine in accounts.items()},
             problems,
             store.seen_on(today),
             store.reviews_used(),
@@ -290,7 +324,7 @@ def install(route, store, auth, drive, meta):
     @route("POST", "/api/reviews/today")
     def review_all(self, viewer, body):
         """Visto hoje: todos. One check per active campaign of every client with one that
-        nobody has seen today (Piero goes through them all and marked them one by one, seven
+        nobody has seen today (the campaign runner went through them all one by one, seven
         taps in thirty seconds). The optional `note` goes on every check. Answers how many
         clients and campaigns were marked and the day's count; nothing to mark is 0, not
         an error (a second tap is harmless)."""
@@ -437,7 +471,7 @@ def install(route, store, auth, drive, meta):
             "{{url}}": f"{origin}/r/{token}",
             "{{origin}}": origin,
         }
-        page = (server.STATIC / "report.html").read_text(encoding="utf-8")
+        page = assets.page("report.html")
         for mark, value in fill.items():
             page = page.replace(mark, html.escape(value, quote=True))
         return self._page(200, page.encode())

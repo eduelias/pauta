@@ -12,7 +12,7 @@ a passkey for the same account on the new one. An admin can make the same link f
 else (Configurações → Time, or `pauta move-link`) and send it on WhatsApp: one tap, then Face ID.
 
 Configuration (environment):
-  PAUTA_AUTH=passkeys     turn accounts on
+  PAUTA_AUTH=passkeys     turn accounts on (unset or `open`: off; any other word stops the app)
   PAUTA_RP_ID             passkey domain(s), comma-separated, the current home first,
                           e.g. pauta.cc,pauta.genic.dev while moving (default: localhost)
   PAUTA_ORIGIN            allowed origin(s), comma-separated, the app's own first, e.g.
@@ -78,7 +78,7 @@ def _under(host: str, rp_id: str) -> bool:
 def clean_name(name) -> str:
     """A display name: no control or invisible format characters, single spaces, 40 max."""
     name = "".join(c for c in str(name or "") if unicodedata.category(c) not in ("Cc", "Cf"))
-    return " ".join(name.split())[:40]
+    return " ".join(name.split())[:40].rstrip()
 
 
 def _fold(name: str) -> str:
@@ -117,6 +117,7 @@ OPEN_VIEWER = {
     "name": "Você",
     "email": "",
     "whatsapp": "",
+    "start": "",
     "avatar": "",
     "is_admin": True,
 }
@@ -153,7 +154,15 @@ class Auth:
         origins: list[str] | None = None,
     ):
         self.store = store
-        self.enabled = (os.environ.get("PAUTA_AUTH") == "passkeys") if enabled is None else enabled
+        if enabled is None:
+            mode = os.environ.get("PAUTA_AUTH", "")
+            if mode not in ("", "open", "passkeys"):  # a typo must not start the app open
+                raise RuntimeError(
+                    f"PAUTA_AUTH={mode!r} is not a mode: use passkeys, or leave it unset "
+                    "(open, for local development)"
+                )
+            enabled = mode == "passkeys"
+        self.enabled = enabled
         ids = rp_id or os.environ.get("PAUTA_RP_ID") or "localhost"
         self.rp_ids = [r.strip().lower() for r in ids.split(",") if r.strip()] or ["localhost"]
         self.rp_id = self.rp_ids[0]  # home: where passkeys are made from now on
@@ -194,7 +203,8 @@ class Auth:
             if name != COOKIE or value.count("|") != 3:
                 continue
             aid, gen, expires, sig = value.split("|")
-            if not hmac.compare_digest(sig, self._sign(f"{aid}|{gen}|{expires}")):
+            # as bytes: a header may carry text that is not ASCII, which str refuses
+            if not hmac.compare_digest(sig.encode(), self._sign(f"{aid}|{gen}|{expires}").encode()):
                 return None
             if not all(x.isdigit() for x in (aid, gen, expires)) or int(expires) < time.time():
                 return None
@@ -234,6 +244,7 @@ class Auth:
             "name": acc["name"] if acc else None,
             "email": acc["email"] if acc else "",
             "whatsapp": acc["whatsapp"] if acc else "",
+            "start": acc["start"] if acc else "",
             "avatar": gravatar(acc["email"]) if acc else "",
             "is_admin": bool(acc and acc["is_admin"]),
         }
@@ -541,6 +552,10 @@ class Auth:
                 raise AuthError("essa é a sua única passkey; adicione outra antes de tirar esta")
             db.execute("DELETE FROM passkey WHERE id=? AND account=?", (cred_id, account_id))
             db.execute("UPDATE account SET session_gen = session_gen + 1 WHERE id=?", (account_id,))
+            db.execute(  # as in end_sessions: a link the person made for themselves ends too
+                "UPDATE invite SET expires=0 WHERE account=? AND created_by=?",
+                (account_id, account_id),
+            )
 
     # ---- login with a discoverable passkey ------------------------------------------------
 
@@ -605,6 +620,12 @@ class Auth:
                 )
             if is_admin is not None:
                 db.execute("UPDATE account SET is_admin=? WHERE id=?", (int(is_admin), account_id))
+            if (disabled and not row["disabled"]) or (is_admin is False and row["is_admin"]):
+                # the invites and links this account made, and the links made for it, end too
+                db.execute(
+                    "UPDATE invite SET expires=0 WHERE created_by=? OR account=?",
+                    (account_id, account_id),
+                )
             admins = db.execute(
                 "SELECT COUNT(*) FROM account WHERE is_admin AND NOT disabled"
             ).fetchone()[0]
@@ -648,6 +669,14 @@ class Auth:
             db.execute(
                 "UPDATE account SET whatsapp=? WHERE id=?",
                 (ACCOUNT_FIELDS["whatsapp"](number, db), account_id),
+            )
+
+    def set_start(self, account_id: int, screen) -> None:
+        """The screen the app opens on for this person (one of `STARTS`, '' for the Painel)."""
+        with self.store.db() as db:
+            db.execute(
+                "UPDATE account SET start=? WHERE id=?",
+                (ACCOUNT_FIELDS["start"](screen, db), account_id),
             )
 
 

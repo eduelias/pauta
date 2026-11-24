@@ -34,6 +34,10 @@ def test_safe_names():
     assert safe_name("  ..oi  tudo bem..  ") == "oi tudo bem"
     assert safe_name("") == safe_name("...") == "arquivo"
     assert len(safe_name("x" * 500)) == 120
+    # a long name is cut in its stem and keeps its ending: the kind of file goes by it
+    assert safe_name("x" * 200 + ".pdf") == "x" * 116 + ".pdf"
+    assert safe_name("x" * 115 + " .. " + "y" * 50 + ".tar.gz") == "x" * 115 + ".gz"
+    assert safe_name("x" * 130 + ". not an ending") == "x" * 120
 
 
 def test_off_without_a_client_id(store):

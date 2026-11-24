@@ -20,8 +20,16 @@ function passkeyRow(k, alone) {
       <button class="btn ghost small danger" data-remove="${esc(k.id)}" data-label="${esc(k.label || "Passkey")}" ${alone ? 'disabled title="Adicione outra passkey antes de tirar esta"' : ""}>${icon("trash")}Remover</button></div></div>`;
 }
 
+// "Tela inicial": the Painel and the screens this person can see, plus the one they had
+// chosen if it went out of sight (Meta switched off), so saving their name doesn't drop it
+function startOptions() {
+  const shown = Object.entries(STARTS).filter(([k]) => startVisible(k) || k === ME.start);
+  return [["", "Painel"], ...shown].map(([k, label]) => `<option value="${k}"${k === (ME.start || "") ? " selected" : ""}>${label}</option>`).join("");
+}
+
 async function viewProfile() {
   const keys = ME.auth ? await api("GET", "/api/me/passkeys") : [];
+  if (!onScreen("#/perfil")) return;
   app.innerHTML = `<div style="max-width:760px">
     <div class="head"><div><h1>Perfil</h1><p>Como você aparece para o time e como entra na Pauta.</p></div></div>
     <section class="panel" id="me">
@@ -33,6 +41,8 @@ async function viewProfile() {
           <span class="muted small">Só você vê o número; ele não aparece para o time.</span></div>
         <div class="field wide"><label>E-mail <span class="muted">(opcional)</span></label><input class="input" id="myemail" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com" value="${esc(ME.email || "")}">
           <span class="muted small">Só para mostrar sua foto do <a href="https://gravatar.com" target="_blank" rel="noopener">Gravatar</a>. O endereço não aparece para o time, mas quem já souber seu e-mail consegue confirmar que é ele.</span></div>
+        <div class="field wide"><label for="mystart">Tela inicial</label><select class="input" id="mystart">${startOptions()}</select>
+          <span class="muted small">A tela que abre quando você entra na Pauta, neste e nos outros aparelhos. Um link para um pedido continua abrindo o pedido, e o Painel segue no menu.</span></div>
       </div>
       <div class="mt"><button class="btn" id="saveme">${icon("check")}Salvar</button></div>` : ""}
     </section>
@@ -45,13 +55,16 @@ async function viewProfile() {
       <p class="muted small">O link é para um celular novo (ou perdido): abra-o lá, confirme com o Face ID e a mesma conta entra. Vale uma vez, por 10 minutos, e sair de todos os aparelhos também o cancela.</p>
       <div id="mv-me"></div>
     </section>
+    <section class="panel mt" id="push"><div class="panel-head"><h2>${icon("bell")}Notificações</h2></div>
+      <p class="muted small" style="margin-top:-6px">Um aviso neste aparelho quando outra pessoa cria um pedido, muda o status ou comenta. Vale por aparelho: ative em cada um em que quiser receber.</p>
+      <div id="pushbody"></div></section>
     <section class="panel mt" id="sessions"><div class="panel-head"><h2>${icon("logout")}Sessões</h2></div>
       <p class="muted small" style="margin-top:-6px">Sair encerra a Pauta em todos os aparelhos em que você entrou; as passkeys continuam valendo para entrar de novo.</p>
       <button class="btn ghost" id="logout">${icon("logout")}Sair em todos os aparelhos</button></section>` : ""}
   </div>`;
   $("#saveme")?.addEventListener("click", async () => {
     try {
-      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value };
+      const body = { name: $("#myname").value, email: $("#myemail").value, whatsapp: $("#mywa").value, start: $("#mystart").value };
       ME = { ...ME, ...(await api("PATCH", "/api/me", body)) };
       track("settings_changed", { section: "perfil" });
       BOOT = await api("GET", "/api/boot");
@@ -63,6 +76,7 @@ async function viewProfile() {
   $("#addkey")?.addEventListener("click", async () => { if (await addPasskey()) viewProfile(); });
   $("#newlink")?.addEventListener("click", () => makeMoveLink("me", ME.name, true));
   $("#logout")?.addEventListener("click", logout);
+  loadPush();
   $$("[data-relabel]").forEach((b) => b.addEventListener("click", async () => {
     const label = prompt("Nome deste aparelho (por exemplo “iPhone do Piero”)", b.dataset.label);
     if (label === null) return;
@@ -74,6 +88,64 @@ async function viewProfile() {
     try { await api("DELETE", `/api/me/passkeys/${b.dataset.remove}`); toast("Passkey removida"); viewProfile(); }
     catch (e) { toast(e.message, true); }
   }));
+}
+
+// ---------- notificações (pauta/push.py) --------------------------------------------------------
+
+// The switch is per device: the browser holds the subscription, the server keeps its address
+// under the person signed in. Switching on registers the worker (sw.js), which only shows
+// notifications. On an iPhone the browser offers none of this until the Pauta is installed.
+const pushCapable = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const b64bytes = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+async function pushSubscription() {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function pushOn() {
+  // first thing after the tap: an iPhone only asks the person from a tap
+  if (await Notification.requestPermission() !== "granted") throw new Error("as notificações não foram liberadas neste aparelho");
+  const { key } = await api("GET", "/api/push");
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64bytes(key) });
+  await api("POST", "/api/push", { endpoint: sub.endpoint });
+}
+
+async function pushOff() {
+  const sub = await pushSubscription();
+  if (!sub) return;
+  await api("POST", "/api/push/off", { endpoint: sub.endpoint });
+  await sub.unsubscribe();
+}
+
+// A device with notifications on says so again each time the Pauta opens: signing out
+// forgets the person's devices, and whoever signs in here next is who gets the pushes.
+async function pushResume() {
+  if (!ME.auth || !pushCapable() || Notification.permission !== "granted") return;
+  const sub = await pushSubscription();
+  if (sub) await api("POST", "/api/push", { endpoint: sub.endpoint });
+}
+
+async function loadPush() {
+  const box = $("#pushbody");
+  if (!box) return;
+  const blocked = pushCapable() && Notification.permission === "denied";
+  const on = pushCapable() && !blocked && Boolean(await pushSubscription());
+  if (!box.isConnected) return;
+  box.innerHTML = !pushCapable() ? `<p class="muted small">Este navegador não recebe notificações. No iPhone, instale a Pauta primeiro: no Safari, toque em Compartilhar e em “Adicionar à Tela de Início”, abra a Pauta por lá e volte a esta tela.</p>`
+    : blocked ? `<p class="muted small">As notificações da Pauta estão bloqueadas neste aparelho. Libere nos ajustes do aparelho (ou do navegador) e volte aqui.</p>`
+    : on ? `<div class="member"><div class="who"><b>Ativadas neste aparelho</b></div><button class="btn ghost small" id="pushoff">Desativar</button></div>`
+    : `<button class="btn" id="pushon">${icon("bell")}Ativar neste aparelho</button>`;
+  const flip = (b, work, done) => b?.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await work(); track("settings_changed", { section: "notificacoes" }); toast(done); }
+    catch (e) { toast(e.message, true); }
+    loadPush();
+  });
+  flip($("#pushon"), pushOn, "Notificações ativadas neste aparelho");
+  flip($("#pushoff"), pushOff, "Notificações desativadas neste aparelho");
 }
 
 // The OneDrive card: connect with a code (device code flow), see the account, disconnect.
@@ -92,15 +164,16 @@ async function loadDrive(doc) {
     try { loadDrive(await api("POST", "/api/onedrive/connect")); track("settings_changed", { section: "arquivos" }); } catch (e) { toast(e.message, true); }
   });
   $("#drivecancel")?.addEventListener("click", async () => {
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    await refreshBoot();
+    try { loadDrive(await api("DELETE", "/api/onedrive")); await refreshBoot(); } catch (e) { toast(e.message, true); }
   });
   $("#driveoff")?.addEventListener("click", async () => {
     if (!confirm("Desconectar o OneDrive? Os arquivos continuam lá, mas a Pauta deixa de enviar e abrir arquivos até alguém reconectar.")) return;
-    loadDrive(await api("DELETE", "/api/onedrive"));
-    track("settings_changed", { section: "arquivos" });
-    await refreshBoot();
-    toast("OneDrive desconectado");
+    try {
+      loadDrive(await api("DELETE", "/api/onedrive"));
+      track("settings_changed", { section: "arquivos" });
+      await refreshBoot();
+      toast("OneDrive desconectado");
+    } catch (e) { toast(e.message, true); }
   });
   if (doc.state === "pending") DRIVE_TIMER = setTimeout(() => loadDrive(), Math.max(1000, (doc.pending?.interval || 5) * 1000));
   // the toast comes once the app's own state (BOOT.files) knows it too, like the disconnect
@@ -209,7 +282,7 @@ const META_STATES = {
   revoked: "acesso revogado na Meta; reconecte em Adicionar contas",
 };
 const stampBR = (iso) => {
-  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso.replace(" ", "T") + "Z");
+  const d = stamp(iso);
   if (Number.isNaN(d.getTime())) return "";
   return `${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
 };
@@ -313,11 +386,25 @@ function metaBalance(a) {
   return b.funding ? esc(b.funding) : "—";
 }
 
+// The QR code library is only for an invite: fetched the first time one is made.
+let qrLoading;
+function loadQr() {
+  qrLoading ||= new Promise((done, failed) => {
+    const s = document.createElement("script");
+    s.src = BOOT.qrcode;
+    s.onload = done;
+    s.onerror = () => { qrLoading = null; failed(new Error("o QR code não carregou; tente de novo")); };
+    document.head.append(s);
+  });
+  return qrLoading;
+}
+
 async function makeInvite() {
-  const box = $("#qrbox");
+  const box = $("#qrbox"), btn = $("#invite");
   const admin = $("#asadmin").checked;
+  btn.disabled = true;
   try {
-    const inv = await api("POST", "/api/invite", { admin });
+    const [inv] = await Promise.all([api("POST", "/api/invite", { admin }), loadQr()]);
     const url = location.origin + inv.path;
     const qr = qrcode(0, "M");
     qr.addData(url);
@@ -332,4 +419,5 @@ async function makeInvite() {
       <a class="btn" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">${icon("wa")}Enviar no WhatsApp</a></div></div></div>`;
     bindCopy(box);
   } catch (e) { toast(e.message, true); }
+  btn.disabled = false;
 }

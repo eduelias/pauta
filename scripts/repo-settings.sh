@@ -82,13 +82,13 @@ apply() {
         -F has_wiki=false -F has_projects=false
 
     say "== Actions"
-    # only GitHub's own actions plus the two this repo uses, each pinned to a full SHA
+    # only GitHub's own actions plus the one this repo uses, each pinned to a full SHA
     try "allowed actions: selected, SHA-pinned" -X PUT "repos/$REPO/actions/permissions" \
         -F enabled=true -f allowed_actions=selected -F sha_pinning_required=true
-    try "allowed actions: github/*, astral-sh/setup-uv, rhysd/actionlint" -X PUT \
+    try "allowed actions: github/*, astral-sh/setup-uv" -X PUT \
         "repos/$REPO/actions/permissions/selected-actions" --input - <<'EOF'
 {"github_owned_allowed": true, "verified_allowed": false,
- "patterns_allowed": ["astral-sh/setup-uv@*", "rhysd/actionlint@*"]}
+ "patterns_allowed": ["astral-sh/setup-uv@*"]}
 EOF
     try "GITHUB_TOKEN read-only, can't approve PRs" -X PUT \
         "repos/$REPO/actions/permissions/workflow" \
@@ -107,6 +107,8 @@ EOF
     say "== environments"
     environment production   # the du7 deploy job
     environment alerts       # the WhatsApp secrets (see `secrets`)
+    environment acc          # deploy-branch.yml's du7 job (it runs from main)
+    environment dev
 
     say "== rulesets"
     local checks

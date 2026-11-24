@@ -36,6 +36,7 @@ const monthName = (m, year = false) => new Date(m + "-15T12:00:00").toLocaleDate
 async function viewFinance() {
   if (!finVisible()) { location.hash = "#/"; return; }
   const f = await api("GET", `/api/finance${finState.month ? `?month=${finState.month}` : ""}`);
+  if (!onScreen("#/financeiro")) return;  // asked again by itself, answered on another screen
   finState.month = f.month;
   const cur = f.currency;
   const on = finState.filter;
@@ -82,13 +83,18 @@ async function viewFinance() {
     </div>
     ${body}
   </div>`;
-  $$("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+  // the panel asks for its data again: when that fails the choice goes back to what is
+  // drawn (whatever was tapped since) and is said
+  const sel = $("#finmonth"), drawn = { ...finState };
+  const again = (change) => {
+    change();
+    viewFinance().catch((e) => { Object.assign(finState, drawn); if (sel) sel.value = drawn.month; toast(e.message, true); });
+  };
+  $$("[data-filter]").forEach((b) => b.addEventListener("click", () => again(() => {
     finState.filter = finState.filter === b.dataset.filter ? null : b.dataset.filter;
-    viewFinance();
-  }));
-  $$("#finclear").forEach((b) => b.addEventListener("click", () => { finState.filter = null; viewFinance(); }));
-  const sel = $("#finmonth");
-  if (sel) sel.addEventListener("change", () => { finState.month = sel.value; viewFinance(); });
+  })));
+  $$("#finclear").forEach((b) => b.addEventListener("click", () => again(() => { finState.filter = null; })));
+  if (sel) sel.addEventListener("change", () => again(() => { finState.month = sel.value; }));
   $$("[data-pay]").forEach((b) => b.addEventListener("click", () => payModal(
     { id: Number(b.dataset.pay), name: b.dataset.name }, Number(b.dataset.amount), cur, viewFinance)));
 }
@@ -165,7 +171,7 @@ function bindPayBox(c, done) {
   });
   $("#paybilled", box)?.addEventListener("change", async (e) => {
     try { done(await api("PATCH", `/api/clients/${c.id}/billing`, { billed: e.target.checked })); track("finance_entry", { kind: "cycle" }); toast("Salvo"); }
-    catch (err) { toast(err.message, true); }
+    catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
   });
   $$("[data-void]", box).forEach((b) => b.addEventListener("click", async () => {
     if (!confirm("Anular este pagamento? Ele continua na lista, riscado.")) return;

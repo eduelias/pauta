@@ -1,12 +1,18 @@
 # 11. Analytics: a usage log inside the app, Plausible on the public site
 
-- **Status:** accepted for the app part (2026-11-03): the `usage` table, `POST /api/usage`,
-  `track()` with the events below and `pauta usage` are in the app (retention 90 days, pruned
-  by the nightly `pauta backup`; `pauta usage --disable` switches a team's log off). The owner
+- **Status:** the app part is accepted (2026-11-03) and shipped in 1.8.1: the `usage` table,
+  `POST /api/usage`, `track()` with the events below and `pauta usage` are in the app
+  (retention 90 days, pruned by the nightly `pauta backup`; `pauta usage --disable` switches
+  a team's log off). The owner
   confirmed the signals from the production journal and the `event` table by hand: screens
   and actions per person, where errors appear, how long the phone waits, and the same step
   repeated on several requests of one client (the report's "Repeated steps" line). The site
   part (Plausible) is still proposed: nothing is installed, no account exists.
+- **2026-11-20:** the code differs: prop values are not from a fixed list. The keys are
+  fixed per event; a value is any boolean, number or string cut at 64 characters, and
+  `request_created.kind` carries the team's own name for the request kind.
+- **2026-11-20:** not built as of 1.15.1: `pauta usage --team` (it waits for decision 5) and
+  `--save`; the report reading the journal's server-side events; `docs/privacy/lia-usage.md`.
 - **Depends on:** nothing for the app part. The site part needs decision 4's site (live) and,
   for the checkout goal, decision 6's `/assinar` page.
 - **Fits:** decision 5 (one database per team, Du7 as *operador*; the usage rows live in the
@@ -112,17 +118,17 @@ DPA clause), Fathom, Simple Analytics, Pirsch (similar to Plausible, nothing ext
 
 ### Session replay and heatmaps: no, for now
 
-Replay in the app records the team's clients' names, phones, briefs and amounts: data the
-team controls and Du7 only processes on instruction. Recording it for Du7's own purpose
-(usability) changes Du7's role for that data and needs the team's written agreement in the
-DPA, masking of every text and input (PostHog: `maskTextSelector: "*"`, which also hides what
-you wanted to see), and a privacy text that says screens are recorded. For a product with
-one team and one developer who can watch Piero use it over WhatsApp, that is a lot of
-machinery and risk for little. What replaces it in this proposal: error toasts and slow
-calls as events (where people get stuck), a "screen → next screen" count (where they
-wander), and usability sessions on **acceptance with demo data**, where replay would be
-harmless. If a question ever needs replay, PostHog Cloud EU on acceptance only, demo data
-only, is the cheap experiment, and this decision is revisited.
+Replay in the app records the team's clients' names, phones, briefs and amounts: data the team
+controls and Du7 only processes on instruction. Recording it for Du7's own purpose (usability)
+changes Du7's role for that data and needs the team's written agreement in the DPA, masking of
+every text and input (PostHog: `maskTextSelector: "*"`, which also hides what you wanted to
+see), and a privacy text that says screens are recorded. For a product with one team and one
+developer who can watch the person who runs the campaigns ("the campaign runner" below) use it
+over WhatsApp, that is a lot of machinery and risk for little. What replaces it in this
+proposal: error toasts and slow calls as events (where people get stuck), a "screen → next
+screen" count (where they wander), and usability sessions on **acceptance with demo data**,
+where replay would be harmless. If a question ever needs replay, PostHog Cloud EU on acceptance
+only, demo data only, is the cheap experiment, and this decision is revisited.
 
 ## Decision (proposed)
 
@@ -132,9 +138,9 @@ without touching the other.
 | Topic | Decision |
 |---|---|
 | **App: option A**, the home-grown usage log | Events are first-party, stay in the team's own SQLite file, need no CSP change, no account, no consent, and the questions we have (which screens, which actions, where it errors, how slow, which devices) are counts and percentiles SQLite answers in a line. A hosted product-analytics tool would give nicer charts at the cost of a script from another origin inside a passkey-protected app, a second copy of the team's usage data outside the team file, and a policy text naming a third party |
-| **Site: option B**, Plausible Cloud Starter ($9/month) | EU-only, cookieless, no banner, a 1 KB script, outbound-link and UTM reports and tagged events out of the box, a public shareable dashboard for Piero. GoatCounter (H) is the cheaper runner-up; Umami Cloud (C) is free but its hosting region must be confirmed first; Cloudflare (G) can't count the CTA or campaigns. If $9/month is not wanted, H or C' on du7 |
+| **Site: option B**, Plausible Cloud Starter ($9/month) | EU-only, cookieless, no banner, a 1 KB script, outbound-link and UTM reports and tagged events out of the box, a public shareable dashboard for the campaign runner. GoatCounter (H) is the cheaper runner-up; Umami Cloud (C) is free but its hosting region must be confirmed first; Cloudflare (G) can't count the CTA or campaigns. If $9/month is not wanted, H or C' on du7 |
 | Session replay, heatmaps | **No** (see above). Revisit only for acceptance with demo data |
-| Who sees what | The owner: `pauta usage` (CLI) and Plausible. Piero: Plausible's shared dashboard link for the site (he runs the campaigns). Team members: nothing new; the privacy policy says what is logged |
+| Who sees what | The owner: `pauta usage` (CLI) and Plausible. The campaign runner: Plausible's shared dashboard link for the site. Team members: nothing new; the privacy policy says what is logged |
 | Data kept | App: 90 days of `usage` rows, pruned by the nightly backup unit's run; aggregates (`pauta usage --save`) kept as monthly JSON next to the backups if wanted. Site: whatever Plausible keeps (aggregates; no raw IP or UA) |
 | What never enters the log | Names, phones, request text, client ids as free text, URLs with ids beyond the route pattern (`/api/requests/{id}` style, like `obs.route_label`), IP addresses, exact user agents. Props are from a fixed enum per event; the server drops unknown keys and truncates values at 64 chars |
 | Opt-out | App: none per person (the data is the team's own, pseudonymous, and the purpose is the service); the policy says so and a team may ask Du7 to disable logging for its file (`setting usage.enabled=false`). Site: Plausible honours no cookie but the policy links Plausible's data policy; a `localStorage.plausible_ignore=true` opt-out line is in the policy |
@@ -147,30 +153,31 @@ without touching the other.
 | Ingest | `POST /api/usage` with `{events:[{t, e, s, p}]}`; the client batches events and flushes every 10 s, on `visibilitychange` and with `navigator.sendBeacon` on unload. Session required (so an event is always for an account), `Origin` check as every write, body cap 16 KB, 50 events per call, rate-limited per account. Quiet route like `/healthz`: not in the request log, not counted in `/metrics` |
 | Client | One `track(e, p)` in `app.js`, called from `route()` (screens), the places that already call `toast()` with `err=true`, `api()` (duration and status for every call, kept only when > 1.5 s or 4xx/5xx), and a dozen named actions below. No new file, no inline script, no CSP change |
 | Server-side events | Already there: `file_uploaded`, `auth_failed`, `rate_limited`, request log lines. They stay in the journal; the report joins them by day, not by account |
-| Report | `pauta usage [--days 7] [--team slug]`: active accounts per day; screens per day; actions per day; top error toasts (message class + screen); slow calls p95 by route (client-measured, includes the network, unlike `/metrics`); device mix (phone/desktop, standalone %, viewport buckets); and two product funnels from the product tables, no instrumentation needed: **open → done** (`request.created` to `done_on`, median and p90 days, by kind) and **Visto hoje coverage** (clients with live campaigns checked per day, from decision 8's `review` table). Dead features = events with zero rows in the window, listed by name |
+| Report | `pauta usage [--days 7] [--team slug]` (also `--enable` and `--disable`): active accounts per day; screens and actions over the whole window, by account; top error toasts (message class + screen); slow calls p95 by route (client-measured, includes the network, unlike `/metrics`); device mix (phone/desktop, standalone %, viewport buckets); and two product funnels from the product tables, no instrumentation needed: **open → done** (`request.created` to `done_on`, median and p90 days, by kind) and **Visto hoje coverage** (clients with live campaigns checked per day, from decision 8's `review` table). Dead features = events with zero rows in the window, listed by name |
 | Later, if the CLI hurts | An owner-only `#/uso` page with the same numbers, in the app's own style, and `/metrics` gains the per-team active-accounts count for the watchdog |
 | Tests | Unit: the enum check and truncation; API: a batch is stored, an unknown event is dropped, a foreign Origin is refused, the route is quiet; e2e: opening three screens yields three `screen` rows |
 
-The 15 events for the first release (name, props):
+The events (name, props): 15 in the first release, 19 names in `usage.EVENTS` today, on
+17 rows here (rows 7 and 11 hold two each).
 
 | # | Event | Props | Answers |
 |---|---|---|---|
-| 1 | `app_open` | `version`, `dev`, `theme` | Sessions per day, PWA vs browser, viewport mix |
-| 2 | `screen` | `s` (painel, quadro, pedidos, pedido, novo, clientes, cliente, financeiro, campanhas, campanha, configuracoes, perfil, entrar), `from` | Screens used, screen → screen paths, dead screens |
-| 3 | `request_created` | `kind`, `has_deadline`, `files` | Volume, which kinds, whether the form is finished |
-| 4 | `request_status` | `from`, `to`, `via` (board, page, list) | Where status changes happen; abandoned "Aguardando" |
+| 1 | `app_open` | `version`, `theme`, `start` (the screen chosen on Perfil, when one was); `dev` is the row's own column | Sessions per day, PWA vs browser, viewport mix |
+| 2 | `screen` | `s` (painel, quadro, pedidos, pedido, novo, clientes, cliente, cliente_novo, financeiro, campanhas, campanha, configuracoes, perfil, entrar, mudar), `from`. The report screen (`#/relatorio/<id>`) is not in the list: its rows are stored with an empty screen | Screens used, screen → screen paths, dead screens |
+| 3 | `request_created` | `kind`, `has_deadline` (`files` is accepted, never sent) | Volume, which kinds, whether the form is finished |
+| 4 | `request_status` | `from`, `to`, `via` (board, page) | Where status changes happen; abandoned "Aguardando" |
 | 5 | `request_sent` | — | The WhatsApp share of a request is used or not |
-| 6 | `comment_added` | `screen` | The timeline is a conversation or a log |
+| 6 | `comment_added` | — (`screen` is accepted, never sent) | The timeline is a conversation or a log |
 | 7 | `file_added` / `file_failed` | `reason` (size, empty, network, drive) | OneDrive friction |
 | 8 | `client_saved` | `new` (true/false) | Client editing frequency |
-| 9 | `seen_today` | `n` (campaigns marked) | Decision 8's daily check is done from the list or per campaign |
-| 10 | `finance_entry` | `kind` (payment, cycle) | Financeiro is used by whom and how often |
+| 9 | `seen_today` | `n` (the client's campaigns marked; for "Visto hoje: todos", the number of clients) | Decision 8's daily check is done from the list or per campaign |
+| 10 | `finance_entry` | `kind` (payment, cycle, void) | Financeiro is used by whom and how often |
 | 11 | `search` / `filter` | `what` (status, client, text; on Clientes: view, sort) | How people find requests, and whether the clients list and its orders get used |
 | 12 | `error_shown` | `msg` (class: validation, network, auth, drive, server), `screen`, `status`, `route` and `method` (the call that failed within 3 s), `form` (the form id or screen, when no call failed) | Where people hit a wall, and on which call or form |
-| 13 | `api_slow` | `route` (pattern), `ms` bucket, `status` | Slow calls as felt on the phone |
-| 14 | `settings_changed` | `section` (equipe, financeiro, acompanhamento, meta, perfil) | Which settings get touched |
-| 15 | `login` | `ok`, `method` (passkey, autofill, link) | Sign-in friction on phones |
-| 16 | `period` | `p` (the picker key: last_30, this_month, custom…) | Which period each Campanhas draw used, next to the `api_slow` row it may have cost (added 2026-11-12: a 6.6 s Campanhas read could not be tied to a period) |
+| 13 | `api_slow` | `route` (pattern), `ms` (rounded, not a bucket), `status`, `method` | Slow calls as felt on the phone |
+| 14 | `settings_changed` | `section` (equipe, financeiro, campanhas, listas, arquivos, meta, perfil) | Which settings get touched |
+| 15 | `login` | `ok`, `method` (passkey, link) | Sign-in friction on phones |
+| 16 | `period` | `p` (the picker key: last_30, this_month, custom…); with `custom`, also `days` (the range's length) and `ago` (how many days back it ends), never its dates | Which period each Campanhas draw used, next to the `api_slow` row it may have cost (added 2026-11-12: a 6.6 s Campanhas read could not be tied to a period) |
 | 17 | `client_message` | `kind` (balance, summary) | Whether the message drafts on Visão geral get opened, and which (added 2026-11-12 with "Avisar o cliente"); the Painel's card Saldo acabando sends the same event, told apart by the row's screen (`painel`). Never the client, the number or the text |
 
 ### Option B in detail (the site)
@@ -182,7 +189,7 @@ The 15 events for the first release (name, props):
 | CSP on the site | GitHub Pages sets no headers. Optional: a `<meta http-equiv="Content-Security-Policy">` with `default-src 'self'; script-src 'self' 'sha256-<hash of the redirect line>' https://plausible.io; connect-src https://plausible.io; img-src 'self' data:; style-src 'self'`. The Paddle page would add `https://cdn.paddle.com` and `frame-src https://*.paddle.com` (decision 6). Not required for Plausible to work; `tools/check.py` would then fail on any violation, as the app's tests do |
 | UTM conventions | `utm_source` = where the link was posted (`whatsapp`, `instagram`, `google`, `email`, `linkedin`); `utm_medium` = how (`chat`, `bio`, `story`, `post`, `cpc`, `email`); `utm_campaign` = `YYYYMM-<slug>` (`202611-beta`, `202612-lancamento`); `utm_content` = the variant (`story1`, `post-etapas`, `link-rodape`). Always as a query string, never in the `#fragment` (the redirect line only acts on `#/`). The `campaign/README.md` in `pauta-site` keeps the list of links in use |
 | Connecting www to the app, without cross-site tracking | The site's own JS copies `utm_campaign` (if present) into the WhatsApp button's prefilled text as a short code in brackets: "Oi! Quero entrar no beta do Pauta. [202611-beta]". Nothing is sent anywhere; the lead chooses to send that message. famulus's lead intake already forwards the message to the owner, so the code arrives with the lead. When the owner creates the team (`pauta team create --source 202611-beta`, decision 5), the code lands on the `team` row; decision 6's checkout passes the team id (and so its source) in Paddle's `custom_data`. `pauta team list --by-source` then gives **leads → teams → paying teams per campaign** from `control.db` alone. Plausible knows the click, Pauta knows the team; nothing links a browser to a person |
-| Piero's view | Plausible's shared link (read-only, optionally password-protected): sources, campaigns, goals, countries, devices. His weekly question: which campaign brought WhatsApp clicks |
+| The campaign runner's view | Plausible's shared link (read-only, optionally password-protected): sources, campaigns, goals, countries, devices. His weekly question: which campaign brought WhatsApp clicks |
 
 ## Texts that must change
 
@@ -253,13 +260,13 @@ CSP changes: **app: none.** Site: optional meta policy above; nothing today.
 | 1 | **App:** `usage` table, `/api/usage`, `track()`, the 15 events, `pauta usage`, tests, privacy bullet, release note. Ships in a normal release; first look at the numbers after two weeks | After the Configurações/Perfil and Meta branches land, so the screen names are final |
 | 2 | **Site:** Plausible account (owner), script tag, goals, UTM list in `campaign/README.md`, the WhatsApp campaign code, privacy section 2, `make check` green | Before the next campaign push (`campaign/` is ready) |
 | 3 | **Chain:** `team.source` and `pauta team create --source`, `--by-source` report; Paddle `custom_data` and the `Assinar`/`Checkout` goals on `/assinar` | With decisions 5 and 6 |
-| 4 | **Weekly habit:** the owner reads `pauta usage --days 7` and Plausible on Mondays (reps-triage's slot); Piero gets the shared Plausible link. After two months: delete events nobody reads, add the ones a question needs, decide on the `#/uso` page | From stage 1 on |
+| 4 | **Weekly habit:** the owner reads `pauta usage --days 7` and Plausible on Mondays (reps-triage's slot); the campaign runner gets the shared Plausible link. After two months: delete events nobody reads, add the ones a question needs, decide on the `#/uso` page | From stage 1 on |
 | 5 | Revisit: replay on acceptance with demo data if a usability question can't be answered; self-hosting the site's analytics when production moves to Hetzner | When needed |
 
 The weekly look, for the owner (`pauta usage`): active accounts per day; screens and actions
 of the week versus the week before; the top five error toasts and the top five slow routes;
-open → done median days by kind; Visto hoje coverage per day; device mix. For Piero
-(Plausible): visitors by source and campaign, the "Chamar no WhatsApp" goal by campaign, top
+open → done median days by kind; Visto hoje coverage per day; device mix. For the campaign
+runner (Plausible): visitors by source and campaign, the "Chamar no WhatsApp" goal by campaign, top
 countries and devices.
 
 ## Questions for the owner
@@ -274,7 +281,8 @@ countries and devices.
 5. **Retention:** 90 days of raw usage rows, or shorter?
 6. **Telling the team:** a line in the release note plus the policy, or also a message to the
    team before the release?
-7. **Piero and Plausible:** the shared dashboard link, or a weekly summary from the owner?
+7. **The campaign runner and Plausible:** the shared dashboard link, or a weekly summary from
+   the owner?
 8. **The campaign code in the WhatsApp text:** fine, or does a visible code in the lead's
    message look odd? (Alternative: none, and the owner asks "como chegou até nós?".)
 9. **Site CSP meta tag:** add it with Plausible (and later Paddle) allowed, or leave the site
@@ -297,8 +305,8 @@ countries and devices.
 - **Only the journal (`obs.py`) and `/metrics`:** zero code, but route counts per day say
   nothing about screens, toasts, devices or paths, and the journal is rotated by systemd.
   The usage table is the smallest step that answers the questions.
-- **Google Analytics 4 / Meta Pixel on the site:** Piero knows them, and the Pixel would let
-  Meta optimise ads for site conversions. Both need a consent banner in Brazil and the EU
-  and send visitor data to advertisers; not now. If Meta ad optimisation becomes necessary,
+- **Google Analytics 4 / Meta Pixel on the site:** the campaign runner knows them, and the Pixel
+  would let Meta optimise ads for site conversions. Both need a consent banner in Brazil and the
+  EU and send visitor data to advertisers; not now. If Meta ad optimisation becomes necessary,
   Meta's Conversions API (server-side, from famulus's lead intake, hashed phone) is the
   privacy-preserving route and would be its own decision.

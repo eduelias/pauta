@@ -1,11 +1,13 @@
 """The Store: clients, requests, their timeline, lists, people and backups."""
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store
+from ledger import a_day_passes
+from pauta import meta
+from pauta.db import DEFAULT_OPTIONS, SCHEMA_VERSION, Invalid, NotFound, Store, team_today
 from pauta.finance import add_months
 
 
@@ -30,6 +32,42 @@ def test_fresh_database(store):
     for lst, values in DEFAULT_OPTIONS.items():
         assert opts[lst] == values
     assert opts["status"]["done"] == "Concluído"
+
+
+def test_the_schema_number_never_goes_down(tmp_path):
+    path = tmp_path / "x.db"
+    with Store(path).db() as conn:  # a newer release was here, then a rollback to this one
+        conn.execute("UPDATE meta SET value=? WHERE key='schema'", (str(SCHEMA_VERSION + 3),))
+    with Store(path).db() as conn:
+        version = conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+    assert version == str(SCHEMA_VERSION + 3)
+
+
+def test_this_release_runs_on_a_database_a_newer_one_added_to(tmp_path):
+    """The rollback promise: later releases only add, so this one must not mind a column it
+    does not know on every table, nor a table it does not know."""
+    path = tmp_path / "x.db"
+    with Store(path).db() as conn:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        for (table,) in tables:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN from_later TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE TABLE from_later (id INTEGER PRIMARY KEY, note TEXT)")
+    store = Store(path)  # starts again on it
+    c = store.save_client({"name": "Padaria Pão Quente", "since": "2026-01-05"})
+    store.set_billing(c["id"], {"amount": "250"}, None)
+    store.add_payment(c["id"], {"paid_on": "2026-10-29", "amount": "1.500,00"}, None)
+    r = store.create_request({"client": c["id"], "what": "Campanha"}, None)
+    store.comment(r["id"], "Feito", None)
+    assert store.update_request(r["id"], {"status": "done"}, None)["status"] == "done"
+    assert [e["kind"] for e in store.request(r["id"])["events"]] == ["created", "comment", "status"]
+    assert store.client(c["id"])["billing"]["amount"] == 250
+    assert store.finance()["received_total"] == 1500
+    assert store.clients() and store.requests() and store.members() == []
+    assert store.set_options("kind", ["Só isso"]) and store.table("billing")
+    store.delete_request(r["id"])
+    store.delete_client(c["id"])
 
 
 def test_reopening_keeps_data_and_edited_lists(tmp_path):
@@ -103,7 +141,7 @@ def test_create_request_defaults(store, client):
 
 def test_request_created_done_gets_a_done_date(store, client):
     r = new_request(store, client, status="done")
-    assert r["done_on"] == date.today().isoformat()
+    assert r["done_on"] == team_today().isoformat()
     r = new_request(store, client, status="done", done_on="2026-01-02")
     assert r["done_on"] == "2026-01-02"
 
@@ -116,7 +154,7 @@ def test_update_logs_status_and_edits(store, client):
     events = [(e["kind"], e["text"]) for e in r["events"]]
     assert events[1:] == [("status", "todo>doing"), ("edited", "verba")]
     r = store.update_request(r["id"], {"status": "done"}, None)
-    assert r["done_on"] == date.today().isoformat()
+    assert r["done_on"] == team_today().isoformat()
     assert r["events"][-1]["text"] == "doing>done"  # done_on is not reported as an edit
     with pytest.raises(Invalid):
         store.update_request(r["id"], {"what": ""}, None)
@@ -289,11 +327,22 @@ def test_pausing_closes_the_cycle_and_coming_back_restarts_it(store, client):
     assert first["billing"]["anchor"] == "2026-10-29" and first["billing"]["months_active"] >= 1
     store.save_client({"state": "Pausado"}, cid)
     assert store.client(cid)["billing"] is None
+    a_day_passes(store)
     back = store.save_client({"state": "Ativo"}, cid)
     # a new cycle: the old payment stays in the ledger but no longer anchors anything
     assert back["billing"]["status"] == "awaiting_first" and len(back["payments"]) == 1
     with store.db() as db:
         assert db.execute("SELECT COUNT(*) FROM billing WHERE client=?", (cid,)).fetchone()[0] == 2
+
+
+def test_a_slip_on_cobrado_keeps_the_cycle_and_its_count(store, client):
+    cid = client["id"]
+    store.add_payment(cid, {"paid_on": "2026-10-29", "amount": 100}, None)
+    assert store.set_billing(cid, {"billed": False}, None)["billing"] is None
+    back = store.set_billing(cid, {"billed": True}, None)  # the same day: not a pause
+    assert back["billing"]["anchor"] == "2026-10-29" and back["billing"]["months_active"] >= 1
+    with store.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM billing WHERE client=?", (cid,)).fetchone()[0] == 1
 
 
 def test_not_billed_means_no_cycle_and_no_panel_row(store, client):
@@ -352,7 +401,7 @@ def test_payment_validation(store, client):
 
 def test_the_panel(store):
     # dates relative to today: the ledger refuses payments in the future
-    today = date.today()
+    today = team_today()
     ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
     a = store.save_client({"name": "Em dia"})
     b = store.save_client({"name": "Atrasado"})
@@ -399,15 +448,36 @@ def test_panel_rows_carry_the_client_id_not_the_cycle_id(store):
     # brought back (or one is deleted), and the panel's Registrar posted to the cycle's id
     first = store.save_client({"name": "Delta"})
     store.save_client({"name": "Delta", "state": "Pausado"}, first["id"])  # closes cycle 1
+    a_day_passes(store)
     store.save_client({"name": "Delta", "state": "Ativo"}, first["id"])  # opens cycle 2
     isabel = store.save_client({"name": "Isabel"})  # client 2, cycle 3
     rows = {r["name"]: r for r in store.finance()["clients"]}
     assert rows["Delta"]["id"] == first["id"] and rows["Delta"]["billing"] == 2
     assert rows["Isabel"]["id"] == isabel["id"] and rows["Isabel"]["billing"] == 3
     store.add_payment(
-        rows["Isabel"]["id"], {"paid_on": date.today().isoformat(), "amount": 100}, None
+        rows["Isabel"]["id"], {"paid_on": team_today().isoformat(), "amount": 100}, None
     )
     assert store.client(isabel["id"])["payments"][0]["amount"] == 100
+
+
+def test_today_is_the_teams_day_not_the_servers(store, client, monkeypatch):
+    # 22:30 on 9 March in São Paulo: UTC and du7 are on the 10th
+    monkeypatch.setattr(meta, "_now", lambda: datetime(2031, 3, 10, 1, 30, tzinfo=UTC))
+    assert team_today() == date(2031, 3, 9)
+    assert new_request(store, client, status="done")["done_on"] == "2031-03-09"
+    r = new_request(store, client)
+    assert store.update_request(r["id"], {"status": "done"}, None)["done_on"] == "2031-03-09"
+    assert store.finance()["today"] == "2031-03-09"
+    cid = client["id"]
+    with pytest.raises(Invalid):  # the day after tomorrow, as the team counts
+        store.add_payment(cid, {"paid_on": "2031-03-11", "amount": 100}, None)
+    # the day a cycle opened and the day it closed are the team's too
+    with store.db() as conn:
+        conn.execute("UPDATE billing SET created='2031-03-10 01:30:00' WHERE client=?", (cid,))
+    assert store.client(cid)["billing"]["opened"] == "2031-03-09"
+    store.save_client({"state": "Pausado"}, cid)
+    with store.db() as conn:
+        assert conn.execute("SELECT ended FROM billing").fetchone()[0] == "2031-03-09"
 
 
 def test_deleting_a_client_takes_its_ledger(store, client):

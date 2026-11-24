@@ -5,6 +5,9 @@ What changed in each release of Pauta. The format follows
 [Semantic Versioning](https://semver.org/). Write new entries under **Unreleased** as you
 go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
+Versions up to 1.17.0 were released from an earlier, private repository; their tags did not
+come along, so their headings below have no links.
+
 ## [Unreleased]
 
 ### Added
@@ -28,7 +31,7 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo `<db>.ig-secret` nada disso
   aparece: produção não muda. A conexão usa o "Unified Login" da Meta (o login do
   Instagram deixou de existir para apps novos), com só as duas permissões de publicar.
-  Esquema v17 (`ig_connection`, `ig_account`, `post`). API: `GET /api/publishing`,
+  Esquema v18 (`ig_connection`, `ig_account`, `post`). API: `GET /api/publishing`,
   `POST /api/instagram/connect`, `PATCH`/`DELETE /api/instagram/accounts/{id}`, `DELETE
   /api/instagram/connections/{id}`, `/api/posts…`. Desenho, limites e o que falta:
   `docs/publishing-spec.md` e `docs/designs/2026-11-22_publishing-mirrors-meta.md`.
@@ -41,8 +44,248 @@ go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
   saiu ou por que falhou. O que a API do Instagram não permite continua manual: link ou
   enquete no Story e música da biblioteca do Instagram no Reel.
 
+## [1.18.0] - 2026-11-24
+
 ### Changed
 
+- O código da Pauta agora é público, em https://github.com/eduelias/pauta. A história foi
+  reescrita sem nomes reais; as versões até 1.17.0 saíram do repositório anterior e não têm
+  tag aqui. Para quem usa, nada muda.
+- Uma segunda cópia de teste, https://dev.pauta.cc, ao lado da de aceitação
+  (`make dev`), para qualquer branch sem tirar a aceitação do ar.
+
+## [1.17.0] - 2026-11-22
+
+### Added
+
+- **Notificações no celular e no computador.** Em Perfil → Notificações, "Ativar neste
+  aparelho" faz a Pauta avisar quando outra pessoa cria um pedido, muda o status ou comenta
+  (quem fez a mudança não recebe o próprio aviso). Tocar no aviso abre o pedido. Vale por
+  aparelho: cada pessoa ativa nos que quiser, e "Sair em todos os aparelhos" desliga todos.
+  No iPhone é preciso ter a Pauta instalada na Tela de Início (Safari → Compartilhar →
+  Adicionar à Tela de Início) e abrir por lá. O aviso em si não leva nenhum dado do time:
+  ele só acorda o aparelho, que busca o texto direto na Pauta, com a pessoa que está
+  conectada nele.
+
+## [1.16.1] - 2026-11-20
+
+### Changed
+
+- du7: o `pauta-deploy` instala o que o próprio release construiu. O CI calcula o sha256
+  do wheel e do `requirements.lock` logo depois de construí-los e entrega os dois ao du7,
+  que instala os arquivos dessa mesma execução e recusa o que não bater. Nada mais é
+  buscado na página do release: com o repositório privado ela responde 404 sem login, e
+  por isso a conferência anterior nunca pôde ser instalada no du7. O Deploy disparado à
+  mão não instala mais nada: só troca para uma versão que já está no du7
+  (`pauta-deploy --activate`). Vale depois de rodar `deploy/provision-du7.sh` no du7; até
+  lá o deploy de um release para no primeiro passo, sem instalar.
+
+## [1.16.0] - 2026-11-20
+
+### Fixed
+
+- **"1.500" digitado como valor agora é mil e quinhentos.** Antes virava R$ 1,50: o ponto
+  era lido como vírgula. Agora o ponto seguido de três dígitos é separador de milhar
+  ("1.500", "R$ 2.000", "1.500.000") e a vírgula é a casa decimal. Vale para o valor do
+  cliente, os pagamentos, o valor padrão e a verba do pedido (que deixou de ser um campo
+  "de número", onde o navegador descartava "1.500,50"). Um valor na ordem inglesa
+  ("2,500.00") é recusado com aviso, em vez de virar 2,50.
+- **"Hoje" é o dia do time (horário de Brasília).** O servidor usava o próprio relógio: a
+  partir do começo da noite no Brasil, uma mensalidade que vencia hoje já aparecia em
+  atraso e um pedido concluído na sexta à noite ficava com a data de sábado.
+- **Mês pago adiantado não aparece mais como "vence em breve".** Quem pagou três meses de
+  uma vez só volta a aparecer quando o quarto mês se aproxima.
+- **Desmarcar "Cobrado" sem querer não zera mais a contagem do cliente.** Marcar de novo no
+  mesmo dia (ou voltar para Ativo no mesmo dia) retoma a mesma contagem; a partir do dia
+  seguinte, a contagem recomeça como antes.
+- **A exportação agora leva os ciclos de cobrança** (quanto cada cliente paga e desde
+  quando), além dos pagamentos.
+- **Valores e datas impossíveis são recusados:** "nan" como valor e datas anteriores a 1990
+  (um ano digitado pela metade, como 0202).
+- **Arquivo com nome muito longo não perde mais a extensão** ao ser enviado ao OneDrive.
+- **Uma conexão da Meta revogada não deixa mais a Pauta lenta.** Enquanto um portfólio
+  revogado continuava na lista (até alguém clicar em Desconectar), cada tela com contas de
+  anúncios esperava duas leituras completas da Meta e nada ficava guardado. Agora a lista
+  só é refeita no momento em que a revogação é percebida.
+- **O histórico de uma campanha nova é buscado de novo quando a primeira tentativa falha.**
+  Antes, se a Meta falhasse nessa leitura, a campanha ficava só com os dias mais recentes
+  e os períodos antigos mostravam menos gasto que o Gerenciador de Anúncios. Vale para as
+  campanhas que entrarem a partir desta versão.
+- **"Saldo para N dias" é calculado por conta de anúncios.** Os saldos das contas de um
+  cliente eram somados e divididos pelo gasto de todas: uma conta quase vazia ficava
+  escondida atrás de outra com saldo. Agora cada conta é dividida pelo próprio gasto dos
+  últimos 7 dias, e a linha mostra a que acaba primeiro (os dias e o saldo dela). Só
+  contam as contas com campanha no ar: uma conta zerada com campanha no ar é "saldo
+  acabou" mesmo sem gasto na semana, e o resto de saldo de uma conta onde nada roda não
+  gera aviso.
+- **Resultados que caem a zero geram o alerta de volume.** Com 14 conversas numa semana e
+  nenhuma na seguinte, com o mesmo investimento, a Visão geral não dizia nada. Agora diz
+  "resultados caíram 100% com o mesmo investimento", ou "resultados caíram a zero com mais
+  investimento" quando o gasto subiu.
+- **Uma falha passageira da Meta em um portfólio não some mais com as contas dele.** Por
+  dez minutos as contas ficavam sem saldo (o cliente saía do alerta de saldo) e
+  Configurações dizia que não apareciam mais na Meta. Agora ficam como na última leitura,
+  por até um dia.
+- **"Sem dados novos da Meta" aparece só para os clientes das contas sem dados.** Uma conta
+  com problema marcava todos os clientes do mesmo portfólio, sem dizer qual conta; agora o
+  aviso dos administradores traz o número da conta. E a conta de um portfólio desconectado
+  deixou de ser pulada em silêncio: é avisada como conta sem portfólio, e o cliente aparece
+  como "sem dados", não "sem entrega".
+- **Uma resposta que chega atrasada não é mais desenhada na tela errada.** Com a conexão
+  lenta, a resposta de um salvamento, de um envio de arquivo ou do "Atualizar agora" podia
+  chegar depois de a pessoa abrir outra tela, e era desenhada ali: outro pedido mostrava os
+  arquivos ou o histórico do primeiro (com um "Remover" que tirava o arquivo do primeiro),
+  outro cliente mostrava o nome do anterior, a Visão geral virava a lista por cliente.
+  Agora a resposta só é desenhada na tela que a pediu; o que foi salvo ou enviado continua
+  valendo.
+- **Um segundo toque enquanto o primeiro ainda está a caminho não envia de novo.** Dois
+  toques seguidos publicavam o mesmo comentário duas vezes, geravam dois convites (só um
+  aparecia) ou criavam o cliente em dobro. O botão fica desligado até a resposta chegar.
+- **Quando algo não salva, a tela avisa e volta ao que estava salvo.** Tocar em
+  "Concluído" mostrava "Status: Concluído" antes de salvar e, se falhasse, o botão ficava
+  aceso sem nada ter mudado. Agora o aviso vem depois de salvar, e botões, listas e datas
+  voltam ao valor salvo quando o salvamento falha, no pedido e no cliente (o texto digitado
+  fica no campo, para tentar de novo). Sem conexão, o aviso é "a conexão caiu; tente de
+  novo" em vez do texto em inglês do navegador, a tela de erro ganhou o botão "Tentar de
+  novo", e "Excluir pedido", "Exportar dados", "Sair" e os botões do OneDrive passaram a
+  avisar quando falham. O mesmo vale para trocar o período em Campanhas, marcar
+  "Cancelados" no Quadro e filtrar o Financeiro: se a busca falha, a escolha volta e a
+  tela avisa.
+- **O link do WhatsApp funciona com dois números no campo do cliente.** Dois números no
+  mesmo campo viravam um link só, com os dois grudados, que o WhatsApp recusava. Agora o
+  link usa o primeiro número completo; sem nenhum número completo (um celular sem DDD,
+  por exemplo), não há link.
+- **O registro de uso guarda o tipo do pedido novo.** O tipo ficava sempre vazio.
+- **Convites e links param de valer junto com a conta.** Desativar uma pessoa, ou tirar
+  dela o papel de administrador, cancela na hora os convites e os links de nova passkey
+  que ela criou e os links criados para ela. Tirar uma passkey em Perfil cancela o link que
+  a própria pessoa tinha criado, como sair em todos os aparelhos já fazia.
+- **As configurações do Financeiro só vão para quem vê o dinheiro.** Com o Financeiro só
+  para administradores, ou desligado, os dados que o app carrega ao abrir levavam as
+  configurações para todo o time. Agora quem não vê o dinheiro recebe só se o Financeiro
+  está ligado e a moeda.
+- **Um pedido tem um tempo total para chegar.** O servidor já desistia de uma conexão
+  parada por 15 segundos; agora o corpo de um pedido também precisa chegar inteiro em 20
+  segundos. O envio de arquivos não mudou.
+- **Três pedidos estranhos recebem uma resposta comum em vez de "erro interno".** Um
+  cookie de sessão com letras fora do ASCII vale como "sem sessão", um endereço comprido
+  demais para ser um arquivo abre o app, e um JSON aninhado demais é "JSON inválido".
+- **Um nome cortado em 40 caracteres não termina mais em espaço.**
+- **O número do esquema do banco não diminui mais** quando uma versão anterior é iniciada
+  depois de um rollback.
+
+### Changed
+
+- **`PAUTA_AUTH` com uma palavra desconhecida impede o servidor de iniciar.** Antes,
+  qualquer valor diferente de `passkeys` iniciava no modo aberto (o de desenvolvimento).
+  Agora vale `passkeys`, `open` ou vazio; outro valor para na largada com uma mensagem que
+  diz qual. Sem a variável continua sendo o modo aberto.
+- **Teclado e leitor de tela nos pedidos.** O texto de cada linha em Pedidos é um link (dá
+  para chegar com Tab e abrir com Enter, também no celular), os campos do pedido têm nome
+  para o leitor de tela, e Esc fecha as janelas de confirmação.
+- du7: o `pauta-deploy` roda o Python isolado (`-I`) a partir de `/` e lê o wheel e o
+  `requirements.lock` uma vez só, para uma pasta do root; a conferência com o release
+  publicado e a instalação usam essas cópias.
+- du7: um deploy (o de um release, o de produção disparado à mão e o de branch) só roda
+  quando é o dono do repositório quem dispara e, numa repetição, quem repete.
+- Aceitação: o `pauta-deploy-branch` só aceita um `requirements.lock` no formato que o
+  `uv export` escreve (comentários, `nome==versão` e os hashes); qualquer outra linha é
+  recusada antes de instalar.
+- As três mudanças acima só valem depois de instalar os scripts novos no du7
+  (`deploy/provision-du7.sh` e `deploy/provision-branch-env.sh acc`): um release instala
+  só o app.
+- Testes novos: propriedades das contas do Financeiro (`tests/unit/test_properties.py`),
+  a troca e o rollback do `pauta-deploy`, a promessa de rollback do banco, o endereço que o
+  limite de pedidos conta e o escape de texto nas telas.
+- Decisões (`docs/decisions/`) conferidas com o código: situação de cada uma, o que foi
+  construído e o que não foi; nomes e números de exemplo no lugar dos reais.
+
+### Removed
+
+- O limite de pedidos `accept`, que nenhuma rota usava; `tools/split.py` e a receita dele no
+  `CONTRIBUTING.md`; uma action liberada no `repo-settings.sh` que nenhum workflow usa.
+
+## [1.15.1] - 2026-11-20
+
+### Fixed
+
+- **O servidor não guarda mais na memória os endereços que não existem.** Desde a 1.15.0
+  cada endereço pedido ficava guardado até o próximo lançamento, inclusive os que não
+  levam a arquivo nenhum, e a memória do serviço crescia com eles. Agora só o que existe é
+  guardado.
+
+## [1.15.0] - 2026-11-19
+
+### Added
+
+- **O servidor pode mandar as abas abertas recarregarem.** Depois de um lançamento comum a
+  aba só avisa ("A Pauta foi atualizada") e espera a pessoa. Agora dá para obrigar: o
+  comando `pauta reload`, no servidor, faz cada aba aberta recarregar sozinha na próxima
+  troca de tela, e um lançamento que não funciona mais com a página antiga faz o mesmo
+  sem comando (`RELOAD_EPOCH`). A aba nunca recarrega no meio de um formulário: espera a
+  pessoa mudar de tela, e ela cai na tela que pediu. Se o servidor pedir de novo em menos
+  de um minuto, a aba mostra o aviso em vez de recarregar outra vez. Vale para abas
+  carregadas desta versão em diante.
+
+### Changed
+
+- **Páginas mais leves para carregar** (medidas com as regras do YSlow). Os scripts do
+  app agora chegam como um arquivo só, em vez de nove. Os arquivos do app (script,
+  estilos, ícones) ganharam um endereço que muda quando o conteúdo muda e ficam guardados
+  no navegador por um ano, em vez de cinco minutos: depois da primeira visita, abrir a
+  Pauta só busca a página e os dados, e um lançamento novo aparece na hora, sem esperar o
+  cache vencer. A biblioteca do QR code (56 KB) só é buscada quando alguém cria um
+  convite. A página do relatório do cliente recebeu o mesmo tratamento.
+
+## [1.14.1] - 2026-11-19
+
+### Added
+
+- **Aviso de versão nova em abas abertas.** Uma aba que fica aberta por dias continuava
+  rodando a versão em que foi carregada, sem saber que saiu outra. Agora, depois de um
+  lançamento, a aba mostra no alto da tela "A Pauta foi atualizada" com o botão
+  "Recarregar". A Pauta não recarrega sozinha, para não perder um formulário pela metade.
+  Vale para abas carregadas desta versão em diante: uma aba já aberta numa versão
+  anterior precisa ser recarregada uma vez à mão.
+
+### Changed
+
+- **O logo leva para a tela inicial de quem escolheu uma.** Com uma "Tela inicial"
+  escolhida em Perfil, o logo (na lateral e no alto do celular) abre essa tela em vez do
+  Painel, que continua no menu. Sem escolha, nada muda. No celular isso também dá um
+  caminho de volta ao Quadro quando ele não está na barra de baixo.
+
+## [1.14.0] - 2026-11-18
+
+### Added
+
+- **Perfil: escolha a tela em que a Pauta abre.** Em Perfil há agora o campo "Tela inicial":
+  Painel (como sempre foi), Quadro, Pedidos, Clientes e, para quem os vê, Campanhas e
+  Financeiro. A escolha é da pessoa e vale em todos os aparelhos em que ela entra. Ela só
+  decide onde a Pauta abre sem um endereço próprio (o ícone no celular, o endereço
+  digitado): um link para um pedido continua abrindo o pedido. O Painel segue no menu e no
+  logo, e se a tela escolhida sair de vista (a Meta desligada, o Financeiro escondido) a
+  Pauta abre no Painel. O registro de uso passa a guardar a tela escolhida junto da
+  abertura do app, para medir quem usa.
+
+## [1.13.1] - 2026-11-17
+
+### Changed
+
+- **Campanhas com período Personalizado abre na hora.** Um período que o Pauta ainda não
+  tinha lido na Meta (qualquer intervalo de datas escolhido à mão) fazia a página inteira
+  esperar o alcance: de 6 a 9 segundos. Agora a lista aparece logo com os números
+  guardados, a coluna Alcance mostra "…" enquanto a Meta responde, e cada número entra no
+  lugar quando chega, sem a página piscar. Se a Meta não responder, fica o traço de sempre.
+- **A primeira página depois de uma atualização do Pauta não espera mais a Meta.** A lista
+  de contas de anúncio era lida um portfólio depois do outro (uns 7 segundos com quatro
+  portfólios, de 15 a 17 com dez) e quem abrisse Painel, Campanhas ou Configurações
+  primeiro esperava tudo isso. Agora os portfólios são lidos ao mesmo tempo, e a leitura
+  começa quando o Pauta inicia, antes de alguém pedir. O alcance por período também é
+  lido em todos os portfólios de uma vez.
+- **O registro de uso guarda o formato do período Personalizado**: quantos dias e há
+  quantos dias termina, nunca as datas. Serve para saber qual período rápido falta no
+  seletor.
 - **Em acceptance, a versão ao lado do nome ficou curta.** Um build de branch tem uma versão
   comprida (`1.13.1.dev41+g41acf5dab1f0`) que não cabia ao lado de "Pauta" e saía do lugar.
   Agora aparece só o começo do commit (`41acf5d`); a versão inteira continua no texto que
@@ -728,33 +971,5 @@ The first versioned release. It covers everything since Pauta replaced the
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
 
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.13.0...HEAD
-[1.13.0]: https://github.com/eduelias/pauta/compare/v1.12.1...v1.13.0
-[1.12.1]: https://github.com/eduelias/pauta/compare/v1.12.0...v1.12.1
-[1.12.0]: https://github.com/eduelias/pauta/compare/v1.11.1...v1.12.0
-[1.11.1]: https://github.com/eduelias/pauta/compare/v1.11.0...v1.11.1
-[1.11.0]: https://github.com/eduelias/pauta/compare/v1.10.2...v1.11.0
-[1.10.2]: https://github.com/eduelias/pauta/compare/v1.10.1...v1.10.2
-[1.10.1]: https://github.com/eduelias/pauta/compare/v1.10.0...v1.10.1
-[1.10.0]: https://github.com/eduelias/pauta/compare/v1.9.1...v1.10.0
-[1.9.1]: https://github.com/eduelias/pauta/compare/v1.9.0...v1.9.1
-[1.9.0]: https://github.com/eduelias/pauta/compare/v1.8.4...v1.9.0
-[1.8.4]: https://github.com/eduelias/pauta/compare/v1.8.3...v1.8.4
-[1.8.3]: https://github.com/eduelias/pauta/compare/v1.8.2...v1.8.3
-[1.8.2]: https://github.com/eduelias/pauta/compare/v1.8.1...v1.8.2
-[1.8.1]: https://github.com/eduelias/pauta/compare/v1.8.0...v1.8.1
-[1.8.0]: https://github.com/eduelias/pauta/compare/v1.7.1...v1.8.0
-[1.7.1]: https://github.com/eduelias/pauta/compare/v1.7.0...v1.7.1
-[1.7.0]: https://github.com/eduelias/pauta/compare/v1.6.1...v1.7.0
-[1.6.1]: https://github.com/eduelias/pauta/compare/v1.6.0...v1.6.1
-[1.6.0]: https://github.com/eduelias/pauta/compare/v1.5.1...v1.6.0
-[1.5.1]: https://github.com/eduelias/pauta/compare/v1.5.0...v1.5.1
-[1.5.0]: https://github.com/eduelias/pauta/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/eduelias/pauta/compare/v1.2.3...v1.3.0
-[1.2.3]: https://github.com/eduelias/pauta/compare/v1.2.2...v1.2.3
-[1.2.2]: https://github.com/eduelias/pauta/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/eduelias/pauta/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/eduelias/pauta/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/eduelias/pauta/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0
+[Unreleased]: https://github.com/eduelias/pauta/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/eduelias/pauta/releases/tag/v1.18.0

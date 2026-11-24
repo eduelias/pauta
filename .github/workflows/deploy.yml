@@ -1,10 +1,13 @@
-# Put a published release on du7. Runs after every release, and by hand (Actions → Deploy →
-# Run workflow) to redeploy or roll back to any earlier version.
+# Put a release on du7. Called by release.yml with the sha256 of the wheel and of the lockfile
+# that run built: du7 installs that run's own `dist` artifact, checked against those hashes,
+# and nothing from the release page. Run by hand (Actions → Deploy → Run workflow) it installs
+# nothing: it only switches du7 to a release that is already installed there (a rollback, or
+# back again).
 #
 # The du7 job runs on the self-hosted runner as `gh-runner`, which may run exactly one
 # command as root: /usr/local/sbin/pauta-deploy (deploy/pauta-deploy in this repo). That
-# script installs into its own venv, backs up the DB, switches, health-checks and rolls
-# back on failure.
+# script checks the hashes, installs into its own venv, backs up the DB, switches,
+# health-checks and rolls back on failure.
 name: Deploy
 
 on:
@@ -13,10 +16,16 @@ on:
       version:
         type: string
         required: true
+      wheel_sha256:
+        type: string
+        required: true
+      lock_sha256:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       version:
-        description: Release to put on du7 (X.Y.Z, without the v)
+        description: A release already installed on du7 to switch to (X.Y.Z, without the v). Installs nothing
         type: string
         required: true
 
@@ -28,46 +37,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  fetch:
-    name: Fetch v${{ inputs.version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Download the release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version: $VERSION"; exit 1; }
-          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --dir bundle \
-            --pattern "pauta-$VERSION-py3-none-any.whl" --pattern requirements.lock \
-            --pattern SHA256SUMS
-          cd bundle && sha256sum -c --ignore-missing SHA256SUMS
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: deploy-bundle-${{ inputs.version }}
-          path: bundle/
-          retention-days: 7
-
   du7:
     name: du7 → app.pauta.cc
-    needs: fetch
     runs-on: [self-hosted, du7, pauta]
     timeout-minutes: 15
     environment:
       name: production
       url: https://app.pauta.cc
     steps:
+      - name: du7 has the pauta-deploy this workflow needs
+        run: |
+          sudo -n /usr/local/sbin/pauta-deploy --capabilities | grep -qx "pinned activate" || {
+            echo "::error::du7 runs an older pauta-deploy: run deploy/provision-du7.sh there (deploy/README.md, Collaborators)"
+            exit 1
+          }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.event_name != 'workflow_dispatch'
         with:
-          name: deploy-bundle-${{ inputs.version }}
+          name: dist # this run's build (ci.yml)
           path: bundle
-      - name: Install, switch, health check (rolls back on failure)
+      - name: Install this run's build, switch, health check (rolls back on failure)
+        if: github.event_name != 'workflow_dispatch'
         env:
           VERSION: ${{ inputs.version }}
+          WHEEL_SHA256: ${{ inputs.wheel_sha256 }}
+          LOCK_SHA256: ${{ inputs.lock_sha256 }}
         run: |
           sudo -n /usr/local/sbin/pauta-deploy "$VERSION" \
-            "bundle/pauta-$VERSION-py3-none-any.whl" bundle/requirements.lock
+            "bundle/pauta-$VERSION-py3-none-any.whl" bundle/requirements.lock \
+            "$WHEEL_SHA256" "$LOCK_SHA256"
+      - name: Switch to a release already installed on du7 (rolls back on failure)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: sudo -n /usr/local/sbin/pauta-deploy --activate "$VERSION"
       - name: Caddy serves it (TLS on du7)
         env:
           VERSION: ${{ inputs.version }}
@@ -102,7 +105,7 @@ jobs:
 
   alert:
     name: WhatsApp if the deploy failed
-    needs: [fetch, du7, public]
+    needs: [du7, public]
     # a deploy started by a release is reported by release.yml's own alert job
     if: failure() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -123,8 +126,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           STAGES: >-
-            fetch ${{ needs.fetch.result }}, du7 ${{ needs.du7.result }},
-            internet check ${{ needs.public.result }}
+            du7 ${{ needs.du7.result }}, internet check ${{ needs.public.result }}
         run: |
           python3 scripts/alert.py "pauta deploy $VERSION" \
             "failed ($STAGES). A failed deploy rolls back to the previous release. $RUN"

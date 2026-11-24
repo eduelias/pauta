@@ -26,7 +26,8 @@ MAX_BEHIND = 24 * 3600  # a client timestamp further back than this is replaced 
 
 # event -> the prop keys it may carry (anything else is dropped before the row is written)
 EVENTS: dict[str, tuple[str, ...]] = {
-    "app_open": ("version", "theme"),
+    # `start`: the screen the person chose to open on (Perfil), only when they chose one
+    "app_open": ("version", "theme", "start"),
     "screen": ("from",),
     "request_created": ("kind", "has_deadline", "files"),
     "request_status": ("from", "to", "via"),
@@ -36,7 +37,9 @@ EVENTS: dict[str, tuple[str, ...]] = {
     "file_failed": ("reason",),
     "client_saved": ("new",),
     "seen_today": ("n",),
-    "period": ("p",),
+    # `days` and `ago` only with p=custom: the range's length and how many days back it
+    # ends (0 = today), never its dates
+    "period": ("p", "days", "ago"),
     "client_message": ("kind",),
     "finance_entry": ("kind",),
     "search": ("what",),

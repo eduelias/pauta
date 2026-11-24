@@ -290,8 +290,10 @@ class FakeMeta:
         self.token_invalid = False  # the token was revoked (code 190)
         self.campaigns = {k: [dict(c) for c in v] for k, v in CAMPAIGNS.items()}
         self.fail_campaigns: set[str] = set()  # account ids whose campaign list answers 400
+        self.fail_history: set[str] = set()  # campaign ids whose read by id answers 500
         self.throttle = False  # every read answers code 4 (too many calls)
         self.down = False  # Meta answers 500
+        self.down_for: set[str] = set()  # businesses Meta answers 500 for; the others read
         self.gate: threading.Event | None = None  # hold(): Graph answers wait for release()
         self.held = threading.Event()  # set once an answer is waiting at the gate
         self.deny = False  # the person cancels in the dialog
@@ -401,6 +403,8 @@ class FakeMeta:
         token = form.get("access_token") or auth.removeprefix("Bearer ")
         if token not in self.tokens or token in self.invalid_tokens or self.token_invalid:
             return h._send(400, oauth_error(190, "Error validating access token"))
+        if self.tokens[token] in self.down_for:
+            return h._send(500, oauth_error(2, "Service temporarily unavailable"))
         proof = hmac.new(SECRET.encode(), token.encode(), hashlib.sha256).hexdigest()
         if (form.get("appsecret_proof") or q.get("appsecret_proof")) != proof:
             return h._send(400, oauth_error(100, "Invalid appsecret_proof"))
@@ -507,6 +511,8 @@ class FakeMeta:
             (flt,) = json.loads(q["filtering"])
             assert flt == {**flt, "field": "campaign.id", "operator": "IN"}, flt
             wanted = set(flt["value"])
+            if wanted & self.fail_history:
+                return 500, oauth_error(1, "An unknown error occurred")
         live = [
             c
             for c in self.campaigns.get(aid, [])

@@ -62,6 +62,7 @@ async function viewDash() {
 let showCancelled = false;
 async function viewBoard() {
   const reqs = await loadReqs();
+  if (!onScreen("#/quadro")) return;
   const since = addDays(todayISO(), -30);
   const cols = ["todo", "doing", "waiting", "done", ...(showCancelled ? ["cancelled"] : [])];
   const inCol = (s) => reqs.filter((r) => r.status === s && (s !== "done" || (r.done_on || "") >= since)).sort(sortOpen);
@@ -78,7 +79,10 @@ async function viewBoard() {
         </div>`;
       }).join("")}
     </div></div></div>`;
-  $("#showc").addEventListener("change", (e) => { showCancelled = e.target.checked; viewBoard(); });
+  $("#showc").addEventListener("change", (e) => {
+    showCancelled = e.target.checked;
+    viewBoard().catch((err) => { showCancelled = e.target.checked = !showCancelled; toast(err.message, true); });
+  });
   let dragId = null;
   $$(".rcard[draggable]").forEach((c) => {
     c.addEventListener("dragstart", (e) => { dragId = c.dataset.id; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
@@ -160,11 +164,11 @@ async function viewList(query) {
       ${rows.map((r) => `<tr data-id="${r.id}"><td class="num">#${r.id}</td>
         <td><span class="cl">${avatar(r.client_name)}${esc(r.client_name)}</span></td>
         <td class="kind-cell"><span class="tag">${esc(r.kind || "—")}</span></td>
-        <td class="what-cell"><div>${esc(r.what)}</div></td>
+        <td class="what-cell"><div><a href="#/pedido/${r.id}">${esc(r.what)}</a></div></td>
         <td class="nowrap">${dueBadge(r) || '<span class="faint">—</span>'} ${prio(r.priority)}</td>
         <td>${statusBadge(r)}</td></tr>`).join("")}
       </tbody></table>` : `<div class="panel empty"><span class="big">🔎</span>Nenhum pedido aqui.</div>`;
-    $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", () => { location.hash = `#/pedido/${tr.dataset.id}`; }));
+    $$("#rows tr[data-id]").forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = `#/pedido/${tr.dataset.id}`; }));
     keepHash(`#/pedidos?f=${f}${q ? `&q=${encodeURIComponent(q)}` : ""}${client ? `&c=${client}` : ""}`);
   };
   let typing;
@@ -191,6 +195,7 @@ async function viewList(query) {
 function seg(name, values, current, labels = null, cls = "") {
   return `<div class="seg ${cls}" data-seg="${name}">${values.map((v) => `<button type="button" data-v="${esc(v)}" class="${v === current ? "on" : ""}">${esc(labels ? labels[v] : v)}</button>`).join("")}</div>`;
 }
+const segOn = (s, v) => $$("button", s).forEach((x) => x.classList.toggle("on", x.dataset.v === v));
 function selectOpts(values, current, blank = "—") {
   const list = current && !values.includes(current) ? [current, ...values] : values;
   return `<option value="">${blank}</option>` + list.map((v) => `<option ${v === current ? "selected" : ""}>${esc(v)}</option>`).join("");
@@ -282,9 +287,7 @@ function sendFile(rid, file, onProgress) {
     });
     x.addEventListener("error", () => {
       trackApi("POST", `/api/requests/${rid}/files`, 0, 0);
-      const err = new Error("a conexão caiu; tente de novo");
-      err.status = 0;
-      reject(err);
+      reject(offline());
     });
     x.send(file);
   });
@@ -294,6 +297,7 @@ function bindFiles(get, set) {
   const panel = $("#files");
   if (!panel) return;
   const redraw = () => {
+    if (!panel.isConnected) return;  // the upload ended on another screen
     const r = get();
     $("#filelist").innerHTML = fileList(r);
     $("#tl").innerHTML = timeline(r);
@@ -353,6 +357,7 @@ function bindFiles(get, set) {
     try {
       const { url } = await api("POST", `/api/requests/${get().id}/share`);
       track("request_sent");
+      if (!panel.isConnected) return;
       const msg = `Os arquivos do seu pedido estão aqui: ${url}`;
       $("#sharebox").innerHTML = `<div class="sharebox"><code class="invlink">${esc(url)}</code>
         <div class="row-gap"><button class="btn small" data-copy="${esc(url)}">${icon("link")}Copiar link</button>
@@ -373,14 +378,14 @@ async function viewRequest(_q, id) {
     <div class="req">
       <div>
         <div class="row-gap"><a class="cl" href="#/cliente/${c.id}">${avatar(c.name, "md")}<span style="font-size:16px">${esc(c.name)}</span></a>${r.kind ? `<span class="tag accent">${esc(r.kind)}</span>` : ""}</div>
-        <div class="quiet"><textarea class="input req-title" data-f="what" rows="1">${esc(r.what)}</textarea></div>
+        <div class="quiet"><textarea class="input req-title" data-f="what" rows="1" aria-label="O que precisa ser feito">${esc(r.what)}</textarea></div>
         <div class="req-meta">${personAvatar(r.created_by, r.created_by_name || "?")}<span>Pedido por <b>${esc(r.created_by_name || "—")}</b> · ${esc(ago(r.created))}</span><span id="duebadge">${dueBadge(r)}</span></div>
         <div class="panel">
           <div class="section-title">Status</div>
           ${seg("status", Object.keys(o.status), r.status, o.status, "statuses")}
           <div id="missingbox" class="mt" ${r.status === "waiting" || r.missing ? "" : "hidden"}>
             <div class="field"><label>O que falta${r.created_by_name ? ` (${esc(firstName(r.created_by_name))})` : ""}</label>
-            <textarea class="input" data-f="missing" placeholder="O que está faltando para seguir?">${esc(r.missing)}</textarea></div>
+            <textarea class="input" data-f="missing" aria-label="O que falta" placeholder="O que está faltando para seguir?">${esc(r.missing)}</textarea></div>
           </div>
         </div>
         <div class="panel">
@@ -417,7 +422,7 @@ async function viewRequest(_q, id) {
             <div class="k">Prazo</div><div class="v"><input class="input" type="date" data-f="due" value="${esc(r.due || "")}"></div>
             <div class="k">Prioridade</div><div class="v">${seg("priority", o.priority, r.priority)}</div>
             <div class="k">Responsável</div><div class="v"><select class="input" data-f="assignee">${memberOpts(r.assignee)}</select></div>
-            <div class="k">Verba</div><div class="v"><div class="money" style="width:100%"><span>R$</span><input class="input" type="number" min="0" step="0.01" inputmode="decimal" data-f="budget" value="${r.budget ?? ""}"></div></div>
+            <div class="k">Verba</div><div class="v"><div class="money" style="width:100%"><span>R$</span><input class="input" inputmode="decimal" data-f="budget" value="${r.budget ?? ""}"></div></div>
             <div class="k">Saldo</div><div class="v"><select class="input" data-f="balance">${selectOpts(o.balance, r.balance)}</select></div>
           </div>
         </div>
@@ -428,10 +433,14 @@ async function viewRequest(_q, id) {
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir pedido</button></div>` : ""}
       </aside>
     </div></div>`;
+  const root = app.firstElementChild;  // off the page once the person leaves this request
+  // a row's name is a plain cell beside its field: the field gets it as its label
+  $$(".kv .k", root).forEach((k) => $("[data-f]", k.nextElementSibling)?.setAttribute("aria-label", k.textContent));
 
   const save = async (patch, el) => {
     try {
       r = await api("PATCH", `/api/requests/${r.id}`, patch);
+      if (!root.isConnected) return true;
       $("#tl").innerHTML = timeline(r);
       $("#duebadge").innerHTML = dueBadge(r);
       const done = $('[data-f="done_on"]');
@@ -440,53 +449,62 @@ async function viewRequest(_q, id) {
       return true;
     } catch (e) { toast(e.message, true); return false; }
   };
-  $$("[data-f]").forEach((el) => el.addEventListener("change", () => {
+  // A save that fails leaves the page as the server has it: a list, a date or a row of
+  // buttons goes back (lit, it would say something that isn't so, and a second tap on a lit
+  // button does nothing); typed text stays in its field, to try again.
+  $$("[data-f]").forEach((el) => el.addEventListener("change", async () => {
     const f = el.dataset.f;
     let v = el.value;
     if (f === "assignee") v = v ? Number(v) : null;
-    save({ [f]: v }, el);
+    if (!await save({ [f]: v }, el) && el.matches("select, [type=date]")) el.value = r[f] ?? "";
   }));
+  const missingbox = $("#missingbox");
   $$("[data-seg]").forEach((s) => s.addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || b.classList.contains("on")) return;
-    $$("button", s).forEach((x) => x.classList.toggle("on", x === b));
-    const f = s.dataset.seg;
-    if (f === "status") {
-      $("#missingbox").hidden = !(b.dataset.v === "waiting" || r.missing);
-      if (b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
-      toast(`Status: ${STATUS()[b.dataset.v]}`);
-    }
-    const from = r.status;
+    const f = s.dataset.seg, from = r[f];
+    const show = (v) => {
+      segOn(s, v);
+      if (f === "status") missingbox.hidden = !(v === "waiting" || r.missing);
+    };
+    show(b.dataset.v);
+    if (f === "status" && b.dataset.v === "waiting") setTimeout(() => $('[data-f="missing"]').focus(), 50);
     save({ [f]: b.dataset.v }).then((ok) => {
+      show(r[f]);  // what the server has now, whatever another tap lit meanwhile
       if (!ok || f !== "status") return;
+      toast(`Status: ${STATUS()[b.dataset.v]}`);
       track("request_status", { from, to: b.dataset.v, via: "page" });
       // which campaign did it create? The timeline then says so, if the page is still up
       if (b.dataset.v === "done") offerCampaignLink(r, async () => {
         const fresh = await api("GET", `/api/requests/${r.id}`);
-        if ($("#tl")) { r = fresh; $("#tl").innerHTML = timeline(r); }
+        if (root.isConnected) { r = fresh; $("#tl").innerHTML = timeline(r); }
       });
     });
   }));
   const autosize = (t) => { t.style.height = "auto"; t.style.height = t.scrollHeight + 2 + "px"; };
   $$("textarea.input").forEach((t) => { autosize(t); t.addEventListener("input", () => autosize(t)); });
   const send = async () => {
-    const t = $("#comment");
-    if (!t.value.trim()) return;
+    const t = $("#comment"), btn = $("#send");
+    if (!t.value.trim() || btn.disabled) return;  // disabled: the first tap is still on its way
+    btn.disabled = true;
     try {
       r = await api("POST", `/api/requests/${r.id}/comments`, { text: t.value });
       track("comment_added");
       t.value = "";
       autosize(t);
-      $("#tl").innerHTML = timeline(r);
+      if (root.isConnected) $("#tl").innerHTML = timeline(r);
     } catch (e) { toast(e.message, true); }
+    btn.disabled = false;
   };
   $("#send").addEventListener("click", send);
   $("#comment").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); });
   $("#del")?.addEventListener("click", async () => {
     if (!confirm(`Excluir o pedido #${r.id}? Para desistir de um pedido, prefira marcar Cancelado.`)) return;
-    await api("DELETE", `/api/requests/${r.id}`);
-    toast(`Pedido #${r.id} excluído`);
-    location.hash = "#/pedidos";
+    try {
+      await api("DELETE", `/api/requests/${r.id}`);
+      toast(`Pedido #${r.id} excluído`);
+      location.hash = "#/pedidos";
+    } catch (e) { toast(e.message, true); }
   });
   bindCopy(app);
   bindFiles(() => r, (doc) => { r = doc; });
@@ -541,7 +559,7 @@ async function viewNew(_q, clientId) {
         <div class="field"><label>Objetivo</label><select class="input" name="goal">${selectOpts(o.goal, "")}</select></div>
         <div class="field"><label>Região</label><input class="input" name="region" placeholder="Ex.: raio de 8 km da clínica"></div>
         <div class="field wide"><label>Público-alvo</label><input class="input" name="audience" placeholder="Ex.: mulheres de 25 a 50 anos, interesse em estética"></div>
-        <div class="field"><label>Verba</label><div class="money"><span>R$</span><input class="input" name="budget" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></div></div>
+        <div class="field"><label>Verba</label><div class="money"><span>R$</span><input class="input" name="budget" inputmode="decimal" placeholder="0"></div></div>
         <div class="field"><label>Saldo na conta</label>${seg("balance", o.balance, "")}</div>
         <div class="field wide"><label>Link dos criativos</label><input class="input" name="creatives_url" placeholder="https://drive.google.com/…"></div>
         <div class="field"><label>Prazo</label><input class="input" type="date" name="due">
@@ -579,7 +597,7 @@ async function viewNew(_q, clientId) {
     const data = Object.fromEntries(new FormData(f));
     try {
       const r = await api("POST", "/api/requests", { ...data, ...segs });
-      track("request_created", { kind: data.kind || "", has_deadline: Boolean(data.due) });
+      track("request_created", { kind: segs.kind, has_deadline: Boolean(data.due) });
       toast(`Pedido #${r.id} enviado`);
       location.hash = `#/pedido/${r.id}`;
     } catch (err) { toast(err.message, true); btn.disabled = false; }
@@ -600,8 +618,10 @@ function quickClient() {
     m.onclick = (e) => { if (e.target === m || e.target.dataset.a === "cancel") done(null); };
     $("#qc").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const go = $("button.primary", e.target);
+      go.disabled = true;
       try { done(await api("POST", "/api/clients", Object.fromEntries(new FormData(e.target)))); track("client_saved", { new: true }); }
-      catch (err) { toast(err.message, true); }
+      catch (err) { toast(err.message, true); go.disabled = false; }
     });
   });
 }

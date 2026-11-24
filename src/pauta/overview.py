@@ -73,17 +73,18 @@ def pct(now, before) -> int | None:
 
 
 def compare(now: dict, before: dict, min_count: int = 1) -> dict:
-    """How cost and volume moved between two windows' `sums`. By result when both windows
-    count the same thing (and the earlier one at least `min_count` of it); otherwise by
-    link click, the one figure that compares across objectives."""
+    """How cost and volume moved between two windows' `sums`. By result when the earlier
+    window counted at least `min_count` of one thing and the newer one counts nothing
+    else: no results now is zero of it, the fall that matters most (a broken link, form
+    or pixel). Otherwise by link click, the one figure that compares across objectives."""
     by_result = bool(
-        now["results"]
-        and (before["results"] or 0) >= min_count
-        and now["result_indicator"] == before["result_indicator"]
+        (before["results"] or 0) >= min_count
+        and not now["mixed"]
+        and now["result_indicator"] in ("", before["result_indicator"])
     )
     if by_result:
         cost = pct(now["cost_per_result_cents"], before["cost_per_result_cents"])
-        volume = pct(now["results"], before["results"])
+        volume = pct(now["results"] or 0, before["results"])
     else:
         enough = before["link_clicks"] >= min_count
         cost = pct(now["cpl_cents"], before["cpl_cents"]) if enough else None
@@ -114,6 +115,28 @@ def days_left(remaining_cents: int | None, last: dict) -> int | None:
     return int(remaining_cents * FLAG_DAYS // last["spend_cents"])
 
 
+def balance(accounts: list[dict]) -> dict | None:
+    """A client's balance from its ad accounts, each {remaining_cents, spend_cents: its own
+    spend in the last FLAG_DAYS, active: a campaign is live on it}: what is left on the
+    account that runs out first and in how many days ({remaining_cents, days_left}). A
+    balance belongs to one account, so each is divided by its own spend. Only an account
+    with something live counts: one at zero is out today whatever it spent, one Meta gives
+    no balance for, or that spent nothing, has no day count and hides no other. When none
+    has one: what is left on the live ones (on all, when nothing is live), and no days.
+    None when Meta gives no balance."""
+    live = [a for a in accounts if a["active"]]  # elsewhere nothing is running out
+    known = [a["remaining_cents"] for a in live or accounts if a["remaining_cents"] is not None]
+    timed = []
+    for a in live:
+        days = 0 if a["remaining_cents"] == 0 else days_left(a["remaining_cents"], a)
+        if days is not None:
+            timed.append((days, a["remaining_cents"]))
+    if timed:
+        days, left = min(timed)
+        return {"remaining_cents": left, "days_left": days}
+    return {"remaining_cents": sum(known), "days_left": None} if known else None
+
+
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
@@ -121,18 +144,20 @@ def _plural(n: int, one: str, many: str) -> str:
 def flags(
     c: dict,
     today: str,
-    remaining_cents: int | None = None,
+    left: dict | None = None,
     problem: str = "",
     reviews_used: bool = True,
     rules: dict = DEFAULTS,
 ) -> list[dict]:
     """What a row has to say for itself, most urgent first: [{key, level, text}]. `c` is a
-    `Store.campaign_overview` row; `problem` is why Meta's numbers aren't arriving for this
-    client ("" when they are); `reviews_used` is whether the team marks Visto hoje at all
-    (a team that never did isn't told so on every row); `rules` are the team's thresholds
+    `Store.campaign_overview` row; `left` is the client's `balance` (None when Meta gives
+    none); `problem` is why Meta's numbers aren't arriving for this client ("" when they
+    are); `reviews_used` is whether the team marks Visto hoje at all (a team that never
+    did isn't told so on every row); `rules` are the team's thresholds
     (`Store.campaign_settings`)."""
     out: list[dict] = []
     last, before = c["sums"]["last"], c["sums"]["before"]
+    remaining_cents = left["remaining_cents"] if left else None
     # nothing left at all is its own case: it is said whatever the pace was (an account
     # empty for a week spent nothing in the last 7 days), and never as "acaba hoje"
     empty = bool(remaining_cents == 0 and c["active"] and rules["low_balance_days"])
@@ -146,13 +171,13 @@ def flags(
     elif stopped and not empty:
         # without numbers arriving, "no delivery" would only repeat `problem`
         out.append({"key": "stopped", "level": ACT, "text": stopped})
-    left = days_left(remaining_cents, last) if c["active"] else None
+    days = left["days_left"] if left and c["active"] else None
     if empty:
         # no balance and no delivery are one event, the first the cause: one alert says both
         text = f"saldo acabou: {stopped}" if stopped and not problem else "saldo acabou"
         out.append({"key": "balance", "level": ACT, "text": text})
-    elif left is not None and left < rules["low_balance_days"]:
-        text = f"saldo para {_plural(left, 'dia', 'dias')}" if left else "saldo acaba hoje"
+    elif days is not None and days < rules["low_balance_days"]:
+        text = f"saldo para {_plural(days, 'dia', 'dias')}" if days else "saldo acaba hoje"
         out.append({"key": "balance", "level": ACT, "text": text})
     since = flag_windows(today)[1][0]  # where the earlier window starts
     floor = rules["min_spend"] * 100
@@ -164,6 +189,10 @@ def flags(
         if steady and ch["volume_pct"] is not None and ch["volume_pct"] <= -rules["drop_pct"]:
             # at the same spend this is the cost rising too: one sentence says both
             text = f"{what} caíram {-ch['volume_pct']}% com o mesmo investimento"
+            out.append({"key": "volume", "level": WATCH, "text": text})
+        elif ch["kind"] == "result" and not last["results"] and (ch["spend_pct"] or 0) > 0:
+            # more money and nothing back: there is no cost per result left to compare
+            text = "resultados caíram a zero com mais investimento"
             out.append({"key": "volume", "level": WATCH, "text": text})
         elif ch["cost_pct"] is not None and ch["cost_pct"] >= rules["rise_pct"]:
             text = f"custo por {unit} subiu {ch['cost_pct']}% em {FLAG_DAYS} dias"
@@ -183,7 +212,7 @@ def rows(
     clients: list[dict],
     today: str,
     previous_since: str,
-    remaining: dict[int, int | None],
+    balances: dict[int, dict | None],
     problems: dict[int, str],
     seen: dict[int, dict],
     reviews_used: bool,
@@ -192,11 +221,11 @@ def rows(
     """The screen's rows from `Store.campaign_overview`'s: each with the period's sums, how
     it moved against the period before (which starts on `previous_since`; `partial` and no
     percentages when the client's numbers start after that), the trend's days, the balance
-    and its flags, the ones that need a look first (highest flag, then how many, then
-    spend)."""
+    (`balances`: each client's `balance`) and its flags, the ones that need a look first
+    (highest flag, then how many, then spend)."""
     out = []
     for c in clients:
-        left = remaining.get(c["id"])
+        left = balances.get(c["id"])
         marks = flags(c, today, left, problems.get(c["id"], ""), reviews_used, rules)
         full = whole(c, previous_since)
         change = compare(c["sums"]["period"], c["sums"]["previous"]) if full else NO_CHANGE
@@ -213,12 +242,7 @@ def rows(
                 "period": c["sums"]["period"],
                 "change": {**change, "partial": not full},
                 "days": c["days"],
-                "balance": None
-                if left is None
-                else {
-                    "remaining_cents": left,
-                    "days_left": days_left(left, c["sums"]["last"]),
-                },
+                "balance": left,
                 "seen_today": seen.get(c["id"]),
                 "last_seen": c["last_seen"],
                 "flags": marks,

@@ -8,6 +8,7 @@
 // past the team. What is about the person signed in lives on Perfil (viewProfile).
 async function viewSettings(query) {
   const members = await api("GET", "/api/members");
+  if (!onScreen("#/configuracoes")) return;
   const o = BOOT.options;
   app.innerHTML = `<div style="max-width:980px">
     <div class="head"><div><h1>Configurações</h1><p>O time, as integrações e as listas da Pauta.</p></div>
@@ -79,7 +80,8 @@ async function viewSettings(query) {
     } catch (e) { toast(e.message, true); }
   });
   $("#export")?.addEventListener("click", async () => {
-    const doc = await api("GET", "/api/export");
+    let doc;
+    try { doc = await api("GET", "/api/export"); } catch (e) { toast(e.message, true); return; }
     const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -230,8 +232,10 @@ async function addPasskey() {
 }
 
 async function logout() {
-  await api("POST", "/api/logout", {});
-  ME = await api("GET", "/api/me");
+  try {
+    await api("POST", "/api/logout", {});
+    ME = await api("GET", "/api/me");
+  } catch (e) { toast(e.message, true); return; }
   location.hash = "#/";
   showGate();
 }

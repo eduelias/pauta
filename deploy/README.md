@@ -19,6 +19,7 @@ phone ──https──▶ home router :443 ──▶ du7 192.168.2.68:443 (Cadd
 | DB of record | `~/.local/share/pauta/pauta.db` (`PAUTA_STATE_DIR`): accounts, passkeys, invites, clients, requests |
 | Request files | In a OneDrive (`Apps/Pauta/<cliente>/Pedido <n>/`), not on du7; the DB keeps their ids. The OneDrive token is `~/.local/share/pauta/pauta.db.onedrive-token`. See "Files and OneDrive" |
 | Thumbnail cache | `~/.local/share/pauta/pauta.db.thumbs/<file id>.<item digest>.<type>`: a file's OneDrive thumbnail, fetched once. A cache: not backed up, safe to delete wholesale (the next view fetches again); clear it when restoring a backup |
+| Notifications | The key that signs pushes is `~/.local/share/pauta/pauta.db.push-key` (mode 600, made the first time someone switches notifications on; never in the DB or its backups). du7 calls the browsers' push services over HTTPS (`web.push.apple.com`, `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.notify.windows.com`); nothing to configure. Without the key file, or with a restored DB next to another key, pushes stop reaching the devices until each person switches notifications off and on again on Perfil |
 | Backups | nightly 03:40 (`pauta-backup.timer`) → `~/backups/pauta` + `/media/nas/backups/pauta`, 30 days; before every deploy → `~/backups/pauta/pre-deploy`, 90 days |
 | Units | `/etc/systemd/system/pauta.service`, `pauta-backup.{service,timer}` (copies of `deploy/`), sandboxed: read-only system, writes only to the data and backup dirs |
 | Deploys | `/usr/local/sbin/pauta-deploy` (copy of `deploy/pauta-deploy`), log in `/opt/pauta/deploy.log` |
@@ -38,14 +39,22 @@ bumps `pyproject.toml`, commits "Release 1.2.0", tags `v1.2.0` and pushes both. 
 starts `.github/workflows/release.yml`:
 
 1. **CI**: lint, tests on Python 3.11–3.13 with coverage, browser tests, dependency audit,
-   then the wheel is built, installed in a clean venv and started (`/healthz` must answer).
-2. **Publish**: checks the tag, `pyproject.toml` and `CHANGELOG.md` agree, and creates the
-   GitHub release with the CHANGELOG notes, the wheel, the sdist, `requirements.lock`
-   (runtime dependencies pinned by hash) and `SHA256SUMS`.
-3. **Deploy** (`deploy.yml`): downloads those assets, checks the sums, and on du7 runs
-   `sudo pauta-deploy 1.2.0 <wheel> requirements.lock`, which
-   - fetches the release's `SHA256SUMS` from GitHub itself and refuses a wheel or lockfile
-     that isn't byte for byte the published one (releases are immutable),
+   then the wheel and `requirements.lock` (runtime dependencies pinned by hash) are built
+   and their sha256 taken, before the wheel is installed in a clean venv and started
+   (`/healthz` must answer). The files are the run's `dist` artifact; the two hashes are
+   the run's outputs.
+2. **Publish**: checks the tag, `pyproject.toml` and `CHANGELOG.md` agree and that the
+   wheel and lockfile still have those two hashes, refuses if the tag already has a
+   release, and creates the GitHub release with the CHANGELOG notes, the wheel, the sdist,
+   `requirements.lock` and `SHA256SUMS`: as a draft first, then published, and the
+   published files are compared with the build. The release page is for people; du7
+   never reads it.
+3. **Deploy** (`deploy.yml`): du7 asks its `pauta-deploy` what it can do (an older copy
+   stops the job here), downloads this run's `dist` artifact and runs
+   `sudo pauta-deploy 1.2.0 <wheel> requirements.lock <wheel sha256> <lockfile sha256>`,
+   which
+   - copies the wheel and the lockfile once into a folder only root can open and refuses
+     them unless the copies hash to the two sha256s from step 1,
    - builds `/opt/pauta/releases/1.2.0` as the service user (binary wheels only, every hash
      checked, PyPI only),
    - backs up the DB with the system Python (the new code never touches it before the switch),
@@ -58,6 +67,15 @@ starts `.github/workflows/release.yml`:
 
 The `production` environment on GitHub only accepts deploys from `v*` tags and `main`, and
 lists every deploy under the repo's *Deployments*.
+
+What the two hashes are worth: they tie what du7 installs to what that run's CI built and
+tested, so a file changed on the way (in the artifact, in the runner's folder) is refused.
+They arrive from the workflow run, like the files, so root on du7 no longer checks against
+anything outside the caller's reach: whoever can run `sudo pauta-deploy` can hand it their
+own file with its own hash. Who that can be is the job guard's part (only the owner's release
+and deploy runs reach the runner; "Setting up du7"). Until 2026-11-20 the script fetched
+`SHA256SUMS` from the release page instead, which answers 404 without a login while the
+repository is private (decision 2).
 
 ## Moving to pauta.cc
 
@@ -80,7 +98,7 @@ order (steps 1–5 done 2026-10-31):
    steps 2 and 3 come first.
 5. **Move the team**: send each person their own link, which is one tap and Face ID. From
    the app: Equipe → *Link para mudar* next to the person → *Enviar no WhatsApp*. Or on du7
-   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link Piero`).
+   (`PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta move-link NAME`).
    A link works once, for 3 days, for that account only: send it to that person only.
    Without a link, the bar on the old address does the same (*Mudar para app.pauta.cc*).
    Either way, afterwards add `app.pauta.cc` to the phone's home screen (the old icon keeps opening the
@@ -101,10 +119,17 @@ database (the `passkey.rp_id` column is additive) and the old address still work
 
 ## Rolling back
 
-- Any earlier release: GitHub → Actions → **Deploy** → *Run workflow* → the version. It is
-  reinstalled from its GitHub release (or reused if it is still on du7).
-- Straight on du7, to the release before the current one: `sudo pauta-deploy --rollback`.
-- What's live: `sudo pauta-deploy --status`.
+- An earlier release that is still on du7 (the newest 5 are kept, besides the live one and
+  the one before): GitHub → Actions → **Deploy** → *Run workflow* → the version. It runs
+  `sudo pauta-deploy --activate X.Y.Z`: a DB backup, the switch, the health check, and back
+  again if it isn't healthy. A Deploy started by hand installs nothing: a version that is no
+  longer on du7 is refused with the list of the ones that are, and the only way to put code
+  on du7 is a release (to get older code back, release it again under a new version).
+- A release whose du7 job failed (an older `pauta-deploy` there, PyPI not answering): *Re-run
+  failed jobs* on that release run. It installs the same build (the artifact is kept 30 days).
+- Straight on du7, to the release before the current one: `sudo pauta-deploy --rollback`;
+  to another installed one: `sudo pauta-deploy --activate X.Y.Z`.
+- What's live and what's installed: `sudo pauta-deploy --status`.
 
 Schema changes are additive (new tables and columns), so an older release runs on a newer
 database. If one ever isn't, restore the matching file from `~/backups/pauta/pre-deploy`
@@ -114,7 +139,10 @@ database. If one ever isn't, restore the matching file from `~/backups/pauta/pre
 
 https://acc.pauta.cc is a second copy of Pauta on du7 (unit `pauta-acc`, `127.0.0.1:8089`,
 user `pauta-acc`, demo data, its own accounts). It takes builds of any branch before they are
-merged or released; decision 9 says why and what that exposes.
+merged or released; decision 9 says why and what that exposes. https://dev.pauta.cc is a
+second, identical copy (unit and user `pauta-dev`, `127.0.0.1:8091`, its own data and
+accounts) for a branch that stays on a server for weeks; everything below holds for it
+with `dev` in place of `acc` (`-f environment=dev`, `make dev`).
 
 ```
 gh workflow run deploy-branch.yml -f ref=feat/meta-connect     # or Actions → Deploy branch to acceptance
@@ -127,8 +155,9 @@ and answers `/healthz`, and du7 runs `sudo pauta-deploy-branch acc VERSION WHEEL
 
 - refuses unless the unit runs as `pauta-acc`, in no other group, with `ProtectHome=yes`, from
   `/opt/pauta-acc/current`; it has no way to name production's `/opt/pauta`, unit or data,
-- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required),
-  then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
+- builds `/opt/pauta-acc/releases/VERSION` as `pauta-acc` (binary wheels, hashes required, and
+  a `requirements.lock` with nothing but pinned names and their hashes, as `uv export` writes
+  it), then makes it root's; the build's code first runs in the unit's sandbox, after the switch,
 - backs up the DB read-only to `/var/backups/pauta-acc` (30 days), never writing
   `/var/lib/pauta-acc` (the DB, `pauta.db.meta-secret`, the OneDrive token, the session key),
 - switches `/opt/pauta-acc/current`, restarts `pauta-acc`, waits for `/healthz` to report the
@@ -141,7 +170,7 @@ acceptance's own: if a branch's schema change breaks the build before, restore t
 `/var/lib/pauta-acc/pauta.db` as `pauta-acc`, start it).
 
 **Setting it up** (re-runnable; it never starts, restarts or reads into acceptance's state):
-from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc`. It installs
+from a fresh copy of `deploy/` on du7, `sudo deploy/provision-branch-env.sh acc` (or `dev`). It installs
 `pauta-deploy-branch`, the sudo rule `/etc/sudoers.d/gh-runner-pauta-branch`, the
 `pauta-acc` user and unit (`deploy/pauta-acc.service`; settings for one environment, like the
 Meta app, stay in drop-ins under `pauta-acc.service.d/`), `/var/backups/pauta-acc`, and the
@@ -189,15 +218,17 @@ sudo deploy/provision-du7.sh 2.338.2 <sha256 of actions-runner-linux-arm64-2.338
 It installs `pauta-deploy`, the units, a sudo rule letting `gh-runner` run
 `/usr/local/sbin/pauta-deploy` (and nothing else) as root, and registers the runner as a
 systemd service. Then put a first release in place by hand (`sudo pauta-deploy X.Y.Z
-pauta-X.Y.Z-py3-none-any.whl requirements.lock` with the assets of a GitHub release),
+pauta-X.Y.Z-py3-none-any.whl requirements.lock <wheel sha256> <lockfile sha256>` with the
+assets of a GitHub release and their two lines of its `SHA256SUMS`),
 `systemctl enable --now pauta pauta-backup.timer`, append `Caddyfile.pauta` to the Caddyfile
 and `systemctl reload caddy`.
 
 The runner only takes jobs for this repo (labels `du7`, `pauta`), runs as a user with no
 shell and no groups, and keeps itself updated. Its job-started hook,
 `/usr/local/lib/pauta/runner-job-guard.sh`, refuses every job except `du7` of `release.yml` on a
-`vX.Y.Z` tag, `du7` of `deploy.yml` run by hand on `main`, and `du7` of `deploy-branch.yml` run
-by hand on `main` by the owner; refusals are in
+`vX.Y.Z` tag, and `du7` of `deploy.yml` (a switch to an installed release) or
+`deploy-branch.yml` run by hand on `main`, each only
+when the owner started the run and, for a run started again, did that too; refusals are in
 `journalctl -t pauta-runner-guard`. The hook and its systemd drop-in are root-owned, outside
 the runner's own directory, so no job can switch it off.
 
@@ -207,22 +238,28 @@ Maintainers work through pull requests (`CONTRIBUTING.md`); what they may and ma
 why, is decision 2. The GitHub side is `scripts/repo-settings.sh`. In this order:
 
 1. Merge the change that brought this section (CODEOWNERS, the guard, the release check).
-2. While the repo is private, `apply` already sets what it can (forks run no workflows at all)
+2. On du7, from a fresh copy of `deploy/`: `sudo deploy/provision-du7.sh <runner version>
+   <sha256>` (no token: the runner stays registered). It installs the new `pauta-deploy`, the
+   job guard and its drop-in, and restarts the runner. Check: `systemctl show
+   actions.runner.eduelias-pauta.du7.service -p Environment` names the guard,
+   `sudo pauta-deploy --capabilities` answers `pinned activate`, and Actions → Deploy → Run
+   workflow (the live version, on `main`) passes: it restarts the live release and checks it.
+3. The next release (`make release`) is the first one installed by the new `pauta-deploy`.
+   A release cut before step 2 stops at the du7 job's first step ("du7 runs an older
+   pauta-deploy") and installs nothing.
+4. While the repo is private, `apply` already sets what it can (forks run no workflows at all)
    and lists the rest as `later`; it was run on 2026-10-29. Make the repository public
    (Settings → General → Danger Zone), then on the Mac:
    `scripts/repo-settings.sh apply` (rulesets, Actions, environments, security features) and
    `scripts/repo-settings.sh secrets` (the WhatsApp secrets into the `alerts` environment;
    1Password asks for Touch ID). `scripts/repo-settings.sh show` checks it.
-3. On du7, from a fresh copy of `deploy/`: `sudo deploy/provision-du7.sh <runner version>
-   <sha256>` (no token: the runner stays registered). It installs the new `pauta-deploy`, the
-   job guard and its drop-in, and restarts the runner. Check: `systemctl show
-   actions.runner.eduelias-pauta.du7.service -p Environment` names the guard, and Actions →
-   Deploy → Run workflow (the live version, on `main`) still deploys.
-4. Invite: `scripts/repo-settings.sh invite <github login>` (maintain). Ask him to open a
+5. Invite: `scripts/repo-settings.sh invite <github login>` (maintain). Ask him to open a
    small PR that touches `Makefile`: it must wait for the owner's review.
 
-Between 2 and 3 the runner is unguarded: approve no fork runs and invite nobody. Step 3 only
-works after step 2, because `pauta-deploy` downloads `SHA256SUMS` without a token.
+du7 no longer needs the repository public: since 2026-11-20 `pauta-deploy` fetches nothing
+from the release page, so steps 2 and 3 work while it is private. Keep step 2 before step 4
+all the same: a public repository with a du7 that was never provisioned has an unguarded
+runner. Approve no fork runs and invite nobody until both are done.
 
 ## Monitoring and alarms
 
@@ -251,6 +288,11 @@ escalation), and `sudo systemctl start pauta`; the next run posts "recovered" to
   invite --admin` prints a link (7 days, one person). The first account is always an admin.
 - After that, admins invite from the app: Equipe → Convidar alguém (QR code, link, WhatsApp).
 - `pauta users` lists accounts. Admins disable people or make them admin on the Equipe page.
+- Make every open tab reload itself (a fix people must get now): on du7,
+  `PAUTA_STATE_DIR=~/.local/share/pauta /opt/pauta/current/bin/pauta reload`. Each tab
+  reloads at its next change of screen, never under a form being filled, and the running
+  server needs no restart. After an ordinary release tabs only show "A Pauta foi
+  atualizada" and wait for the person. Tabs loaded before 1.15.0 know neither.
 - A lost phone: sign in on another device that has a passkey (iCloud/Google sync them), or
   an admin sends a fresh link to the same account (Equipe → *Link para mudar* while moving,
   or `pauta move-link <name>` on du7). Disabling ends every session

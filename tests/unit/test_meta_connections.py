@@ -16,10 +16,12 @@ from test_meta import connect
 from fakemeta import APP_ID, BUSINESS, CONFIG_ID, OTHER_BUSINESS, secret
 from pauta.db import SCHEMA_VERSION, Invalid, Store
 from pauta.meta import (
+    CACHE_SECONDS,
     LEGACY,
     NOT_CONNECTED,
     RECONNECT,
     REVOKED,
+    STALE_SECONDS,
     THROTTLED,
     UNKNOWN_BUSINESS,
     Meta,
@@ -225,6 +227,58 @@ def test_a_revoked_token_marks_only_its_connection(meta_on, fake_meta):
     assert [a["id"] for a in meta_on.accounts()] == ["444"]
 
 
+def test_a_connection_already_revoked_does_not_drop_the_list_again(meta_on, fake_meta):
+    """Revoking in Meta is how work with a client ends, and the connection stays listed
+    (and read) until an admin clicks Desconectar. Its 190 drops the kept list once, when
+    the state changes; after that the other portfolio's list is kept like any other, so
+    a page does not read all of Meta, twice, on every load."""
+    connect_two(meta_on, fake_meta)
+    fake_meta.revoke(OTHER_BUSINESS)
+    assert [a["id"] for a in meta_on.accounts()] == ["111", "222"]
+    assert meta_on.connections()[1]["state"] == "revoked"
+    n = len(fake_meta.calls)
+    assert [a["id"] for a in meta_on.accounts()] == ["111", "222"]
+    assert len(fake_meta.calls) == n  # answered from memory
+    # past its ten minutes the list is read once, and kept again
+    meta_on._cache = (meta_on._cache[0] - CACHE_SECONDS, meta_on._cache[1])
+    fake_meta.calls.clear()
+    assert [a["id"] for a in meta_on.accounts(stale=False)] == ["111", "222"]
+    assert fake_meta.calls.count("GET /me/adaccounts") == 2  # one per connection, once
+    assert meta_on.status()["accounts_stale"] is False
+
+
+def test_a_connection_meta_does_not_answer_for_keeps_its_accounts_as_last_read(meta_on, fake_meta):
+    """Meta failing for one portfolio (a timeout, a 500) is passing trouble: the list kept
+    for the next ten minutes still has that portfolio's accounts, with the balance last
+    read, so their clients don't drop out of the balance alert and Configurações doesn't
+    say the accounts are gone from Meta. Not for ever: after a day without an answer they
+    go, as the whole list does when every portfolio fails."""
+    connect_two(meta_on, fake_meta)
+    first = {a["id"]: a for a in meta_on.accounts()}
+    fake_meta.down_for.add(OTHER_BUSINESS)
+    accs = meta_on.accounts(refresh=True)
+    assert [a["id"] for a in accs] == ["111", "222", "444"]
+    assert accs[2] == first["444"] and accs[2]["balance"]["remaining_cents"] == 92000
+    assert [c["state"] for c in meta_on.connections()] == ["ok", "ok"]
+    meta_on._read_at[OTHER_BUSINESS] -= STALE_SECONDS
+    assert [a["id"] for a in meta_on.accounts(refresh=True)] == ["111", "222"]
+    # Meta answers again: read anew
+    fake_meta.down_for.clear()
+    assert [a["id"] for a in meta_on.accounts(refresh=True)] == ["111", "222", "444"]
+
+
+def test_meta_not_answering_is_said_over_an_old_revocation(meta_on, fake_meta):
+    """Every connection fails: one revoked long ago, the other because Meta is down. The
+    reason given is the passing one, not "reconnect", which would fix nothing."""
+    connect_two(meta_on, fake_meta)
+    fake_meta.revoke(BUSINESS)
+    meta_on.accounts()
+    fake_meta.down_for.add(OTHER_BUSINESS)
+    with pytest.raises(MetaError) as e:
+        meta_on._read()
+    assert e.value.status != 409
+
+
 def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, monkeypatch):
     """Desconectar unlinks the file while a read is out; Meta's 190 for that read arrives
     after. Marking "revoked" reads and writes under the lock and only a file still there,
@@ -255,7 +309,7 @@ def test_a_late_190_never_brings_back_a_disconnected_file(meta_on, fake_meta, mo
 
 def test_meta_down_for_one_portfolio_is_not_a_state(meta_on, fake_meta, monkeypatch):
     """Meta not answering for one connection leaves it out this time, without marking it:
-    the next read tries again. A throttle stops at once: Meta asked the whole app to wait."""
+    the next read tries again. A throttle fails the list: Meta asked the whole app to wait."""
     connect_two(meta_on, fake_meta)
     real = meta_on._read_one
 
@@ -272,8 +326,8 @@ def test_meta_down_for_one_portfolio_is_not_a_state(meta_on, fake_meta, monkeypa
     fake_meta.throttle = True
     with pytest.raises(MetaError) as e:
         meta_on.accounts(refresh=True)
-    # the first connection's list was read, its batch throttled, the second never asked
-    assert str(e.value) == THROTTLED and fake_meta.calls.count("GET /me/adaccounts") == 4
+    # both portfolios are read at the same time: each list was read, each batch throttled
+    assert str(e.value) == THROTTLED and fake_meta.calls.count("GET /me/adaccounts") == 5
 
 
 def test_a_second_portfolio_keeps_the_first(meta_on, fake_meta):

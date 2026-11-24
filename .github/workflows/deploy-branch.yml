@@ -1,6 +1,7 @@
 # Put a build of any branch (or tag, or commit) on a test environment on du7, to try a change
 # on a real server before it's merged or released: Actions → Deploy branch to acceptance →
-# Run workflow, or `gh workflow run deploy-branch.yml -f ref=feat/x`. Decision 9.
+# Run workflow, or `gh workflow run deploy-branch.yml -f ref=feat/x [-f environment=dev]`,
+# or `make acc` / `make dev` for the current branch. Decision 9.
 #
 # The build job runs the branch's code on GitHub's machines with a read-only token and no
 # secrets. Only its wheel and hashed lockfile reach du7, where the du7 job (the runner's
@@ -20,7 +21,7 @@ on:
       environment:
         description: Test environment
         type: choice
-        options: [acc]
+        options: [acc, dev]
         default: acc
       rollback:
         description: Ignore the ref and switch back to the build before the current one

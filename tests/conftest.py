@@ -103,7 +103,7 @@ def ig_on(store, fake_ig):
 
 @pytest.fixture()
 def site(store, auth, drive, meta, ig):
-    httpd = serve(store, auth, drive, meta, ig)
+    httpd = serve(store, auth, drive, meta, ig=ig)
     ig.at(f"http://127.0.0.1:{httpd.server_address[1]}")
     yield f"http://127.0.0.1:{httpd.server_address[1]}", auth, store
     httpd.shutdown()

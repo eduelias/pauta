@@ -1,12 +1,13 @@
 """Financeiro in the browser: the panel, registering a Pix, the client card, the settings."""
 
 import re
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from playwright.sync_api import expect
 
 from ledger import drift_cycles
+from pauta.db import team_today
 
 pytestmark = pytest.mark.e2e
 
@@ -15,7 +16,7 @@ def recent(days: int) -> str:
     """`days` ago, clamped to the 1st of this month: the Recebido tile counts the current
     month, so a payment dated in the previous month (the first days of a month) would
     make these tests fail by the calendar."""
-    today = date.today()
+    today = team_today()
     return max(today - timedelta(days=days), today.replace(day=1)).isoformat()
 
 
@@ -151,7 +152,7 @@ def test_tiles_filter_and_the_month_picker(admin):
     paid = store.save_client({"name": "Em Dia Ltda"})
     late = store.save_client({"name": "Atrasados SA"})
     store.save_client({"name": "Esperando ME"})
-    today = date.today()
+    today = team_today()
     ago = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
     store.add_payment(paid["id"], {"paid_on": recent(2), "amount": 100}, None)
     store.add_payment(late["id"], {"paid_on": ago(70), "amount": 100, "method": "Pix"}, None)

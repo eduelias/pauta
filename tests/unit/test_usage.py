@@ -45,6 +45,16 @@ def test_unknown_screens_and_props_shapes_fall_back():
         {"e": "period", "s": "campanhas", "p": {"p": "this_month", "since": "x"}}, NOW
     )
     assert (event, screen, json.loads(props)) == ("period", "campanhas", {"p": "this_month"})
+    # a Personalizado range says its shape (14 days, up to yesterday), never its dates
+    _, _, _, props = usage.clean_event(
+        {"e": "period", "p": {"p": "custom", "days": 14, "ago": 1, "until": "2026-11-16"}}, NOW
+    )
+    assert json.loads(props) == {"p": "custom", "days": 14, "ago": 1}
+    # the screen the person chose to open on rides along with the app's start
+    _, _, _, props = usage.clean_event(
+        {"e": "app_open", "p": {"version": "1.14.0", "theme": "dark", "start": "quadro"}}, NOW
+    )
+    assert json.loads(props) == {"version": "1.14.0", "theme": "dark", "start": "quadro"}
     # a message written for a client: the kind, never whom it was for or what it said
     _, event, _, props = usage.clean_event(
         {"e": "client_message", "p": {"kind": "balance", "to": "5511988887777", "text": "Olá"}},

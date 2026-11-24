@@ -13,7 +13,8 @@
 # 	header Strict-Transport-Security "max-age=31536000"
 # }
 #
-# Hosts (decision 4): app.pauta.cc is the app, acc.pauta.cc acceptance, www.pauta.cc the
+# Hosts (decision 4): app.pauta.cc is the app, acc.pauta.cc and dev.pauta.cc test copies
+# (decision 9), www.pauta.cc the
 # public site; pauta.cc and pauta.team lead to www. Passkeys belong to pauta.cc, so they work
 # on app.pauta.cc; production only accepts the origin https://app.pauta.cc.
 
@@ -28,6 +29,13 @@ acc.pauta.cc {
 	import public_site
 	header X-Robots-Tag "noindex, nofollow"
 	reverse_proxy 127.0.0.1:8089
+}
+
+# The second test copy (decision 9): the same, the pauta-dev unit, passkeys for dev.pauta.cc.
+dev.pauta.cc {
+	import public_site
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy 127.0.0.1:8091
 }
 
 # The public site. Until it exists, a temporary redirect to the app. Fragments survive

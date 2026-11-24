@@ -41,14 +41,14 @@ def today() -> date:
     return local_today(TZ)
 
 
+def short(d: date) -> str:
+    """A day as the page prints it: "3 out" (the year only when it isn't this one)."""
+    return f"{d.day} {MONTHS[d.month - 1]}" + (f" {d.year}" if d.year != today().year else "")
+
+
 def label(since: date, until: date) -> str:
-    """What the picker prints: "1 nov – 1 nov" (the year only when it isn't this one)."""
-    year = today().year
-
-    def one(d):
-        return f"{d.day} {MONTHS[d.month - 1]}" + (f" {d.year}" if d.year != year else "")
-
-    return f"{one(since)} – {one(until)}"
+    """What the picker prints: "1 nov – 1 nov"."""
+    return f"{short(since)} – {short(until)}"
 
 
 def brl(cents: int) -> str:
@@ -146,7 +146,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(limpeza.locator(".km-budget b")).to_contain_text("15,00 · diário")
     expect(limpeza.locator(".state")).to_have_text("Ativa")
     expect(limpeza.locator(".state")).to_have_attribute("title", "ACTIVE")
-    expect(limpeza.locator(".ksince")).to_have_text("ativa desde 3 out")
+    expect(limpeza.locator(".ksince")).to_have_text(f"ativa desde {short(date(2026, 10, 3))}")
     # Botox: Meta names the indicator (Cadastros) and counts nothing: "—", a lifetime budget
     botox = page.locator(".krow[data-id]", has_text="Botox outubro")
     expect(botox.locator(".km-results b span")).to_have_text("—")
@@ -156,7 +156,7 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(botox.locator(".km-results .ksub")).to_have_count(0)
     expect(botox.locator(".km-cpr b span")).to_have_text("—")
     expect(botox.locator(".km-budget b")).to_contain_text("450,00 · total")
-    expect(botox.locator(".ksince")).to_have_text("ativa desde 12 out")
+    expect(botox.locator(".ksince")).to_have_text(f"ativa desde {short(date(2026, 10, 12))}")
     # Panetone: no `results` from Meta, so the objective's action (link clicks); no budget
     panetone = page.locator(".krow[data-id]", has_text="Panetone")
     pan = expected("23850004", since, until, date(2026, 10, 15))
@@ -223,6 +223,43 @@ def test_list_with_the_period_picker(synced, live, device):
     expect(member.locator("#syncnow")).to_have_count(0)
     expect(member.locator("[data-skip]")).to_have_count(0)
     expect(member.locator("[data-seen]").first).to_be_visible()  # the daily check is everyone's
+
+
+def test_a_period_never_read_shows_at_once_and_the_reach_arrives(synced, fake_meta):
+    """A Personalizado range Pauta has not read from Meta: the list is there while Meta is
+    still thinking, the reach cells say "…", and each number lands in its cell when Meta
+    answers, without the page being drawn again (through 1.13.0 the whole page waited, 6 to
+    9 seconds with ten portfolios). The usage log keeps the range's shape, not its dates."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    fake_meta.hold()  # Meta answers nothing until release()
+    page.goto(f"{base}/#/campanhas?since=2026-10-10&until=2026-10-12")
+    limpeza = page.locator(".krow[data-id]", has_text="Limpeza de pele novembro")
+    expect(limpeza.locator(".km-spend b")).to_contain_text(brl(1010 + 1011 + 1012))
+    expect(limpeza.locator(".km-reach .reading")).to_have_text("…")
+    assert fake_meta.held.wait(5)  # the read is with Meta, behind the page
+    page.evaluate("document.querySelector('#cblocks').dataset.drawn = 'once'")
+    fake_meta.release()
+    expect(limpeza.locator(".km-reach b")).to_have_text("1.500", timeout=10_000)
+    expect(page.locator(".km-reach .reading")).to_have_count(0)
+    # Panetone starts after this range: Meta has no row for it, the usual dash
+    panetone = page.locator(".krow[data-id]", has_text="Panetone")
+    expect(panetone.locator(".km-reach b span")).to_have_attribute("title", "a Meta não respondeu")
+    expect(page.locator("#cblocks")).to_have_attribute("data-drawn", "once")  # filled in place
+    # a reload answers from memory: no "…" at any point
+    page.reload()
+    expect(limpeza.locator(".km-reach b")).to_have_text("1.500")
+    page.goto("about:blank")  # pagehide: the usage batch leaves as a beacon
+    want = {"p": "custom", "days": 3, "ago": (today() - date(2026, 10, 12)).days}
+    for _ in range(100):
+        with store.db() as db:
+            rows = [
+                json.loads(r[0]) for r in db.execute("SELECT props FROM usage WHERE event='period'")
+            ]
+        if rows:
+            break
+        time.sleep(0.05)
+    assert rows and all(r == want for r in rows), rows
 
 
 def test_skip_follow_again_and_sync_now(synced):
@@ -904,6 +941,9 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
     period = label(date.fromisoformat(doc["since"]), date.fromisoformat(doc["until"]))
     row = page.locator(".orow[data-client]").filter(has_text="Clínica Bem Estar")
     c = rows["Clínica Bem Estar"]
+    # the account's pace: all it spent in the last seven days, the campaign set to "Não
+    # acompanhar" further down included (it draws on the same balance)
+    week = sum(d["spend_cents"] for d in c["days"][-7:])
     # plenty of balance: nothing to warn about, the summary only. Two campaigns that count
     # different things: no results line
     expect(row.locator(".oacts a")).to_have_text(["Enviar resumo"])
@@ -945,7 +985,6 @@ def test_visao_geral_writes_the_message_for_the_client(synced, meta, monkeypatch
     )
 
     # the balance runs low: what is left covers two days at the last seven days' pace
-    week = sum(d["spend_cents"] for d in c["days"][-7:])
     assert week > 0
 
     def leave(cents: int):
@@ -1198,3 +1237,49 @@ def test_sync_now_within_the_second_of_the_previous_pass(synced, monkeypatch):
     page.get_by_role("button", name="Atualizar agora").click()
     expect(page.locator("#toast")).to_have_text("Dados da Meta atualizados", timeout=10_000)
     assert store.sync_state()["last_sync"] != previous
+
+
+def test_a_sync_that_ends_on_visao_geral_does_not_draw_the_list_there(synced):
+    """Atualizar agora, then the Visão geral tab. It has a "Dados da Meta" line too, so the
+    poll took it for its own screen and, when the pass ended, drew the per-client list over
+    it under Visão geral's address."""
+    base, store, laptop, clinic, bakery = synced
+    page = laptop.page
+    page.goto(f"{base}/#/campanhas")
+    expect(page.locator("#syncline")).to_contain_text("Dados da Meta de")
+    previous = store.sync_state()["last_sync"]
+    page.get_by_role("button", name="Atualizar agora").click()
+    page.locator(".ctabs a", has_text="Visão geral").click()
+    expect(page.locator("#overview .orow[data-client]")).to_have_count(2)
+    for _ in range(200):
+        if store.sync_state()["last_sync"] != previous:
+            break
+        time.sleep(0.05)
+    assert store.sync_state()["last_sync"] != previous
+    page.wait_for_timeout(3300)  # past the poll's next look (every 3 s) after the pass ended
+    expect(page.locator("#overview .orow[data-client]")).to_have_count(2)
+    expect(page.locator("#cblocks")).to_have_count(0)
+    expect(page.locator("#toast")).to_be_hidden()
+
+
+def test_markup_in_a_client_or_campaign_name_is_shown_as_text(synced):
+    """Campanhas' screens with <, >, ", ' and & in the names that go through their templates
+    (a campaign's name is whatever was typed in Ads Manager): text, never elements or
+    attributes. The other screens' walk is in test_screens.py."""
+    base, store, laptop, clinic, bakery = synced
+    markup = """Ana & <i class=pwn>Cia</i> "pwn=1" 'pwn=2'"""
+    store.save_client({"name": markup, "contact": markup}, clinic["id"])
+    with store.db() as conn:
+        conn.execute("UPDATE campaign SET name = ?", (markup,))
+        cid = conn.execute(
+            "SELECT id FROM campaign WHERE client = ? ORDER BY id", (clinic["id"],)
+        ).fetchone()[0]
+    page = laptop.page
+    for route in ("campanhas", "campanhas/geral", f"campanha/{cid}", f"relatorio/{cid}"):
+        page.goto(f"{base}/#/{route}")
+        expect(page.locator("#app > .fadein")).to_have_count(1)  # the router's last touch
+        expect(page.locator("#app")).to_contain_text(markup)
+        expect(page.locator(".pwn, [pwn]")).to_have_count(0)
+    page.goto(f"{base}/#/cliente/{clinic['id']}")  # the Meta card arrives after the page
+    expect(page.locator("#clientmeta .kcard").first).to_contain_text(markup)
+    expect(page.locator(".pwn, [pwn]")).to_have_count(0)

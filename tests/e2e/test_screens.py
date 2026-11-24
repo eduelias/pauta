@@ -1,6 +1,7 @@
 """Every screen renders with real data, without JS errors or CSP violations, on both layouts."""
 
 import re
+from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import expect
@@ -112,3 +113,58 @@ def test_a_screen_left_behind_does_not_take_the_address_back(signed_in):
     expect(page.get_by_role("heading", name="Clientes", exact=True)).to_be_visible()
     expect(page).to_have_url(re.compile(r"#/clientes$"))
     expect(page.get_by_role("heading", name="Pedidos", exact=True)).to_have_count(0)
+
+
+# every character esc() turns into an entity; unescaped, the page would grow an <i class=pwn>
+# element or (inside a quoted attribute) a pwn="..." attribute
+MARKUP = """Ana & <i class=pwn>Cia</i> "pwn=1" 'pwn=2'"""
+
+
+def test_markup_in_the_teams_data_is_shown_as_text(signed_in, live):
+    """The screens are built as text, and `esc()` is all there is between a client's name
+    and the page. Here a person's name, a client, a request and a comment carry <, >, ", '
+    and & through every screen's templates: nothing of them becomes an element or an
+    attribute, and the text reads back as it was written, on the page and in its fields."""
+    base, open_device = signed_in
+    store = live[2]
+    with store.db() as conn:
+        conn.execute("UPDATE account SET name = ?", (MARKUP,))
+        me = conn.execute("SELECT id FROM account").fetchone()[0]
+    text = dict.fromkeys(("name", "contact", "segment", "ad_account", "ads_page", "notes"), MARKUP)
+    assert store.save_client(text, 1)["name"] == MARKUP  # kept as written, not cleaned away
+    text = dict.fromkeys(("what", "kind", "missing", "audience", "region", "notes"), MARKUP)
+    store.update_request(1, {**text, "client": 1, "status": "waiting"}, me)
+    store.comment(1, MARKUP, me)
+    page = open_device().page
+    grown = page.locator(".pwn, [pwn]")
+
+    def drawn(route):
+        page.goto(f"{base}/{route}")
+        expect(page.locator("#app > .fadein")).to_have_count(1)  # the router's last touch
+        expect(grown).to_have_count(0)
+
+    for route in SCREENS:
+        drawn(route)
+        if route not in ("#/cliente/novo", "#/financeiro"):  # the two without this data
+            expect(page.locator("#app")).to_contain_text(MARKUP)
+    expect(page.locator("#mechip")).to_contain_text(MARKUP)  # the shell, around every screen
+
+    drawn("#/pedido/1")
+    for field in ("what", "kind", "missing", "audience", "region", "notes"):
+        expect(page.locator(f'[data-f="{field}"]')).to_have_value(MARKUP)
+    expect(page.locator("#tl .bubble").first).to_have_text(MARKUP)  # the newest comment
+    drawn(f"#/pedidos?q={quote(MARKUP)}")  # the search box is filled from the address
+    expect(page.locator("#q")).to_have_value(MARKUP)
+    expect(page.locator("#rows tr[data-id]")).to_have_count(1)
+    drawn("#/clientes")
+    page.get_by_role("button", name="Lista").click()
+    expect(page.locator(".ctable")).to_contain_text(MARKUP)
+    expect(grown).to_have_count(0)
+    drawn("#/cliente/1")
+    for field in ("name", "contact", "ad_account", "ads_page", "notes"):
+        expect(page.locator(f'[data-f="{field}"]')).to_have_value(MARKUP)
+    expect(page.locator(".clientbox [data-copy]").first).to_have_attribute("data-copy", MARKUP)
+    page.get_by_role("button", name="Excluir cliente").click()  # a modal, outside #app
+    expect(page.locator("#modal h2")).to_have_text(f"Excluir {MARKUP}?")
+    expect(page.locator("#modal input[name=confirm]")).to_have_attribute("placeholder", MARKUP)
+    expect(grown).to_have_count(0)

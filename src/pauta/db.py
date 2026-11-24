@@ -24,9 +24,17 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
-from . import finance, obs
+from . import finance, meta, obs
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
+
+# Raise this in a release whose server no longer works with the page an earlier release
+# loaded: every open tab then reloads itself instead of only offering to. It is half of the
+# reload mark (Store.reload_mark); `pauta reload` changes the other half, any day.
+RELOAD_EPOCH = 1
+# how long the server trusts its copy of the mark before reading the file again
+RELOAD_RECHECK_SECONDS = 2.0
+PUSH_DEVICES = 10  # devices with notifications on, per person
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -34,7 +42,8 @@ CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL, handle TEXT NOT NULL UNIQUE,
     email TEXT NOT NULL DEFAULT '', is_admin INTEGER NOT NULL DEFAULT 0,
     disabled INTEGER NOT NULL DEFAULT 0, session_gen INTEGER NOT NULL DEFAULT 0,
-    created TEXT NOT NULL DEFAULT (datetime('now')), whatsapp TEXT NOT NULL DEFAULT ''
+    created TEXT NOT NULL DEFAULT (datetime('now')), whatsapp TEXT NOT NULL DEFAULT '',
+    start TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS passkey (
     id TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
@@ -172,6 +181,12 @@ CREATE TABLE IF NOT EXISTS report_link (
     created_by INTEGER REFERENCES account(id), expires TEXT NOT NULL, revoked TEXT
 );
 CREATE INDEX IF NOT EXISTS report_link_campaign ON report_link(campaign);
+CREATE TABLE IF NOT EXISTS push_sub (
+    id INTEGER PRIMARY KEY,
+    account INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE, seen INTEGER NOT NULL DEFAULT 0,
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS ig_profile (
     client INTEGER PRIMARY KEY REFERENCES client(id) ON DELETE CASCADE,
     ig_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL DEFAULT '',
@@ -250,6 +265,7 @@ CAMPAIGN_URL_ID = (
     r"/campaigns/(\d+)",
 )
 EXPORT_TABLES = (
+    "billing",
     "campaign",
     "review",
     "insight",
@@ -346,7 +362,7 @@ def _not_a_script(limit):
 def _id(v) -> int | None:
     try:
         n = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return n if 0 < n <= MAX_ID else None
 
@@ -368,7 +384,8 @@ def _date(v, _db):
     if not DATE_RE.match(v):
         raise Invalid(f"data inválida: {v}")
     try:
-        date.fromisoformat(v)
+        if date.fromisoformat(v).year < 1990:  # a year typed halfway ("0202")
+            raise ValueError
     except ValueError:
         raise Invalid(f"data inválida: {v}") from None
     return v
@@ -384,13 +401,18 @@ def _money(v, _db):
         return None
     if isinstance(v, str):
         v = v.replace("R$", "").strip()
-        if "," in v:  # 1.500,50 -> 1500.50
+        # the Brazilian way: in 1.500,50 and in 1.500 the dots mark thousands; a dot that is
+        # not before three digits is a decimal point (1500.5, what the page puts back). The
+        # other order (2,500.00) is refused, not guessed: read this way it would be 2,50
+        if "," in v and not re.fullmatch(r"(\d{1,3}(\.\d{3})+|\d*),\d*", v):
+            raise Invalid("verba precisa ser um número")
+        if "," in v or re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+", v):
             v = v.replace(".", "").replace(",", ".")
     try:
         n = round(float(v), 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise Invalid("verba precisa ser um número") from None
-    if n < 0 or n > 100_000_000:
+    if not 0 <= n <= 100_000_000:  # written this way, not-a-number fails it too
         raise Invalid("verba fora do intervalo")
     return n
 
@@ -407,7 +429,7 @@ def _int_range(lo, hi, label):
     def check(v, _db):
         try:
             n = int(v)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise Invalid(f"{label} precisa ser um número") from None
         if not lo <= n <= hi:
             raise Invalid(f"{label} fora do intervalo ({lo} a {hi})")
@@ -454,9 +476,14 @@ def _account(v, db):
     return aid
 
 
+# the screens a person may pick to open the app on (Perfil, "Tela inicial"); '' is the
+# Painel. Whether they can see the one they picked (Campanhas with Meta off, Financeiro
+# hidden) is the page's to check when it opens: it falls back to the Painel.
+STARTS = ("quadro", "pedidos", "clientes", "campanhas", "financeiro")
+
 # what a person may change about their own account on Perfil; the name and e-mail have
 # their own rules in auth.py (uniqueness in the team)
-ACCOUNT_FIELDS = {"whatsapp": _text(40)}
+ACCOUNT_FIELDS = {"whatsapp": _text(40), "start": _choice(STARTS, blank=True)}
 
 CLIENT_FIELDS = {
     "name": _text(80),
@@ -648,6 +675,13 @@ def _utcnow() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def team_today() -> date:
+    """Today's date where the team is (`meta.local_today`: PAUTA_TZ, else São Paulo): what
+    "due today", "late" and "done on" go by. In the evening in Brazil the server's clock
+    and UTC are already on tomorrow."""
+    return meta.local_today("")
+
+
 def gravatar(email: str | None) -> str:
     """Gravatar's id for an address (SHA-256 of the trimmed, lowercased email), or ''."""
     email = (email or "").strip().lower()
@@ -660,6 +694,10 @@ def gravatar(email: str | None) -> str:
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
+        self._reload: tuple[float, str] = (0.0, "")  # (good until, the mark)
+        # called with who did it after a new request, a status change or a comment is
+        # saved; server.py points it at the notifications (push.py)
+        self.on_news = lambda by: None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript(SCHEMA)
@@ -674,6 +712,9 @@ class Store:
             # it (GET /api/me), never /api/members, the boot data or the export
             if "whatsapp" not in cols:
                 db.execute("ALTER TABLE account ADD COLUMN whatsapp TEXT NOT NULL DEFAULT ''")
+            # v15: the screen the app opens on for this person (Perfil); '' is the Painel
+            if "start" not in cols:
+                db.execute("ALTER TABLE account ADD COLUMN start TEXT NOT NULL DEFAULT ''")
             # v7: the domain a passkey belongs to (decision 4's move); '' until it's next used
             cols = {r[1] for r in db.execute("PRAGMA table_info(passkey)")}
             if "rp_id" not in cols:
@@ -722,15 +763,18 @@ class Store:
                 )
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
-            # v15: ig_profile and post (Publicações, docs/publishing-spec.md) are new tables
-            # v16: what a post is (feed, story, reel) and whether its file is a picture
-            # or a video; every post there was is a picture for the feed
+            # v16: push_sub (a device that asked for notifications, push.py) is one more
+            # v17: ig_profile and post (Publicações, docs/publishing-spec.md) are new tables,
+            # and a post says what it is (feed, story, reel) and whether its file is a
+            # picture or a video; every post there was is a picture for the feed. (The
+            # publishing beta numbered these steps 15 to 17 before it met main's 15 and 16.
+            # Each step checks for itself, so a file's number only says how far it got.)
             cols = {r[1] for r in db.execute("PRAGMA table_info(post)")}
             if "kind" not in cols:
                 db.execute("ALTER TABLE post ADD COLUMN kind TEXT NOT NULL DEFAULT 'feed'")
             if "media_type" not in cols:
                 db.execute("ALTER TABLE post ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'")
-            # v17: Publicações follows Meta's model (docs/designs/2026-11-22_publishing-
+            # v18: Publicações follows Meta's model (docs/designs/2026-11-22_publishing-
             # mirrors-meta.md): a portfolio's connection, its Instagram accounts, and a post
             # that has an account. Once per file, and all of it or none: each old profile
             # becomes an account with its client and no connection (the owner logs in once),
@@ -752,8 +796,11 @@ class Store:
                     "(SELECT ig_id FROM ig_profile WHERE client=post.client), '')"
                 )
                 db.execute("UPDATE ig_profile SET state='expired'")
+            # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?)",
+                "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "
+                "SET value=excluded.value "
+                "WHERE CAST(meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)",
                 (str(SCHEMA_VERSION),),
             )
             if not db.execute("SELECT 1 FROM option LIMIT 1").fetchone():
@@ -1134,9 +1181,11 @@ class Store:
         one changes nothing. New rows appear only for ACTIVE campaigns (ended or archived ones
         never show up unless asked); a known one follows Meta's status: ACTIVE reopens an
         ended or paused row, anything else ends an active one. `skipped` is never touched.
-        Returns the new rows' meta ids (the caller fetches their history)."""
+        Returns the new rows' meta ids and, as `pending`, the listed ones whose history is
+        still to be read: the new ones, and older ones until `history_done` (the caller
+        fetches it; a row saved here is not new again when that read fails)."""
         aid = digits(account_id)
-        out: dict = {"new": [], "ended": 0, "reopened": 0}
+        out: dict = {"new": [], "pending": [], "ended": 0, "reopened": 0}
         with self.db() as db:
             row = db.execute(
                 "SELECT client FROM meta_account WHERE account_id=?", (aid,)
@@ -1192,6 +1241,12 @@ class Store:
                         (today, known["id"]),
                     )
                     out["ended"] += 1
+            # shortcut: an id Meta stops listing stays in the list, prune it if it ever grows
+            pending = self._history_pending(db) + out["new"]
+            if out["new"]:
+                self._set_history_pending(db, pending)
+            listed = {digits(m.get("id")) for m in metas}
+            out["pending"] = [mid for mid in pending if mid in listed]
         if out["new"] or out["ended"] or out["reopened"]:
             obs.event(
                 "campaigns_synced",
@@ -1201,6 +1256,25 @@ class Store:
                 reopened=out["reopened"],
             )
         return out
+
+    @staticmethod
+    def _history_pending(db) -> list[str]:
+        """The campaigns (meta ids) saved without their numbers back to their start yet."""
+        row = db.execute("SELECT value FROM meta WHERE key='history_pending'").fetchone()
+        return json.loads(row[0]) if row else []
+
+    @staticmethod
+    def _set_history_pending(db, meta_ids: list[str]) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_pending', ?)",
+            (json.dumps(meta_ids),),
+        )
+
+    def history_done(self, meta_id: str) -> None:
+        """The campaign's numbers back to its start are stored: never asked for again."""
+        with self.db() as db:
+            left = [mid for mid in self._history_pending(db) if mid != meta_id]
+            self._set_history_pending(db, left)
 
     def store_insights(self, rows: list[dict], fetched: str | None = None) -> int:
         """Daily numbers per campaign, upserted by (meta_id, day). `results` stays NULL when
@@ -1657,7 +1731,7 @@ class Store:
         return self.report_link(token)
 
     def table(self, name: str) -> list[dict]:
-        """Every row of one of the tracking tables, for the export."""
+        """Every row of one of the tables the export carries whole."""
         if name not in EXPORT_TABLES:
             raise Invalid("tabela desconhecida")
         with self.db() as db:
@@ -1679,6 +1753,35 @@ class Store:
             ).fetchall()
         got = {r["key"]: r["value"] for r in rows}
         return {"last_sync": got.get("sync_at") or None, "sync_error": got.get("sync_error") or ""}
+
+    # ---- the reload mark --------------------------------------------------------------------
+
+    def reload_mark(self) -> str:
+        """What every answer carries as X-Pauta-Reload and the page keeps from its boot data:
+        when the two differ, the page reloads itself at the next change of screen. It is
+        RELOAD_EPOCH (a release that needs it) and a counter in the file (`pauta reload`, run
+        by another process: the server reads it again every couple of seconds)."""
+        until, mark = self._reload
+        if time.monotonic() < until:
+            return mark
+        try:
+            with self.db() as db:
+                row = db.execute("SELECT value FROM meta WHERE key='reload'").fetchone()
+        except sqlite3.Error:  # an answer (the health check's 503 too) never fails on this
+            return mark
+        mark = f"{RELOAD_EPOCH}.{row['value'] if row else 0}"
+        self._reload = (time.monotonic() + RELOAD_RECHECK_SECONDS, mark)
+        return mark
+
+    def force_reload(self) -> str:
+        """Change the mark: every open tab reloads at its next change of screen."""
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO meta(key, value) VALUES ('reload', '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
+            )
+        self._reload = (0.0, "")
+        return self.reload_mark()
 
     def set_sync_state(self, at: str, error: str) -> None:
         with self.db() as db:
@@ -1713,8 +1816,15 @@ class Store:
 
     @staticmethod
     def _open_cycle(db, cid: int, by: int | None) -> None:
-        """One open cycle per client: a no-op when there is one already."""
+        """One open cycle per client: a no-op when there is one already. A cycle closed today
+        is reopened: un-ticking "Cobrado" and ticking it again is a slip, not a pause."""
         if db.execute("SELECT 1 FROM billing WHERE client=? AND ended IS NULL", (cid,)).fetchone():
+            return
+        if db.execute(
+            "UPDATE billing SET ended=NULL WHERE id="
+            "(SELECT MAX(id) FROM billing WHERE client=? AND ended=?)",
+            (cid, team_today().isoformat()),
+        ).rowcount:
             return
         settings = Store._settings(db)
         db.execute(
@@ -1724,11 +1834,14 @@ class Store:
 
     @staticmethod
     def _close_cycle(db, cid: int) -> None:
-        db.execute("UPDATE billing SET ended=date('now') WHERE client=? AND ended IS NULL", (cid,))
+        db.execute(
+            "UPDATE billing SET ended=? WHERE client=? AND ended IS NULL",
+            (team_today().isoformat(), cid),
+        )
 
     def _sync_cycle(self, db, cid: int, by: int | None) -> None:
-        """Ativo and billed means an open cycle; anything else closes it. Coming back opens a
-        new one, so the month count and the day restart (decision 7)."""
+        """Ativo and billed means an open cycle; anything else closes it. Coming back on a
+        later day opens a new one, so the month count and the day restart (decision 7)."""
         row = db.execute("SELECT state, billed FROM client WHERE id=?", (cid,)).fetchone()
         if row["state"] == "Ativo" and row["billed"]:
             self._open_cycle(db, cid, by)
@@ -1753,11 +1866,14 @@ class Store:
             return None
         settings = self._settings(db)
         payments = self._cycle_payments(db, cycle["id"])
+        # `created` is a UTC instant; the day the cycle opened is the team's
+        created = datetime.fromisoformat(cycle["created"]).replace(tzinfo=UTC)
+        opened = meta.local_today("", created)
         anchor = finance.resolve_anchor(
             settings,
             first_payment=payments[0][0] if payments else None,
             since=date.fromisoformat(client["since"]) if client.get("since") else None,
-            opened=date.fromisoformat(cycle["created"][:10]),
+            opened=opened,
             started=date.fromisoformat(cycle["started"]) if cycle["started"] else None,
         )
         st = finance.standing(
@@ -1765,13 +1881,13 @@ class Store:
             cents=cycle["cents"],
             anchor=anchor,
             payments=payments,
-            today=today or date.today(),
+            today=today or team_today(),
         )
         return {
             "id": cycle["id"],
             "amount": cycle["cents"] / 100,
             "currency": cycle["currency"],
-            "opened": cycle["created"][:10],
+            "opened": opened.isoformat(),
             **st.as_dict(),
         }
 
@@ -1822,7 +1938,7 @@ class Store:
                 raise Invalid("informe o valor")
             if vals["amount"] <= 0:
                 raise Invalid("o valor precisa ser maior que zero")
-            if vals["paid_on"] > (date.today() + timedelta(days=1)).isoformat():
+            if vals["paid_on"] > (team_today() + timedelta(days=1)).isoformat():
                 raise Invalid("a data do pagamento não pode estar no futuro")
             cycle = db.execute(
                 "SELECT id FROM billing WHERE client=? AND ended IS NULL", (cid,)
@@ -1861,7 +1977,7 @@ class Store:
     def finance(self, today: date | None = None, month: str | None = None) -> dict:
         """The panel: every Ativo, billed client and where it stands, plus what came in each
         month and the payments of `month` (default: this one)."""
-        today = today or date.today()
+        today = today or team_today()
         if month is not None and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
             raise Invalid("mês inválido, use AAAA-MM")
         this_month = today.strftime("%Y-%m")
@@ -1994,7 +2110,7 @@ class Store:
             vals.setdefault("status", "todo")
             vals.setdefault("priority", "Média")
             if vals["status"] == "done" and not vals.get("done_on"):
-                vals["done_on"] = date.today().isoformat()
+                vals["done_on"] = team_today().isoformat()
             vals["created_by"] = by
             cols = ", ".join(vals)
             marks = ", ".join("?" for _ in vals)
@@ -2004,6 +2120,7 @@ class Store:
             db.execute(
                 "INSERT INTO event(request, account, kind) VALUES (?,?,'created')", (rid, by)
             )
+        self.on_news(by)
         return self.request(rid)
 
     def update_request(self, rid: int, data: dict, by: int | None) -> dict:
@@ -2016,7 +2133,7 @@ class Store:
                 raise Invalid("descreva o que precisa ser feito")
             changed = {k: v for k, v in vals.items() if old[k] != v}
             if changed.get("status") == "done" and not (changed.get("done_on") or old["done_on"]):
-                changed["done_on"] = date.today().isoformat()
+                changed["done_on"] = team_today().isoformat()
             if not changed:
                 return self.request(rid)
             sets = ", ".join(f"{k}=?" for k in changed)
@@ -2035,6 +2152,8 @@ class Store:
                     "INSERT INTO event(request, account, kind, text) VALUES (?,?,'edited',?)",
                     (rid, by, ", ".join(edited)),
                 )
+        if "status" in changed:
+            self.on_news(by)
         return self.request(rid)
 
     def comment(self, rid: int, text: str, by: int | None) -> dict:
@@ -2049,7 +2168,82 @@ class Store:
                 (rid, by, text),
             )
             db.execute("UPDATE request SET updated=datetime('now') WHERE id=?", (rid,))
+        self.on_news(by)
         return self.request(rid)
+
+    # ---- notifications (push.py) -------------------------------------------------------------
+
+    def push_subscribe(self, account: int, endpoint: str) -> None:
+        """This device gets a push from now on (nothing older than this moment). A device
+        belongs to whoever enabled it last; a person keeps their PUSH_DEVICES newest."""
+        with self.db() as db:
+            db.execute(
+                "INSERT INTO push_sub(account, endpoint, seen) "
+                "VALUES (?, ?, (SELECT COALESCE(MAX(id), 0) FROM event)) "
+                "ON CONFLICT(endpoint) DO UPDATE SET account=excluded.account, "
+                "seen=CASE WHEN push_sub.account=excluded.account THEN push_sub.seen "
+                "ELSE excluded.seen END",
+                (account, endpoint),
+            )
+            db.execute(
+                "DELETE FROM push_sub WHERE account=? AND id NOT IN "
+                "(SELECT id FROM push_sub WHERE account=? ORDER BY id DESC LIMIT ?)",
+                (account, account, PUSH_DEVICES),
+            )
+
+    def push_forget(self, endpoint: str | None = None, account: int | None = None) -> None:
+        """Drop one device (it was switched off, or its push service says it is gone), one
+        person's device, or all of a person's (they signed out everywhere)."""
+        where = [f"{k}=?" for k, v in (("endpoint", endpoint), ("account", account)) if v]
+        if where:
+            with self.db() as db:
+                db.execute(
+                    f"DELETE FROM push_sub WHERE {' AND '.join(where)}",
+                    tuple(v for v in (endpoint, account) if v),
+                )
+
+    def push_targets(self, by: int | None) -> list[str]:
+        """The devices to tell about something `by` did: everyone else's who can sign in."""
+        with self.db() as db:
+            rows = db.execute(
+                "SELECT p.endpoint FROM push_sub p JOIN account a ON a.id=p.account "
+                "WHERE a.disabled=0 AND p.account IS NOT ? ORDER BY p.id",
+                (by,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def push_news(self, account: int, endpoint: str) -> list[dict]:
+        """What this device has not shown yet of what others did (new requests, status
+        changes, comments), oldest first, and it counts as shown from here on. With nothing
+        new it is the latest one of the last day again: a push always has something to show
+        (two changes in a row send two, and the first one's read takes both)."""
+        news = (
+            "SELECT e.id, e.kind, e.text, e.request, a.name AS by_name, c.name AS client, "
+            "r.kind AS request_kind, r.what, r.missing FROM event e "
+            "JOIN request r ON r.id=e.request JOIN client c ON c.id=r.client "
+            "LEFT JOIN account a ON a.id=e.account "
+            "WHERE e.kind IN ('created','status','comment') AND e.account IS NOT ? "
+        )
+        with self.db() as db:
+            sub = db.execute(
+                "SELECT id, seen FROM push_sub WHERE endpoint=? AND account=?",
+                (endpoint, account),
+            ).fetchone()
+            if not sub:
+                raise NotFound("este aparelho não está com as notificações ativadas")
+            rows = db.execute(
+                f"{news} AND e.id > ? ORDER BY e.id DESC LIMIT 3", (account, sub["seen"])
+            ).fetchall()
+            if not rows:
+                rows = db.execute(
+                    f"{news} AND e.at >= datetime('now','-1 day') ORDER BY e.id DESC LIMIT 1",
+                    (account,),
+                ).fetchall()
+            db.execute(
+                "UPDATE push_sub SET seen=(SELECT COALESCE(MAX(id), 0) FROM event) WHERE id=?",
+                (sub["id"],),
+            )
+        return [dict(r) for r in reversed(rows)]
 
     # ---- files (the bytes are in OneDrive) ---------------------------------------------------
 

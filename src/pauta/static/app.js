@@ -26,9 +26,20 @@ class Stale extends Error {}
 // and the router would follow it, so the tap is lost. So a screen only rewrites the
 // address while the address is still its own (the same path, whatever the query).
 const hashPath = (hash) => (hash || "#/").slice(1).split("?")[0] || "/";
+const onScreen = (hash) => hashPath(location.hash) === hashPath(hash);
 function keepHash(hash) {
-  if (hashPath(location.hash) === hashPath(hash)) history.replaceState(null, "", hash);
+  if (onScreen(hash)) history.replaceState(null, "", hash);
 }
+// The same goes for what a screen draws when an answer comes late. A screen that asks for
+// its data again by itself (another period, the board after a drop) is outside the
+// router's numbering: it draws only while the address is still its own (`onScreen`). A
+// part of a screen redrawn after a save or an upload keeps a node from when the screen
+// was drawn and stops once that node is off the page (`isConnected`): looked up by id, the
+// answer would land on the next request's timeline, or on nothing at all.
+
+// No answer at all (no signal, the server away). The browser's own error is in English
+// ("Failed to fetch", "Load failed"): every toast and the error screen say this one.
+const offline = () => Object.assign(new Error("a conexão caiu; tente de novo"), { status: 0 });
 
 async function api(method, path, body) {
   const nav = LOADING && method === "GET" ? NAV_SEQ : null;
@@ -40,9 +51,10 @@ async function api(method, path, body) {
   const t0 = performance.now();
   let res;
   try { res = await fetch(path, opts); }
-  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw e; }
+  catch (e) { trackApi(method, path, 0, performance.now() - t0); throw offline(); }
   const doc = await res.json().catch(() => ({}));
   trackApi(method, path, res.status, performance.now() - t0);
+  noteServer(res.headers, nav !== null);
   if (res.status === 401 && ME?.auth && !path.startsWith("/api/passkey")) {
     ME.logged_in = false;
     showGate();
@@ -57,6 +69,47 @@ async function api(method, path, body) {
   return doc;
 }
 
+// A tab stays open for days and keeps running the code it loaded. Every API answer names
+// the server's version and its reload mark, and the page compares them with its boot data:
+// - another version: a release went out since. A bar on every screen offers the reload,
+//   and the page waits for the person (a form may be half filled).
+// - another mark: the server wants this page gone (`pauta reload`, or a release that no
+//   longer works with it). It reloads by itself, but only where nothing is lost: as a
+//   screen loads (the address is already the new screen's), so at the next change of
+//   screen at the latest. Until then the same bar shows.
+let STALE = false;
+let MUST_RELOAD = false;
+function noteServer(headers, loadingScreen) {
+  if (!BOOT) return;
+  const mark = headers.get("X-Pauta-Reload");
+  const version = headers.get("X-Pauta-Version");
+  if (mark && BOOT.reload && mark !== BOOT.reload) MUST_RELOAD = true;
+  if (!MUST_RELOAD && (!version || !BOOT.version || version === BOOT.version)) return;
+  STALE = true;
+  if (MUST_RELOAD && loadingScreen && reloadNow()) throw new Stale("reload");
+  addUpdateBar();
+}
+
+// The reload the server asked for. Once a minute at most per tab, so a mark that never
+// settles can't spin the page: past that the bar stays and the person decides.
+function reloadNow() {
+  try {
+    const last = Number(sessionStorage.getItem("pauta_reloaded")) || 0;
+    if (Date.now() - last < 60_000) return false;
+    sessionStorage.setItem("pauta_reloaded", String(Date.now()));
+  } catch { /* no storage (private mode): the reload still happens */ }
+  location.reload();  // "pagehide" sends what the usage log still holds
+  return true;
+}
+
+function addUpdateBar() {
+  if (!STALE || $("#updatebar") || $("#shell").hidden) return;
+  app.insertAdjacentHTML("afterbegin", `<div class="movebar" id="updatebar" role="status">
+    <div><b>A Pauta foi atualizada</b><span>Recarregue a página para usar a versão nova.</span></div>
+    <button class="btn primary" id="reloadme">Recarregar</button></div>`);
+  $("#reloadme").addEventListener("click", () => location.reload());
+}
+
 let toastTimer;
 function toast(msg, err = false) {
   const t = $("#toast");
@@ -67,6 +120,9 @@ function toast(msg, err = false) {
   toastTimer = setTimeout(() => { t.hidden = true; }, err ? 4200 : 2200);
   if (err) track("error_shown", errorClass());
 }
+
+// Escape leaves a dialog, as a tap on its Cancelar (or "Agora não") does
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#modal [data-a=cancel]")?.click(); });
 
 // ---------- usage log (decision 11) -------------------------------------------------------------
 // What the team does in the app, for `pauta usage`: event names and prop keys from a fixed
@@ -159,6 +215,7 @@ const ICONS = {
   link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   msg: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
@@ -218,7 +275,7 @@ function addDays(iso, n) {
 }
 const daysUntil = (iso) => Math.round((Date.parse(iso + "T00:00:00Z") - Date.parse(todayISO() + "T00:00:00Z")) / 86400000);
 const fmtDate = (iso, opts = { day: "numeric", month: "short" }) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("pt-BR", opts).replace(".", "") : "";
-const stamp = (s) => new Date(/Z$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
+const stamp = (s) => new Date(/(Z|[+-]\d\d:?\d\d)$/.test(String(s)) ? String(s) : String(s).replace(" ", "T") + "Z");
 function ago(s) {
   const sec = (Date.now() - stamp(s)) / 1000;
   if (sec < 60) return "agora";
@@ -270,16 +327,20 @@ function igUrl(h) {
 }
 // wa.me wants the international number, digits only. People type Brazilian numbers as
 // they dial them: "0 32 99999-9999" (the trunk zero), "(11) 98888-7777", "+55 11 ...",
-// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it
+// "0055 ..."; a number with the trunk zero passed as "wa.me/032..." and WhatsApp refused it.
+// The link is one whole number (11 to 15 digits, not starting with zero) or none at all: a
+// field with two numbers ("... / ...") gives the first whole one, where both run together
+// were a 22-digit link.
 function waUrl(n) {
-  const raw = String(n || "").trim();
-  let d = raw.replace(/\D/g, "");
-  if (!d) return "";
-  const intl = raw.startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
-  d = d.replace(/^00/, "");  // the international prefix
-  if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
-  if (!intl && d.length <= 11) d = "55" + d;
-  return `https://wa.me/${d}`;
+  for (const raw of String(n || "").split(/[^\d\s().+-]+/)) {
+    let d = raw.replace(/\D/g, "");
+    const intl = raw.trim().startsWith("+") || /^00/.test(d);  // typed as international: no 55 added
+    d = d.replace(/^00/, "");  // the international prefix
+    if (/^0\d{10,11}$/.test(d)) d = d.slice(1);  // the trunk zero before the area code
+    if (!intl && /^\d{10,11}$/.test(d)) d = "55" + d;  // a whole national number, area code and all
+    if (/^[1-9]\d{10,14}$/.test(d)) return `https://wa.me/${d}`;
+  }
+  return "";
 }
 
 function sortOpen(a, b) {
@@ -322,6 +383,19 @@ const finVisible = () => Boolean(BOOT?.finance?.visible);
 const CAMP_NAV = ["#/campanhas", "chart", "Campanhas"];
 const metaVisible = () => Boolean(BOOT?.meta?.enabled);
 
+// The screen the person chose to open the Pauta on (Perfil, "Tela inicial"); none is the
+// Painel. One they can't see any more (Campanhas with Meta off, Financeiro hidden) counts
+// as none. It only decides where the app opens without an address of its own (the icon,
+// the bare domain): a link to a request still opens the request.
+const STARTS = { quadro: "Quadro", pedidos: "Pedidos", clientes: "Clientes", campanhas: "Campanhas", financeiro: "Financeiro" };
+const startVisible = (s) => (s === "campanhas" ? metaVisible() : s === "financeiro" ? finVisible() : s in STARTS);
+const startScreen = () => (ME.start && startVisible(ME.start) ? ME.start : "");
+// The Painel's own address. "#/" would be the chosen screen again on the next reload, so
+// with one chosen the menu's Painel goes to "#/painel", which always is the Painel.
+const homeHash = () => (startScreen() ? "#/painel" : "#/");
+// The logo is "home": the chosen screen, for whoever chose one (the Painel stays in the menu).
+const logoHash = () => (startScreen() ? `#/${startScreen()}` : "#/");
+
 // A release shows as "v1.13.0". A branch build on acceptance is "1.13.1.dev41+g41acf5dab1f0"
 // (deploy-branch.yml), too long for the badge: it shows the start of the commit instead, and
 // the whole version stays in the tooltip and at the foot of Equipe.
@@ -335,12 +409,14 @@ function renderShell() {
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
   // Publicações (beta, docs/publishing-spec.md) after those, where the Instagram app is set
+  const home = [homeHash(), "dash", "Painel"];
   const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
-    : e[0] === "#/pedidos" ? [e, ...(metaVisible() ? [CAMP_NAV] : []), ...(pubVisible() ? [PUB_NAV] : [])] : [e]));
+    : e[0] === "#/pedidos" ? [e, ...(metaVisible() ? [CAMP_NAV] : []), ...(pubVisible() ? [PUB_NAV] : [])]
+    : e[0] === "#/" ? [home] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
   $("#tabbar").innerHTML = [
-    ["#/", "dash", "Painel"], ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
+    home, ["#/pedidos", "list", "Pedidos"], ["#/novo", "plus", "Novo"],
     metaVisible() ? CAMP_NAV : finVisible() ? FIN_NAV : ["#/quadro", "board", "Quadro"], ["#/clientes", "clients", "Clientes"],
   ].map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}</a>`).join("");
   $("#sidefoot").innerHTML = `<button class="me-chip" id="mechip">${avatar(ME.name, "md round", ME.avatar)}<div><b>${esc(ME.name)}</b><span>${ME.is_admin ? "Administrador" : "Membro"}</span></div></button>`;
@@ -349,6 +425,7 @@ function renderShell() {
   $("#mechip").addEventListener("click", (e) => { e.stopPropagation(); toggleMenu(); });
   // the live release, small, next to the name (sidebar and phone top bar)
   $$(".brand").forEach((b) => {
+    b.setAttribute("href", logoHash());
     b.querySelector(".ver")?.remove();
     if (BOOT?.version) b.insertAdjacentHTML("beforeend", `<span class="ver" title="Versão ${esc(BOOT.version)}">${esc(shortVersion(BOOT.version))}</span>`);
   });
@@ -358,7 +435,7 @@ function renderShell() {
 function markNav() {
   const h = location.hash || "#/";
   const base = "#/" + (h.slice(2).split(/[/?]/)[0] || "");
-  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/campanha": "#/campanhas", "#/": "#/" };
+  const map = { "#/pedido": "#/pedidos", "#/cliente": "#/clientes", "#/campanha": "#/campanhas", "#/": homeHash(), "#/painel": homeHash() };
   const want = map[base] || base;
   $$("[data-nav]").forEach((a) => a.classList.toggle("on", a.dataset.nav === want));
 }

@@ -167,12 +167,14 @@ async function viewNewClient() {
   }));
   f.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const btn = $("button.primary", f);
+    btn.disabled = true;
     try {
       const c = await api("POST", "/api/clients", { ...Object.fromEntries(new FormData(f)), ...segs });
       track("client_saved", { new: true });
       toast("Cliente salvo");
       location.hash = `#/cliente/${c.id}`;
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
   });
 }
 
@@ -199,26 +201,33 @@ async function viewClient(_q, id) {
         <div id="paybox">${payBox(c)}</div>
         ${ME.is_admin ? `<div class="mt"><button class="btn ghost danger" id="del">${icon("trash")}Excluir cliente</button></div>` : ""}</aside>
     </div></div>`;
-  const drawPay = () => { $("#paybox").innerHTML = payBox(c); bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); }); };
+  const root = app.firstElementChild;  // off the page once the person leaves this client
+  const drawPay = () => { if (!root.isConnected) return; $("#paybox").innerHTML = payBox(c); bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); }); };
   bindPayBox(c, (fresh) => { c = { ...c, ...fresh }; drawPay(); });
   const save = async (patch, el) => {
     try {
       c = { ...c, ...(await api("PATCH", `/api/clients/${c.id}`, patch)) };
       track("client_saved", { new: false });
+      if (!root.isConnected) return true;
       $("#cname").innerHTML = `${esc(c.name)} <span class="state ${esc(c.state)}">${esc(c.state)}</span>`;
       $(".clientbox").innerHTML = `<div class="panel-head"><h3>Atalhos</h3></div>${clientRows(c)}`;
       bindCopy($(".clientbox"));
       drawPay();
       if (el) { el.classList.remove("saved-flash"); void el.offsetWidth; el.classList.add("saved-flash"); }
       toast("Salvo");
-    } catch (e) { toast(e.message, true); }
+      return true;
+    } catch (e) { toast(e.message, true); return false; }
   };
-  $$("[data-f]").forEach((el) => el.addEventListener("change", () => save({ [el.dataset.f]: el.value }, el)));
-  $$("[data-seg]").forEach((s) => s.addEventListener("click", (e) => {
+  // not saved: back to what the server has, as on the request (typed text stays)
+  $$("[data-f]").forEach((el) => el.addEventListener("change", async () => {
+    if (!await save({ [el.dataset.f]: el.value }, el) && el.matches("select, [type=date]")) el.value = c[el.dataset.f] ?? "";
+  }));
+  $$("[data-seg]").forEach((s) => s.addEventListener("click", async (e) => {
     const b = e.target.closest("button");
     if (!b || b.classList.contains("on")) return;
-    $$("button", s).forEach((x) => x.classList.toggle("on", x === b));
-    save({ [s.dataset.seg]: b.dataset.v });
+    segOn(s, b.dataset.v);
+    await save({ [s.dataset.seg]: b.dataset.v });
+    segOn(s, c[s.dataset.seg]);  // what the server has now, saved or not
   }));
   $("#del")?.addEventListener("click", () => deleteClient(c));
   bindCopy(app);

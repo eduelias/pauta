@@ -6,7 +6,7 @@ import sqlite3
 import urllib.request
 
 from pauta.auth import Auth
-from pauta.db import Store
+from pauta.db import RELOAD_EPOCH, Store
 from softpasskey import ORIGIN, SoftPasskey, call, join, login, start
 
 
@@ -17,8 +17,40 @@ def test_anonymous_sees_nothing(site):
         assert call(f"{base}{path}")[0] == 401
     assert call(f"{base}/api/clients", {"name": "X"})[0] == 401
     with urllib.request.urlopen(f"{base}/") as r:  # the shell is public: it shows the login
-        assert r.status == 200 and b"app.js" in r.read()
+        assert r.status == 200 and b"app.bundle.js" in r.read()
         assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+
+
+def test_every_answer_names_the_version(team):
+    """An open tab compares it with the version it loaded, to offer a reload after a release."""
+    from pauta import __version__
+
+    base, nato, _, _ = team
+    anonymous, ok, refused = (
+        call(f"{base}/api/me"),
+        call(f"{base}/api/boot", cookie=nato),
+        call(f"{base}/api/requests"),
+    )
+    assert (anonymous[0], ok[0], refused[0]) == (200, 200, 401)
+    for _, _, headers in (anonymous, ok, refused):
+        assert headers["X-Pauta-Version"] == __version__
+    assert ok[1]["version"] == __version__  # what the page keeps to compare with
+
+
+def test_every_answer_carries_the_reload_mark(team, site):
+    """The page keeps the mark from its boot data and reloads itself when an answer's differs."""
+    base, nato, _, _ = team
+    _, _, store = site
+    mark = call(f"{base}/api/boot", cookie=nato)[1]["reload"]
+    assert mark == f"{RELOAD_EPOCH}.0"
+    for answer in (call(f"{base}/api/me"), call(f"{base}/api/requests"), call(f"{base}/healthz")):
+        assert answer[2]["X-Pauta-Reload"] == mark
+    # `pauta reload`: another mark on the very next answer, and in the next page's boot data
+    assert store.force_reload() == f"{RELOAD_EPOCH}.1"
+    assert call(f"{base}/api/me")[2]["X-Pauta-Reload"] == f"{RELOAD_EPOCH}.1"
+    assert call(f"{base}/api/boot", cookie=nato)[1]["reload"] == f"{RELOAD_EPOCH}.1"
+    # there is no route for it: forcing a reload is for whoever runs the server
+    assert call(f"{base}/api/reload", {}, nato)[0] == 404
 
 
 def test_invites_are_single_use_and_admin_only(team, site):
@@ -129,6 +161,18 @@ def test_admin_tools(team):
     assert call(f"{base}/api/requests", cookie=piero)[0] == 401  # disabled: session dead
     opts = call(f"{base}/api/options/kind", {"values": ["A", "a", " B ", ""]}, nato, "PUT")[1]
     assert opts["kind"] == ["A", "B"]
+
+
+def test_boot_has_the_finance_settings_only_for_who_sees_money(team):
+    base, nato, piero, _ = team
+    assert call(f"{base}/api/boot", cookie=piero)[1]["finance"]["amount"] == 100
+    for change in ({"visibility": "admins"}, {"enabled": False}):
+        assert call(f"{base}/api/finance/settings", change, nato, "PATCH")[0] == 200
+        fin = call(f"{base}/api/boot", cookie=piero)[1]["finance"]
+        # the currency stays: a request's card shows its budget in it, to everyone
+        assert fin == {"enabled": "enabled" not in change, "visible": False, "currency": "BRL"}
+        # an admin keeps them all, also with the Financeiro off: Configurações shows them
+        assert call(f"{base}/api/boot", cookie=nato)[1]["finance"]["amount"] == 100
 
 
 def test_gravatar(team):

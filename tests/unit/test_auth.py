@@ -1,12 +1,13 @@
 """Sessions, invites, passkey flows and account settings, without HTTP."""
 
+import sqlite3
 import time
 
 import pytest
 
 from pauta import auth as auth_mod
 from pauta.auth import COOKIE, Auth, AuthError, device_label
-from pauta.db import NotFound, Store
+from pauta.db import SCHEMA_VERSION, STARTS, Invalid, NotFound, Store
 from softpasskey import SoftPasskey
 
 
@@ -43,6 +44,17 @@ def test_defaults_are_local_and_open(store, monkeypatch):
     assert not a.enabled and a.rp_id == "localhost" and a.origins == auth_mod.DEV_ORIGINS
     viewer = a.viewer(None)
     assert viewer["logged_in"] and viewer["is_admin"] and viewer["account"] is None
+
+
+def test_only_a_known_auth_mode_starts(store, monkeypatch):
+    for word in ("", "open"):
+        monkeypatch.setenv("PAUTA_AUTH", word)
+        assert not Auth(store).enabled
+    for word in ("passkey", "Passkeys", " passkeys", "on", "1"):
+        monkeypatch.setenv("PAUTA_AUTH", word)
+        with pytest.raises(RuntimeError, match="PAUTA_AUTH"):
+            Auth(store)
+    assert Auth(store, enabled=True).enabled  # the CLI's own commands don't read it
 
 
 # ---- sessions ------------------------------------------------------------------------------
@@ -224,6 +236,8 @@ def test_rename_and_email(store, auth):
     auth.rename(aid, "  Ana   Paula " + "x" * 60)
     name = store.members()[0]["name"]
     assert name.startswith("Ana Paula x") and len(name) == 40
+    auth.rename(aid, "x" * 39 + " y")  # the cut at 40 falls after a space
+    assert store.members()[0]["name"] == "x" * 39
     with pytest.raises(AuthError):
         auth.rename(aid, "   ")
     for bad in ("nope", "a@b", "a b@c.d", "x@" + "y" * 260 + ".com"):
@@ -342,3 +356,43 @@ def test_a_passkey_for_a_domain_pauta_left_is_not_the_one_that_stays(store, auth
     auth.register_verify(opts["flow"], SoftPasskey().create(opts["options"]))  # on localhost
     auth.remove_passkey(acc["id"], real)
     assert [k["rp_id"] for k in auth.passkeys(acc["id"])] == ["localhost"]
+
+
+def test_start_screen_is_one_of_the_screens_or_the_painel(store, auth):
+    aid = add_account(store)
+    assert auth.viewer_for(_account(store, aid))["start"] == ""  # the Painel, as always
+    for screen in STARTS:
+        auth.set_start(aid, f" {screen} ")
+        assert auth.viewer_for(_account(store, aid))["start"] == screen
+    for bad in ("painel", "configuracoes", "pedido/7", "Quadro", ["quadro"], 7):
+        with pytest.raises(Invalid, match="valor inválido"):
+            auth.set_start(aid, bad)
+    assert auth.viewer_for(_account(store, aid))["start"] == STARTS[-1]  # a refusal changes nothing
+    for painel in ("", None):
+        auth.set_start(aid, "quadro")
+        auth.set_start(aid, painel)
+        assert auth.viewer_for(_account(store, aid))["start"] == ""
+    assert auth_mod.OPEN_VIEWER["start"] == ""  # local mode has no accounts to keep it on
+    assert auth.viewer_for(None)["start"] == ""
+
+
+def test_schema_v14_gains_the_start_screen(tmp_path):
+    """v15 adds the screen a person opens the app on; a v14 database (1.13.1) gets the
+    column on open, every account on the Painel as before."""
+    store = Store(tmp_path / "old.db")
+    aid = add_account(store)
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.executescript(
+        "ALTER TABLE account DROP COLUMN start; UPDATE meta SET value='14' WHERE key='schema';"
+    )
+    conn.commit()
+    conn.close()
+    store = Store(tmp_path / "old.db")
+    with store.db() as db:
+        version = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]
+        assert version == str(SCHEMA_VERSION)
+    assert _account(store, aid)["start"] == ""
+    Auth(store, enabled=True, rp_id="localhost", origins=["http://localhost"]).set_start(
+        aid, "quadro"
+    )
+    assert _account(store, aid)["start"] == "quadro"

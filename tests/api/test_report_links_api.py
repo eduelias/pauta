@@ -3,6 +3,7 @@ valid card, the public data and page open without one and carry only the card, u
 expired and revoked tokens are a plain 404 page, Revogar, and the rate limits."""
 
 import http.client
+import re
 from urllib.parse import urlparse
 
 import pytest
@@ -10,6 +11,7 @@ from test_campaigns_api import synced
 
 from fakemeta import CONVERSATIONS
 from pauta.ratelimit import RateLimiter
+from pauta.report import period_label
 from softpasskey import ORIGIN, SoftPasskey, call, join, start
 
 
@@ -170,7 +172,9 @@ def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_m
     assert headers["X-Robots-Tag"] == "noindex, nofollow"
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
     page = body.decode()
-    title = "Relatório da campanha Limpeza de pele novembro · Clínica Bem Estar · 10 out – 12 out"
+    # "10 out – 12 out", with the year once it is no longer this one
+    period = period_label(PERIOD["since"], PERIOD["until"])
+    title = f"Relatório da campanha Limpeza de pele novembro · Clínica Bem Estar · {period}"
     assert f"<title>{title}</title>" in page
     assert f'<meta property="og:title" content="{title}">' in page
     assert f'<meta property="og:url" content="{base}/r/{link["token"]}">' in page
@@ -181,8 +185,12 @@ def test_the_public_page_has_the_preview_and_the_card_scripts(site, team, fake_m
     )
     assert '<meta name="robots" content="noindex, nofollow">' in page
     assert "{{" not in page
-    for script in ("/app.js", "/app-campanhas.js", "/app-report.js"):
-        assert f'<script src="{script}"></script>' in page
+    # one script: the card's three files as a bundle, at an address that caches for good
+    (script,) = re.findall(r'<script src="([^"]+)"></script>', page)
+    assert script.startswith("/report.bundle.js?v=")
+    status, headers, js = raw(base, "GET", script)
+    assert status == 200 and headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert b"// ---- app-report.js" in js and b"// ---- app-team.js" not in js
     assert "98888" not in page and "23850001" not in page
     # a campaign name with markup in it is text in the page
     with store.db() as db:

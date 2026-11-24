@@ -32,7 +32,7 @@ same day (463 and 104 tests) `make check` takes 53 s: `make test` 15 s, `make e2
 | Browser suite | `make e2e` | 64 s | 20–26 s |
 | Everything CI runs | `make check` | ~1.5 min | **30 s** |
 | CI on a push | lint, tests ×3, browser, audit, build | 2.5–3 min | ~1.5 min (see below) |
-| Branch on acc.pauta.cc | `make acc` | 1–2 min after a manual dispatch | 1–2 min, in one command |
+| Branch on acc.pauta.cc or dev.pauta.cc | `make acc`, `make dev` | 1–2 min after a manual dispatch | 1–2 min, in one command |
 
 1. **While coding:** `make test-fast`. A single file (`uv run pytest tests/unit/test_store.py`)
    runs serially and starts faster still; `-k name` picks one test.
@@ -46,7 +46,8 @@ same day (463 and 104 tests) `make check` takes 53 s: `make test` 15 s, `make e2
    Python 3.11 (du7's); 3.12 and 3.13 only run the tests.
 4. **To try it on a real server:** `make acc` (owner only) pushes the branch, dispatches
    *Deploy branch to acceptance* for it, watches the run and ends with `acc.pauta.cc`'s
-   `/healthz`. It does not wait for CI: run it right after `make check`, and CI runs
+   `/healthz`. `make dev` does the same for `dev.pauta.cc`, the second test copy, for a
+   branch that has to stay on a server for weeks while `acc` takes others. It does not wait for CI: run it right after `make check`, and CI runs
    alongside. The build gets a version like `1.6.2.dev8+g6d784cb`; `#/equipe` shows it.
    Only the owner's dispatches reach du7 (the runner's guard checks the actor).
 5. **Merge** when CI is green and the owner has reviewed (see the flow above).
@@ -76,15 +77,6 @@ added to the tuple at the end of `make_handler`, and an `app-<area>.js` added to
 share (`Reply`, `SENT`, the id patterns, the Meta texts) is in `routes/__init__.py`. `db.py`
 is still one file: keep schema changes additive and your `Store` methods in their table's
 section.
-
-A branch from before the split (one big `server.py` and `app.js`) is re-split by
-`tools/split.py`, the script that made the split, rather than resolved by hand: merge `main`,
-keep the branch's own `server.py` and `app.js` (`git checkout --theirs`), delete
-`src/pauta/routes/` and `src/pauta/static/app-*.js`, run `python3 tools/split.py .`, then
-`make fmt` and `make check`. It is idempotent: on an already split tree it changes nothing,
-and it rebuilds the script tags, the wheel check and the lint line from the areas it finds
-instead of appending them again. A section under a new marker needs one line in its
-`SERVER_AREAS` / `JS_FILES` tables.
 
 ## Ground rules
 

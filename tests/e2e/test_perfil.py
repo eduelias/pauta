@@ -160,3 +160,191 @@ def test_a_link_for_my_new_phone(live, device):
     page.goto(f"{base}/#/configuracoes")
     expect(page.locator("#mechip")).to_contain_text("Piero")
     expect(page.locator(".member", has_text="Piero Sales")).to_be_visible()
+
+
+def fresh(page, url):
+    """Open `url` as a new page load (from the same page, a new hash is only a hashchange)."""
+    page.goto("about:blank")
+    page.goto(url)
+
+
+def test_the_app_opens_on_the_screen_the_person_chose(live, device):
+    base, auth, store = live
+    laptop = join(device, base, auth, "Piero Sales", admin=True)
+    page = laptop.page
+    painel, quadro = page.locator(".hello h1"), page.get_by_role("heading", name="Quadro")
+
+    # as always: the Painel, and Perfil says so; Campanhas isn't offered with Meta off
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#mystart")).to_have_value("")
+    offered = page.locator("#mystart option").all_inner_texts()
+    assert offered[:4] == ["Painel", "Quadro", "Pedidos", "Clientes"]
+    assert "Campanhas" not in offered
+    page.select_option("#mystart", "quadro")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    expect(page.locator("#mystart")).to_have_value("quadro")
+    with store.db() as conn:
+        assert conn.execute("SELECT start FROM account WHERE id=1").fetchone()[0] == "quadro"
+
+    # opened by the bare address (the icon, the typed domain): the Quadro, marked in the menu
+    for bare in (base, f"{base}/", f"{base}/#/"):
+        fresh(page, bare)
+        expect(quadro).to_be_visible()
+        assert page.url == f"{base}/#/quadro"
+    expect(page.locator('#nav [data-nav="#/quadro"]')).to_have_class(re.compile(r"\bon\b"))
+
+    # the Painel stays one click away in the menu, and a reload of it is still the Painel
+    page.locator("#nav a", has_text="Painel").click()
+    expect(painel).to_be_visible()
+    assert page.url == f"{base}/#/painel"
+    expect(page.locator("#nav a", has_text="Painel")).to_have_class(re.compile(r"\bon\b"))
+    page.reload()
+    expect(painel).to_be_visible()
+    page.goto(f"{base}/#/pedidos")
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    # the logo is home, and home is now the Quadro: no stop at the Painel on the way back
+    page.locator(".side .brand").click()
+    expect(quadro).to_be_visible()
+    assert page.url == f"{base}/#/quadro"
+    # "Cancelar" on a new request goes to "#/", inside the app: the Painel, not the Quadro
+    page.goto(f"{base}/#/novo")
+    page.get_by_role("link", name="Cancelar").click()
+    expect(painel).to_be_visible()
+
+    # an address of its own still opens what it names
+    fresh(page, f"{base}/#/clientes")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+
+    # it is the person's, not the device's: the phone opens on the Quadro too
+    value = auth.make_cookie(1, secure=False).split(";")[0].split("=", 1)[1]
+    phone = device(viewport={"width": 390, "height": 844}, is_mobile=True)
+    phone.context.add_cookies([{"name": "pauta_session", "value": value, "url": base}])
+    phone.page.goto(base)
+    expect(phone.page.get_by_role("heading", name="Quadro")).to_be_visible()
+    expect(phone.page.locator("#tabbar a", has_text="Painel")).to_have_attribute("href", "#/painel")
+    # the tab bar has no Quadro when Campanhas or Financeiro takes its slot: the logo leads back
+    phone.page.locator("#tabbar a", has_text="Pedidos").click()
+    expect(phone.page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    phone.page.locator(".topbar .brand").click()
+    expect(phone.page.get_by_role("heading", name="Quadro")).to_be_visible()
+
+    # out and in again with the passkey lands there as well
+    page.goto(f"{base}/#/perfil")
+    page.click("#logout")
+    expect(page.locator("#login")).to_be_visible()
+    page.click("#login")
+    expect(quadro).to_be_visible()
+
+
+def test_an_open_tab_offers_a_reload_after_a_release(live, device, monkeypatch):
+    base, auth, _ = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    bar = page.locator("#updatebar")
+    page.goto(f"{base}/#/quadro")
+    expect(page.get_by_role("heading", name="Quadro")).to_be_visible()
+    expect(bar).to_have_count(0)
+    shown = page.locator(".brand .ver").first.inner_text()
+
+    # a release goes out while the tab stays open: the next thing the person does shows the
+    # bar, and it stays from screen to screen (one bar, not one per answer)
+    for module in ("pauta.server", "pauta.routes.account"):  # the answers' header, the boot data
+        monkeypatch.setattr(f"{module}.__version__", "99.0.0")
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(bar).to_contain_text("A Pauta foi atualizada")
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(bar).to_have_count(1)
+    assert page.locator(".brand .ver").first.inner_text() == shown  # still the old page
+
+    # the reload is the person's to press: the same screen, on the new version, no bar
+    bar.get_by_role("button", name="Recarregar").click()
+    expect(page.locator(".brand .ver").first).to_have_text("v99.0.0")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(bar).to_have_count(0)
+
+
+def mark_load(page):
+    """Mark this page load: the mark is on <html>, so it is gone once the page reloads."""
+    page.evaluate("document.documentElement.dataset.sameLoad = '1'")
+
+
+def test_the_server_can_make_an_open_tab_reload(live, device):
+    """`pauta reload` (or a release that raises RELOAD_EPOCH): the tab reloads by itself, but
+    at a change of screen, never under a form that is being filled."""
+    base, auth, store = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#myname")).to_have_value("Piero Sales")
+    mark_load(page)
+
+    # the mark changes while the person is on a form: saving it talks to the server, and the
+    # page stays (what they typed in the other field too)
+    store.force_reload()
+    page.fill("#mywa", "+55 11 90000-0000")
+    page.fill("#myemail", "piero@example.com")
+    page.fill("#myname", "Piero S")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+
+    # the next change of screen is the reload: straight to the screen they asked for
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    assert page.url == f"{base}/#/clientes"
+    expect(page.locator("#updatebar")).to_have_count(0)
+    expect(page.locator("#mechip")).to_contain_text("Piero S")  # the save went through
+
+    # on a fresh page the mark is the one it loaded with: no reload for nothing
+    mark_load(page)
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+
+    # a second order within the minute doesn't spin the page: the bar asks instead
+    store.force_reload()
+    page.locator("#nav a", has_text="Clientes").click()
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("#updatebar")).to_contain_text("A Pauta foi atualizada")
+    expect(page.locator("html")).to_have_attribute("data-same-load", "1")
+    page.locator("#updatebar").get_by_role("button", name="Recarregar").click()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    expect(page.get_by_role("heading", name="Clientes")).to_be_visible()
+    expect(page.locator("#updatebar")).to_have_count(0)
+
+
+def test_a_reload_order_met_while_a_screen_loads_reloads_right_there(live, device):
+    base, auth, store = live
+    page = join(device, base, auth, "Piero Sales", admin=True).page
+    page.goto(f"{base}/#/quadro")
+    expect(page.get_by_role("heading", name="Quadro")).to_be_visible()
+    mark_load(page)
+    store.force_reload()  # the tab sat idle meanwhile: it learns of it from the screen's own data
+    page.locator("#nav a", has_text="Pedidos").click()
+    expect(page.locator("html")).not_to_have_attribute("data-same-load", "1")
+    expect(page.get_by_role("heading", name="Pedidos")).to_be_visible()
+    assert page.url.startswith(f"{base}/#/pedidos")
+    expect(page.locator("#updatebar")).to_have_count(0)
+
+
+def test_a_start_screen_out_of_sight_falls_back_to_the_painel(live, device):
+    base, auth, store = live
+    page = join(device, base, auth, "Renato Lima", admin=True).page
+    auth.set_start(1, "campanhas")  # chosen while Meta was on; it is off here
+    fresh(page, base)
+    expect(page.locator(".hello h1")).to_be_visible()
+    assert page.url in (base, f"{base}/")
+    expect(page.locator("#nav a", has_text="Painel")).to_have_attribute("href", "#/")
+    # Perfil keeps showing the choice, so saving something else doesn't drop it
+    page.goto(f"{base}/#/perfil")
+    expect(page.locator("#mystart")).to_have_value("campanhas")
+    page.fill("#mywa", "31600000000")
+    page.click("#saveme")
+    expect(page.locator(".toast")).to_have_text("Salvo")
+    with store.db() as conn:
+        row = conn.execute("SELECT start, whatsapp FROM account WHERE id=1").fetchone()
+    assert tuple(row) == ("campanhas", "31600000000")

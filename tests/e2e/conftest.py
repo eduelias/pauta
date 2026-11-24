@@ -32,7 +32,7 @@ PNG = bytes.fromhex(  # a 1x1 transparent PNG, standing in for gravatar.com
 def live(store, drive, meta, ig):
     """The app with passkeys on, reached as http://localhost:<port> (the passkey RP ID)."""
     auth = Auth(store, enabled=True, rp_id="localhost", origins=["placeholder"])
-    httpd = serve(store, auth, drive, meta, ig)
+    httpd = serve(store, auth, drive, meta, ig=ig)
     base = f"http://localhost:{httpd.server_address[1]}"
     auth.origins = [base]
     ig.at(base)
@@ -43,11 +43,17 @@ def live(store, drive, meta, ig):
 
 
 @pytest.fixture(scope="session")
-def browser():
+def chromium():
+    """Playwright itself, once per worker: a second one in the same process is refused."""
     with pw.sync_playwright() as p:
-        b = p.chromium.launch()
-        yield b
-        b.close()
+        yield p.chromium
+
+
+@pytest.fixture(scope="session")
+def browser(chromium):
+    b = chromium.launch()
+    yield b
+    b.close()
 
 
 @pytest.hookimpl(wrapper=True)

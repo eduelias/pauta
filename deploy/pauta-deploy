@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 # Install a Pauta release on du7, switch to it, and roll back if it doesn't come up healthy.
 #
-#   pauta-deploy X.Y.Z WHEEL LOCKFILE   install release X.Y.Z and switch to it
-#   pauta-deploy --rollback             switch back to the release before the current one
-#   pauta-deploy --status               what is live and what is installed
+#   pauta-deploy X.Y.Z WHEEL LOCKFILE WHEEL_SHA256 LOCK_SHA256
+#                                    install release X.Y.Z and switch to it
+#   pauta-deploy --activate X.Y.Z    switch to a release that is already installed here
+#   pauta-deploy --rollback          switch back to the release before the current one
+#   pauta-deploy --status            what is live and what is installed
+#   pauta-deploy --capabilities      what this copy can do (deploy.yml asks before it deploys)
 #
 # Lives at /usr/local/sbin/pauta-deploy (root:root 0755). The GitHub runner user may run it
-# with sudo and nothing else, so every argument is checked here, and a wheel is only
-# installed if it is byte for byte the one in the published GitHub release; see
-# deploy/README.md.
+# with sudo and nothing else, so every argument is checked here, and a wheel and lockfile are
+# only installed if they hash to the two sha256s given: the ones the release run computed
+# when it built them. The hashes come from the caller, so they tie a deploy to that run's
+# build and to nothing else; who may call at all is the runner's job guard's business
+# (deploy/runner-job-guard). Nothing is fetched from the release page. See deploy/README.md.
 #
 # Layout:  /opt/pauta/releases/X.Y.Z/   one venv per release (owned by the service user)
 #          /opt/pauta/current           -> the live release (systemd runs current/bin/pauta)
 #          /opt/pauta/previous          -> the one before, for --rollback
 #          /opt/pauta/deploy.log        one line per deploy, switch and rollback
+#          /opt/pauta/.incoming.*       a running deploy's copy of its wheel and lockfile
 set -euo pipefail
 umask 022
 
@@ -26,8 +32,7 @@ BACKUPS=/home/esaleh/backups/pauta/pre-deploy
 HEALTH=http://127.0.0.1:8088/healthz
 KEEP=5            # releases kept on disk (current and previous are never pruned)
 PYTHON=/usr/bin/python3
-# where published releases live: the wheel and lockfile must match its SHA256SUMS
-RELEASES_URL=https://github.com/eduelias/pauta/releases/download
+VERSION_RE='^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$'
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PIP_CONFIG_FILE=/dev/null PIP_DISABLE_PIP_VERSION_CHECK=1  # PyPI only, no piwheels
 
@@ -38,6 +43,15 @@ record() {  # deploy.log, and the journal (journalctl -t pauta-deploy); FAILED i
     logger -t pauta-deploy -p "user.$([[ $* == FAILED* ]] && echo err || echo notice)" -- "$*" || true
 }
 as_user() { runuser -u "$SERVICE_USER" -- "$@"; }
+read_input() {
+    # A file the caller handed us, read with the caller's own rights: a path swapped for a
+    # symlink to a root-only file after our checks gets the caller nothing it couldn't read
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        runuser -u "$SUDO_USER" -- cat -- "$1"
+    else
+        cat -- "$1"
+    fi
+}
 version_of() { basename "$(readlink -e "$1" 2>/dev/null || echo none)"; }
 
 health_version() {
@@ -45,7 +59,7 @@ health_version() {
     local out
     for _ in $(seq 30); do
         if out=$(curl -fsS --max-time 2 "$HEALTH" 2>/dev/null); then
-            "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
+            "$PYTHON" -I -c 'import json,sys; d=json.load(sys.stdin); print(d["version"] if d.get("status")=="ok" else "")' <<<"$out"
             return 0
         fi
         sleep 0.5
@@ -77,7 +91,7 @@ backup_db() {
     out="$BACKUPS/pauta-$(date +%Y%m%d-%H%M%S)-before-$1.db"
     # the DB holds the session-signing secret: backups are for the service user only
     as_user mkdir -p -m 0700 "$BACKUPS"
-    as_user "$PYTHON" -c 'import os,sqlite3,sys
+    as_user "$PYTHON" -I -c 'import os,sqlite3,sys
 os.umask(0o077)
 s, d = sqlite3.connect(sys.argv[1]), sqlite3.connect(sys.argv[2])
 s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
@@ -85,28 +99,11 @@ s.backup(d); d.close(); s.close()' "$STATE_DIR/pauta.db" "$out"
     log "database backed up to $out"
 }
 
-fetch_sums() {  # VERSION -> the published release's SHA256SUMS on stdout
-    curl -fsSL --max-time 30 --proto '=https' --proto-redir '=https' \
-        "$RELEASES_URL/v$1/SHA256SUMS"
-}
-
-check_sum() {  # SUMS NAME FILE: FILE's sha256 is the one SUMS lists for NAME
-    local want got
-    want=$(awk -v n="$2" '$2 == n || $2 == "*" n { print $1 }' <<<"$1")
-    [[ $want =~ ^[0-9a-f]{64}$ ]] || die "the release's SHA256SUMS lists no $2"
-    got=$(sha256sum "$3" | cut -d' ' -f1)
-    [ "$got" = "$want" ] || die "$2 is not the published one (sha256 $got, release says $want)"
-}
-
-verify_release() {  # VERSION WHEEL LOCK
-    # Whoever runs this through sudo hands us the files, so trust only what GitHub publishes:
-    # releases are immutable and only the owner can push release tags (deploy/README.md).
-    local sums
-    sums=$(fetch_sums "$1") ||
-        die "can't fetch SHA256SUMS of v$1 from GitHub (is the release published?)"
-    check_sum "$sums" "$(basename -- "$2")" "$2"
-    check_sum "$sums" requirements.lock "$3"
-    log "$(basename -- "$2") and requirements.lock match the published v$1"
+check_sum() {  # FILE SHA256: FILE is the one the release run hashed when it built it
+    local got
+    got=$(sha256sum "$1" | cut -d' ' -f1)
+    [ "$got" = "$2" ] ||
+        die "$(basename -- "$1") is not the one this release run built (sha256 $got, expected $2)"
 }
 
 install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless already complete
@@ -119,7 +116,7 @@ install_release() {  # VERSION WHEEL LOCK -> builds $RELEASES/VERSION unless alr
     install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$dir"
     # the runner's workspace isn't readable by the service user: copy the inputs in
     install -o "$SERVICE_USER" -m 0644 "$wheel" "$lock" "$dir/"
-    as_user "$PYTHON" -m venv "$dir"
+    as_user "$PYTHON" -I -m venv "$dir"
     as_user "$dir/bin/pip" install -q --no-cache-dir --require-hashes --only-binary=:all: \
         -r "$dir/$(basename "$lock")"
     as_user "$dir/bin/pip" install -q --no-cache-dir --no-deps "$dir/$(basename "$wheel")"
@@ -171,7 +168,13 @@ activate() {  # VERSION: switch, check health, roll back on failure
 }
 
 main() {
+    if [ "$*" = --capabilities ]; then  # no lock: the answer must not wait for a running deploy
+        echo "pinned activate"
+        return 0
+    fi
     [ "$(id -u)" -eq 0 ] || die "run me as root (sudo)"
+    local from=$PWD
+    cd /  # nothing from the caller's directory gets imported or read by accident
     install -d -m 0755 "$ROOT" "$RELEASES"
     exec 9>"$ROOT/.lock"
     flock -w 600 9 || die "another deploy is running"
@@ -189,15 +192,41 @@ main() {
             backup_db "$(basename "$prev")"
             activate "$(basename "$prev")"
             ;;
+        --activate)
+            [ $# -eq 2 ] || die "usage: pauta-deploy --activate X.Y.Z"
+            [[ "$2" =~ $VERSION_RE ]] || die "bad version '$2'"
+            # shellcheck disable=SC2012
+            [ -f "$RELEASES/$2/.complete" ] ||
+                die "$2 is not installed on du7: a new version only comes from a release. Installed:" \
+                    "$(cd "$RELEASES" && ls -1dt -- */.complete 2>/dev/null | cut -d/ -f1 | xargs)"
+            backup_db "$2"
+            activate "$2"
+            ;;
         *)
-            [ $# -eq 3 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCKFILE | --rollback | --status"
-            local version=$1 wheel=$2 lock=$3
-            [[ "$version" =~ ^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$ ]] || die "bad version '$version'"
+            [ $# -eq 5 ] || die "usage: pauta-deploy X.Y.Z WHEEL LOCKFILE WHEEL_SHA256 LOCK_SHA256 |" \
+                "--activate X.Y.Z | --rollback | --status | --capabilities"
+            local version=$1 wheel=$2 lock=$3 staged
+            # deploy.yml names them from the directory it runs in
+            [[ $wheel == /* ]] || wheel=$from/$wheel
+            [[ $lock == /* ]] || lock=$from/$lock
+            [[ "$version" =~ $VERSION_RE ]] || die "bad version '$version'"
+            # as sha256sum prints them: check_sum compares text
+            [[ "$4" =~ ^[0-9a-f]{64}$ ]] || die "bad sha256 for the wheel '$4'"
+            [[ "$5" =~ ^[0-9a-f]{64}$ ]] || die "bad sha256 for the lockfile '$5'"
             [ "$(basename -- "$wheel")" = "pauta-$version-py3-none-any.whl" ] || die "unexpected wheel '$wheel'"
             [ "$(basename -- "$lock")" = "requirements.lock" ] || die "unexpected lockfile '$lock'"
             [ -f "$wheel" ] && [ ! -L "$wheel" ] || die "no wheel at '$wheel'"
             [ -f "$lock" ] && [ ! -L "$lock" ] || die "no lockfile at '$lock'"
-            verify_release "$version" "$wheel" "$lock"
+            # Read each once into a folder only root can open; what is checked below is
+            # what gets installed. We hold the lock: any .incoming is this run's, or a dead one's
+            trap 'rm -rf "$ROOT"/.incoming.*' EXIT
+            staged=$(mktemp -d "$ROOT/.incoming.XXXXXX")
+            read_input "$wheel" > "$staged/$(basename -- "$wheel")"
+            read_input "$lock" > "$staged/requirements.lock"
+            wheel=$staged/$(basename -- "$wheel") lock=$staged/requirements.lock
+            check_sum "$wheel" "$4"
+            check_sum "$lock" "$5"
+            log "$(basename -- "$wheel") and requirements.lock are the ones this release run built"
             log "installing $version"
             install_release "$version" "$wheel" "$lock"
             backup_db "$version"

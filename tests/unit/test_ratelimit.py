@@ -34,5 +34,5 @@ def test_forgets_idle_addresses_under_a_flood():
 
 
 def test_defaults_cover_every_account_endpoint():
-    assert set(DEFAULT_LIMITS) == {"invite", "accept", "register", "login"}
+    assert set(DEFAULT_LIMITS) == {"invite", "register", "login"}
     assert RateLimiter().limits == DEFAULT_LIMITS

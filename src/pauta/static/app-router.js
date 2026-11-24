@@ -5,7 +5,7 @@
 // ---------- router ------------------------------------------------------------------------
 
 const ROUTES = [
-  [/^\/?$/, viewDash],
+  [/^\/?(?:painel)?$/, viewDash],
   [/^\/quadro$/, viewBoard],
   [/^\/pedidos$/, viewList],
   [/^\/pedido\/(\d+)$/, viewRequest],
@@ -45,6 +45,8 @@ function enterScreen(name) {
 
 async function route() {
   const { path, query } = hashParts();
+  // the server asked for a reload while this tab was on a form or a board: now is the time
+  if (MUST_RELOAD && BOOT && reloadNow()) return;
   if (path === "/equipe" || path.startsWith("/equipe/")) {
     // the tab's name up to 1.6: bookmarks, Meta's way back and old links land on the new one
     const q = query.toString();
@@ -73,10 +75,15 @@ async function route() {
         await view(query, ...m.slice(1));
         app.firstElementChild?.classList.add("fadein");
         addMoveBar();
+        addUpdateBar();
       } catch (e) {
         if (e instanceof Stale || seq !== NAV_SEQ) return;  // a newer screen owns #app now
         document.body.classList.remove("report");  // an error screen keeps its navigation
-        app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}</div>`;
+        // the menu item of the screen you are on does not navigate: the way to ask again is here
+        // (not for a 4xx: asking again for a request that is not there gives the same answer)
+        const again = e.status >= 400 && e.status < 500 ? "" : `<div class="mt"><button class="btn" id="retry">Tentar de novo</button></div>`;
+        app.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message)}${again}</div>`;
+        $("#retry")?.addEventListener("click", () => route());
       } finally { LOADING--; }
       if (seq === NAV_SEQ) window.scrollTo(0, 0);
       return;
@@ -99,9 +106,13 @@ async function enter() {
   if (!USAGE.opened) {  // once per page load, when the version is known
     USAGE.opened = true;
     const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    track("app_open", { version: BOOT.version || "", theme });
+    track("app_open", { version: BOOT.version || "", theme, ...(startScreen() && { start: startScreen() }) });
   }
+  // opened without an address of its own: the screen the person chose on Perfil, in place
+  // of the Painel (replaceState: Back doesn't return to an address that would come here again)
+  if (hashParts().path === "/" && startScreen()) history.replaceState(null, "", `#/${startScreen()}`);
   renderShell();
+  pushResume().catch(() => {});  // not worth a message: Perfil shows how it stands
   await route();
 }
 
@@ -110,6 +121,8 @@ async function start() {
   USAGE.dev = deviceClass();
   const open = () => /^\/(entrar|mudar)\//.test(hashParts().path);
   window.addEventListener("hashchange", () => (ME.logged_in || open()) ? route() : showGate());
+  // a tap on a notification while the Pauta is open: the worker (sw.js) names the request
+  navigator.serviceWorker?.addEventListener("message", (e) => { if (String(e.data?.go || "").startsWith("#/")) location.hash = e.data.go; });
   if (open()) return route();
   if (!ME.logged_in) { enterScreen("entrar"); return showGate(); }
   await enter();

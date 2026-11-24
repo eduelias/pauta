@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from .. import __version__
+from .. import __version__, assets
 from ..auth import MOVE_LINK_DAYS
 from ..db import EXPORT_TABLES
 from . import CRED, ID, Reply, finance_visible
@@ -103,6 +103,8 @@ def install(route, store, auth, drive, meta, ig=None):
     def logout(self, viewer, _body):
         if auth.enabled:  # ends this person's sessions on every device, not just this one
             auth.end_sessions(viewer["account"])
+            # signed out everywhere: no device of theirs is told anything from here on
+            store.push_forget(account=viewer["account"])
         return {"ok": True}, auth.clear_cookie(self._secure())
 
     # ---- the person's own passkeys (Perfil, decision 10) ------------------------------
@@ -146,6 +148,10 @@ def install(route, store, auth, drive, meta, ig=None):
     def boot(self, viewer, _body):
         everyone = store.members()
         fin = store.finance_settings()
+        visible = finance_visible(viewer, fin)
+        if not (visible or viewer["is_admin"]):
+            # the settings are for who sees money; a request's card shows Verba in the currency
+            fin = {"enabled": fin["enabled"], "currency": fin["currency"]}
         members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["disabled"]]
         # Gravatar ids by account, for avatars on requests and the timeline
         avatars = {m["id"]: m["avatar"] for m in everyone if m["avatar"]}
@@ -155,12 +161,15 @@ def install(route, store, auth, drive, meta, ig=None):
             "members": members,
             "avatars": avatars,
             "version": __version__,
+            "reload": store.reload_mark(),
+            # the QR code library, fetched only when an invite is made
+            "qrcode": assets.url("vendor/qrcode.js"),
             "files": {
                 "enabled": drive.enabled,
                 "connected": drive.connected,
                 "max_mb": drive.max_bytes // (1024 * 1024),
             },
-            "finance": {**fin, "visible": finance_visible(viewer, fin)},
+            "finance": {**fin, "visible": visible},
             "meta": {"enabled": meta.enabled},
             # Publicações (docs/publishing-spec.md): the tab only where the Instagram app is set
             "publishing": {"enabled": bool(ig and ig.enabled)},

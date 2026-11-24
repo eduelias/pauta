@@ -23,9 +23,9 @@ import traceback
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from . import __version__, obs, sync
+from . import __version__, assets, obs, sync
 from .auth import Auth, AuthError
 from .db import (
     Invalid,
@@ -35,6 +35,7 @@ from .db import (
 from .instagram import Instagram, InstagramError
 from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
+from .push import Push
 from .ratelimit import RateLimiter
 from .routes import META_DOWN as META_DOWN  # the tests import it from here
 from .routes import (
@@ -49,12 +50,14 @@ from .routes import (
     team,
     usage,
 )
+from .routes import push as push_routes
 
-STATIC = Path(__file__).parent / "static"
+STATIC = assets.STATIC
 MAX_BODY = 256 * 1024
 # a connection that sends nothing for this long is dropped, and only so many are served at
 # once: slow or stalled clients can't pile up threads on the Pi
 IDLE_SECONDS = 15
+BODY_SECONDS = 20  # and a JSON body is whole within this, however it arrives
 MAX_CONNECTIONS = 64
 BUSY = b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 5\r\n\r\n"
 ROBOTS = b"User-agent: *\nDisallow: /\n"
@@ -103,12 +106,15 @@ def make_handler(
     drive: OneDrive | None = None,
     meta: Meta | None = None,
     ig: Instagram | None = None,
+    push: Push | None = None,
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
     ig = ig or Instagram.from_env(store.path)  # Publicações: off without its app id and secret
+    push = push or Push(store, contact=auth.home or "")
+    store.on_news = push.tell_others  # a new request, a status, a comment: the others' devices
     meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
     meta.on_change = store.sync_connections  # the connection rows follow the token files...
     store.sync_connections(meta.connections())  # ...from the start (a migrated file too)
@@ -248,7 +254,11 @@ def make_handler(
 
         def _json(self, status: int, doc, cookie: str | None = None):
             body = json.dumps(doc, ensure_ascii=False).encode()
-            extra = {"Cache-Control": "no-store"}
+            # on every answer, for a tab open since before a release: the version (it offers
+            # a reload when that changed) and the reload mark (it reloads when that changed)
+            extra = {"Cache-Control": "no-store", "X-Pauta-Version": __version__}
+            if mark := store.reload_mark():
+                extra["X-Pauta-Reload"] = mark
             if cookie:
                 extra["Set-Cookie"] = cookie
             self.send_response(status)
@@ -261,7 +271,7 @@ def make_handler(
 
         def _body(self) -> dict:
             length = (self.headers.get("Content-Length") or "0").strip()
-            if not length.isdigit():
+            if not (length.isascii() and length.isdigit()):
                 raise Reply(400, {"error": "pedido inválido"})
             n = int(length)
             if n > MAX_BODY:
@@ -269,13 +279,24 @@ def make_handler(
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if n and ctype != "application/json":
                 raise Reply(415, {"error": "envie JSON"})
+            raw, deadline = b"", time.monotonic() + BODY_SECONDS
             try:
-                raw = self.rfile.read(n) if n else b"{}"
+                while len(raw) < n:  # the idle timer restarts with every byte; this one doesn't
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        raise TimeoutError
+                    self.connection.settimeout(min(left, self.timeout))
+                    chunk = self.rfile.read1(n - len(raw))
+                    if not chunk:
+                        break
+                    raw += chunk
             except TimeoutError:
                 raise Reply(408, {"error": "o pedido demorou demais"}) from None
+            finally:
+                self.connection.settimeout(self.timeout)
             try:
                 doc = json.loads(raw or b"{}")
-            except ValueError:
+            except (ValueError, RecursionError):  # nested too deep is not JSON either
                 raise Reply(400, {"error": "JSON inválido"}) from None
             if not isinstance(doc, dict):
                 raise Reply(400, {"error": "JSON inválido"})
@@ -288,7 +309,7 @@ def make_handler(
         def _page(self, status: int, body: bytes | Path):
             """An HTML page of our own (the public report, its 404), never cached."""
             if isinstance(body, Path):
-                body = body.read_bytes()
+                body = assets.page(body.name).encode()
             self.send_response(status)
             self._headers("text/html; charset=utf-8", len(body), {"Cache-Control": "no-store"})
             self._write(body)
@@ -317,14 +338,16 @@ def make_handler(
                 self._write(ROBOTS)
                 return
             rel = path.lstrip("/")
-            target = (STATIC / rel).resolve() if rel else None
-            if not target or not target.is_file() or STATIC.resolve() not in target.parents:
-                target = STATIC / "index.html"  # the app routes with #/...
-            body = target.read_bytes()
-            ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            body = assets.content(rel) if rel and rel != "index.html" else None
+            if body is None:  # the app routes with #/...: anything else is the shell
+                rel, cache = "index.html", "no-cache"
+                body = assets.page(rel).encode()
+            else:  # a year for the address a page gave it (?v=<tag>), five minutes bare
+                asked = parse_qs(urlparse(self.path).query).get("v", [None])[0]
+                cache = assets.cache_for(rel, asked)
+            ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
             if ctype.startswith("text/") or ctype.endswith(("javascript", "json", "svg+xml")):
                 ctype += "; charset=utf-8"
-            cache = "no-cache" if target.name == "index.html" else "public, max-age=300"
             self.send_response(200)
             self._headers(ctype, len(body), {"Cache-Control": cache})
             self._write(body)
@@ -381,6 +404,8 @@ def make_handler(
                 self._json(r.status, r.doc)
             except (Invalid, AuthError) as e:
                 self._json(400, {"error": str(e)})
+            except UnicodeEncodeError:  # half a character pair in a text: SQLite won't keep it
+                self._json(400, {"error": "texto inválido"})
             except NotFound as e:
                 self._json(404, {"error": str(e)})
             except DriveError as e:
@@ -475,6 +500,8 @@ def make_handler(
                 auth.set_email(viewer["account"], body["email"])
             if "whatsapp" in body:
                 auth.set_whatsapp(viewer["account"], body["whatsapp"])
+            if "start" in body:
+                auth.set_start(viewer["account"], body["start"])
             return self._me(auth.viewer(self.headers.get("Cookie")))
 
     # the rest of /api, by area; same table, same order as before the split
@@ -482,4 +509,5 @@ def make_handler(
         area.install(route, store, auth, drive, meta)
     account.install(route, store, auth, drive, meta, ig)
     publishing.install(route, store, auth, ig)
+    push_routes.install(route, store, auth, push)
     return Handler
