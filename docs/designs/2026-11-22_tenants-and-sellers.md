@@ -386,7 +386,7 @@ To keep every API answer as it is today (goal 9), the move keeps the stored form
 
 **Where it runs.** One Postgres container on du7, from a compose file in `deploy/`,
 listening on 127.0.0.1 only, its data on the Pi's own disk and not on the NAS disks,
-which can mount late after a power cut. Acceptance is a second database in it. Passwords
+which can mount late after a power cut. Acceptance and dev are databases in it too. Passwords
 come from 1Password and reach the Pi as a file only the service user can read.
 
 **Files beside the database.** The Meta secret, the OneDrive token, the push signing
@@ -404,7 +404,8 @@ SQLite's backup call to `pg_dump`. One tenant can be dumped or dropped by its sc
 
 **The cut-over.**
 
-1.  The release that runs on Postgres goes to acceptance first and stays there a week.
+1.  The release that runs on Postgres goes to `dev.pauta.cc` first and stays there a
+    week (owner, 2026-11-24: acceptance holds the Publicações beta).
 2.  Production: the deploy stops the service, backs up the SQLite file as today, and
     runs a new command, `pauta import-sqlite`. It creates `control` and tenant 1, gives
     tenant 1 the host `app.pauta.cc`, turns every account into a staff membership
@@ -1063,7 +1064,7 @@ not" in this document.
 | `tests/unit/test_grants.py` | Create | `pauta_app` has no rights of its own; `t1_staff` reads nothing in `control` or in a second tenant's schema; the `account` and `passkey` views have exactly Part B's columns and show the system role every member of the tenant |
 | `tests/unit/test_deploy_scripts.py`, `tests/unit/test_deploy_branch.py` | Modify | The backup step is `pg_dump`; the cut-over runs the import once |
 | `deploy/postgres/compose.yml` **(owner)** | Create | The Postgres container: one pinned image, 127.0.0.1 only, its data on the Pi's own disk, a health check |
-| `deploy/provision-du7.sh`, `deploy/provision-branch-env.sh` **(owner)** | Modify | Start the container; create the production and acceptance databases and the roles `pauta_system` and `pauta_app` for each; write the passfile for the service user from 1Password |
+| `deploy/provision-du7.sh`, `deploy/provision-branch-env.sh` **(owner)** | Modify | Start the container; create the production, acceptance and dev databases and the roles `pauta_system` and `pauta_app` for each; write the passfile for the service user from 1Password |
 | `deploy/pauta.service`, `deploy/pauta-acc.service`, `deploy/pauta-backup.service` **(owner)** | Modify | Start after Docker; the database address and passfile in the environment; the backup runs `pg_dump` |
 | `deploy/pauta-deploy`, `deploy/pauta-deploy-branch` **(owner)** | Modify | The pre-deploy backup is `pg_dump` once the database is Postgres. At the cut-over only: stop the service, back up the SQLite file, run `pauta import-sqlite`, start. `--capabilities` reports "postgres" |
 | `.github/workflows/ci.yml` **(owner)** | Modify | A Postgres service for the test jobs |
@@ -1077,7 +1078,7 @@ not" in this document.
 **Done when:** the existing tests pass on Postgres without a change to what they assert,
 except a test that asserts the old order of an accented name, which is changed and named
 in the pull request;
-acceptance has run on it for a week; the import of a copy of production matches; the
+`dev.pauta.cc` has run on it for a week; the import of a copy of production matches; the
 owner has installed the new `pauta-deploy` and the container on du7.
 
 **Size (set on 2026-11-24 from stage 0).** About 9 to 11 working days, then a week on a
@@ -1093,10 +1094,11 @@ of it. The rest has not been tried:
 | Tests: `tests/pg.py`, the fixtures, the 22 tests that go or change, 12 `lastrowid`s, browser tests on Postgres, a Postgres service in CI, `make db` | 1.5 | The browser tests have not run on Postgres |
 | Deploy: the container, provisioning, the units, the cut-over in `pauta-deploy`, `pg_dump` backups, `deploy/README.md`, installing on du7 and timing on the Pi | 2 | All owner-reviewed; du7 has never run Postgres |
 
-Two things outside these days decide the calendar. The week on a test copy cannot be on
-acceptance while it holds the Publicações beta (until Meta's App Review ends, expected
-around 2026-12-12): either `dev.pauta.cc` carries that week, or it waits. And the import
-of a copy of production needs the owner's OK to copy real data off du7.
+Two things outside these days decide the calendar. The week on a test copy runs on
+`dev.pauta.cc` (owner, 2026-11-24), because acceptance holds the Publicações beta until
+Meta's App Review ends (expected around 2026-12-12); dev needs its Postgres database from
+`provision-branch-env.sh dev` first. And the import of a copy of production needs the
+owner's OK to copy real data off du7.
 
 ### Stage 2: sellers
 
@@ -1184,7 +1186,8 @@ moving the demo tenant between them needs no data copy.
 *   **Security review:** `/security-review` on every change to `auth.py`, `routes/`,
     `scope.py`, `schema.py` and the Meta code, and the owner's review on the paths marked
     **(owner)**.
-*   **On acceptance:** each stage runs there before production; stage 1 for a week.
+*   **On a test copy:** each stage runs there before production; stage 1 for a week on
+    `dev.pauta.cc`, the later stages on acceptance.
 *   **By hand, once per stage:** the stage's "done when".
 
 --------------------------------------------------------------------------------
