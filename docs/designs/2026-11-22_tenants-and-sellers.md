@@ -351,20 +351,27 @@ carry them:
     | `INSERT OR IGNORE`, `INSERT OR REPLACE` | 5 | `ON CONFLICT` |
     | `lastrowid` | 3 | `RETURNING id` |
     | `rowid` | 2 | The table's own id |
-    | `datetime('now', <an offset>)` | 2 | The offset is computed in Python, or a second form of the stand-in |
+    | `datetime('now', <an offset>)` | 2 | Nothing: the stand-in takes the offset as a second argument |
     | `group_concat` | 1 | `string_agg` |
-    | An integer used as true or false | Found by the tests; 1 so far | An explicit comparison |
-    | `GROUP BY` that does not name every column | Found by the tests; 1 so far | The columns are named |
-    | A Python `True` or `False` sent to an integer column | Found by the tests; 1 so far | `int(...)` |
+    | An integer used as true or false | 7 (3 in `db.py`, 4 in `auth.py`) | An explicit comparison (`disabled=0`, `billed=1`) |
+    | `GROUP BY` that takes a bare column from the row with the `MAX` | 1 (`seen_on`) | `DISTINCT ON (k.client) … ORDER BY k.client, r.created DESC` |
+    | A Python `True` or `False` sent to an integer column | Many; one source (`save_client`) | Nothing: the adapter sends a `bool` as 1 or 0, as `sqlite3` stores it |
+    | `BEGIN IMMEDIATE` (SQLite's write lock) | 2 (`auth.py`: joining with an invite, removing an admin) | `LOCK TABLE invite` / `LOCK TABLE account` `IN EXCLUSIVE MODE` |
+    | An upsert that reads its own column | 1 (`force_reload`) | The column is named with its table, and the sum cast back to text |
+    | `rowid` as insertion order (`passkey`'s id is text) | 2 | An identity column `seq` on `passkey` and `report_link` |
     | `PRAGMA` | 9 | Gone with the old migrations |
     | SQLite's backup call | 2 | `pg_dump` |
+
+    One more difference is carried by the adapter: `SUM()` of integers is `numeric` in
+    Postgres and comes back as a `Decimal`, which the JSON answers refuse; the adapter
+    reads `numeric` as `int`, or `float` when it has a fraction, as `sqlite3` does.
 
     One difference does not fail and has to be looked at by hand: `LIKE` ignores case in
     SQLite and not in Postgres. There is one `LIKE`, on a campaign's URL.
 
-The trial tried 33 of `Store`'s 82 methods and none of `auth.py`'s 42 statements or
-`usage.py`'s 6. Each construct above is of a kind already seen; how many more places the
-tests find is not known.
+The trial tried 33 of `Store`'s 82 methods. On 2026-11-24 the whole unit and API suite
+ran on Postgres (point 8 of "What the trial showed"), so the table above is the complete
+list for `db.py`, `auth.py` and `usage.py` as of release 1.18.0.
 
 What this choice costs is under "What this plan leaves weak": the repository keeps SQL
 in SQLite's spelling while it runs on Postgres.
@@ -764,7 +771,7 @@ Against the limits proposed for the trial:
 |---|---|
 | The overview as a seller at most twice the staff time | Met: a fifth to a third of it. The policies cost staff nothing measurable |
 | The import under five minutes | Met: 0.3 seconds for 69,449 rows |
-| The inner test loop under 20 seconds | Not measured. Emptying one tenant's tables between tests takes 4.4 ms, which is about 2.8 seconds across the roughly 635 test functions on one worker. The tests themselves were not run on Postgres |
+| The inner test loop under 20 seconds | Met on 2026-11-24: 14 seconds for the unit and API suite on Postgres, against 13 to 14 on SQLite on the same Mac the same day (point 8) |
 
 Postgres is about twice as slow as SQLite for the largest read, as staff. Both are far
 below what a person notices.
@@ -805,9 +812,45 @@ three are findings, not choices; each says where the plan takes it up.
 *   A copy of production.
 *   The Pi: an ARM Linux host with the database on the same machine. The timings above
     are not the Pi's.
-*   Pauta's test suite on Postgres, and with it the true time of the test loop.
-*   `auth.py`, the Meta sync, the server itself with a pool, and about 50 `Store` methods.
+*   The browser tests on Postgres. The unit and API suite ran on 2026-11-24 (point 8).
 *   Report views with `security_invoker`: Pauta has no report views yet.
+
+**8. The test suite on Postgres (run on 2026-11-24, at release 1.18.0).** The unit and
+API tests, unchanged in what they assert, ran against Postgres 17.12 in a throwaway
+container through decision 12's adapter: one database per xdist worker, tables emptied
+between tests, one schema, no tenants and no roles (those are stage 3). The harness is a
+test plugin on the local branch `spike/postgres-tests` (`tests/pgspike.py`, about 270
+lines, switched on by `PAUTA_PG=1`); it is not meant to merge.
+
+| Round | Passing | What the failures were |
+|---|---|---|
+| 1 | 0 of 711 | `AND billed` in `Store`'s start-up: every test |
+| 2 | 455 | `BEGIN IMMEDIATE`, Python booleans, `lastrowid`, `group_concat`, `INSERT OR`, `sqlite_master` in 3 tests, an ambiguous upsert |
+| 3 | 635 | `GROUP BY` in `seen_on`, `rowid`, `lastrowid` in 4 tests, `date()` in a test helper |
+| 4 | 681 | `Decimal` from `SUM()` |
+| 5 | 687 | Only tests that are retired or rewritten by stage 1 (below) |
+
+*   **Every kind Part A names, and three it did not:** `BEGIN IMMEDIATE`, an upsert
+    that reads its own column, and `numeric` sums. The complete list is Part A's table.
+    In `src/` the fixes are 58 changed lines in `db.py` and `auth.py`. `usage.py`, the
+    Meta sync, the server's threads and the push fan-out needed none.
+*   **22 tests fail on Postgres by their nature**, and stage 1 already plans to retire or
+    rewrite them: 13 that build an old SQLite file to test a migration, 4 about the
+    backup call, 2 in `test_hardening.py` that open the file, one that asserts WAL mode,
+    one that asserts SQLite hands a deleted file's id to the next upload, and `/metrics`,
+    which reports the database file's size (it becomes `pg_database_size`).
+*   **With those left out, 686 pass, the same in three runs in a row** (711 minus 25:
+    the filter also leaves out 3 backup tests that pass). While the 22 fail they leave
+    `sqlite3` connections open, and the garbage collector's warning lands in a random
+    later test; that is the only flakiness seen, 1 to 3 tests per full run.
+*   **Test changes beyond those:** `lastrowid` in 4 unit and API tests and 8 browser tests
+    becomes `RETURNING id`; 3 tests read `information_schema` instead of `sqlite_master`;
+    the test helper that moves billing dates back uses a `date()` stand-in.
+*   **The loop:** 14 seconds on Postgres, 13 to 14 on SQLite (`main`, same Mac, same
+    day, 11 cores, `-n auto`). `CONTRIBUTING.md`'s 5 seconds was not reproduced on SQLite
+    either. Postgres ran with `fsync` off, as a test database can.
+*   **Not run:** the 155 browser tests (no Chromium for this Playwright version on the
+    Mac), a copy of production, the Pi.
 
 ### What this plan leaves weak
 
@@ -960,8 +1003,8 @@ asked; "not pursued" means it was raised and set aside without a formal choice.
 ## Detailed Implementation Plan
 
 Five stages. Each is its own pull requests and its own release, and each ends with
-`make check` green. Stage 1 is the only one the others depend on. No stage is sized in
-days here: the sizes are set after stage 0, from its numbers.
+`make check` green. Stage 1 is the only one the others depend on. Stage 1 is sized below,
+from stage 0's numbers; the later stages are sized when stage 1 is done.
 
 Names fixed for all stages: schema `control`; tenant schemas `t<id>`; roles
 `pauta_system`, `pauta_app`, `t<id>_staff`, `t<id>_seller`; the per-transaction setting
@@ -976,8 +1019,8 @@ Nothing in the repo changes except this document. The work is done in a scratch 
 against a Postgres container started from a throwaway compose file.
 
 **Run on 2026-11-22.** The results are under "What the trial showed" in the technical
-plan. Two of its steps are still open: loading a copy of production, and timing the real
-test loop.
+plan. The real test loop was timed on 2026-11-24 (point 8 there). One step is still open:
+loading a copy of production, which needs the owner's OK to copy real data to the Mac.
 
 | Step | Done when |
 |---|---|
@@ -1036,6 +1079,24 @@ except a test that asserts the old order of an accented name, which is changed a
 in the pull request;
 acceptance has run on it for a week; the import of a copy of production matches; the
 owner has installed the new `pauta-deploy` and the container on du7.
+
+**Size (set on 2026-11-24 from stage 0).** About 9 to 11 working days, then a week on a
+test copy before production. The SQL is the small part; the run of 2026-11-24 found all
+of it. The rest has not been tried:
+
+| Part | Days | Why that much |
+|---|---|---|
+| The SQL fixes, the adapter and the stand-ins, `schema.py` with today's 21 tables in Postgres's spelling and the two migration lists | 1.5 | Done once in the spike (58 lines in `src/`, a 270-line harness); now as code with its own tests |
+| `scope.py`, roles and grants, `auth.py` on `control` as `pauta_system`, the host lookup and memberships in `server.py` | 2.5 | Untried with the app's own server and threads; `auth.py` and `server.py` need the owner's review and `/security-review` |
+| `paths.py`: the Meta secret, OneDrive and push files and the thumbnail cache in a tenant folder | 1 | Four modules find these from the database file today |
+| `pauta import-sqlite` with counts, checksums and the `nocase` pair check | 1 | The trial's copy was exact in 0.3 s; production's copy is untried |
+| Tests: `tests/pg.py`, the fixtures, the 22 tests that go or change, 12 `lastrowid`s, browser tests on Postgres, a Postgres service in CI, `make db` | 1.5 | The browser tests have not run on Postgres |
+| Deploy: the container, provisioning, the units, the cut-over in `pauta-deploy`, `pg_dump` backups, `deploy/README.md`, installing on du7 and timing on the Pi | 2 | All owner-reviewed; du7 has never run Postgres |
+
+Two things outside these days decide the calendar. The week on a test copy cannot be on
+acceptance while it holds the Publicações beta (until Meta's App Review ends, expected
+around 2026-12-12): either `dev.pauta.cc` carries that week, or it waits. And the import
+of a copy of production needs the owner's OK to copy real data off du7.
 
 ### Stage 2: sellers
 
