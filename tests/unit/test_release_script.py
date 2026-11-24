@@ -64,6 +64,14 @@ def test_first_release_links_to_its_tag():
     assert "[1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0" in changelog
 
 
+def test_an_earlier_version_without_a_link_gets_no_compare_link():
+    # Versions released from the old repository have no tag here, so no link line either.
+    unlinked = CHANGELOG.split("[Unreleased]:")[0]
+    changelog, _ = release.bump(unlinked, PYPROJECT, "1.1.0", "2026-11-01")
+    assert "[1.1.0]: https://github.com/eduelias/pauta/releases/tag/v1.1.0" in changelog
+    assert "compare/v1.0.0" not in changelog
+
+
 @pytest.mark.parametrize(
     ("version", "why"),
     [("1.0", "X.Y.Z"), ("1.0.0", "not newer"), ("0.9.0", "not newer")],

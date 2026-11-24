@@ -84,6 +84,8 @@ def bump(changelog: str, pyproject: str, version: str, today: str) -> tuple[str,
         "## [Unreleased]", f"## [Unreleased]\n\n## [{version}] - {today}", 1
     )
     prev = next((v for v in found if v != "Unreleased"), None)
+    if prev and not re.search(rf"^\[{re.escape(prev)}\]: ", changelog, flags=re.M):
+        prev = None  # released before the move to this repository: no tag here to compare to
     link = f"[{version}]: {REPO_URL}/" + (
         f"compare/v{prev}...v{version}" if prev else f"releases/tag/v{version}"
     )
