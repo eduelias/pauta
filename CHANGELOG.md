@@ -5,7 +5,18 @@ What changed in each release of Pauta. The format follows
 [Semantic Versioning](https://semver.org/). Write new entries under **Unreleased** as you
 go; `scripts/release.py cut X.Y.Z` turns them into the next release's notes.
 
+Versions up to 1.17.0 were released from an earlier, private repository; their tags did not
+come along, so their headings below have no links.
+
 ## [Unreleased]
+
+### Changed
+
+- O código da Pauta agora é público, em https://github.com/eduelias/pauta. A história foi
+  reescrita sem nomes reais; as versões até 1.17.0 saíram do repositório anterior e não têm
+  tag aqui. Para quem usa, nada muda.
+- Uma segunda cópia de teste, https://dev.pauta.cc, ao lado da de aceitação
+  (`make dev`), para qualquer branch sem tirar a aceitação do ar.
 
 ## [1.17.0] - 2026-11-22
 
@@ -923,42 +934,3 @@ The first versioned release. It covers everything since Pauta replaced the
   and Secure behind HTTPS. Invite, sign-up and login endpoints are rate limited per IP.
 - The service runs with systemd sandboxing: a read-only system, write access only to its
   own data directory, no privilege escalation.
-
-[Unreleased]: https://github.com/eduelias/pauta/compare/v1.17.0...HEAD
-[1.17.0]: https://github.com/eduelias/pauta/compare/v1.16.1...v1.17.0
-[1.16.1]: https://github.com/eduelias/pauta/compare/v1.16.0...v1.16.1
-[1.16.0]: https://github.com/eduelias/pauta/compare/v1.15.1...v1.16.0
-[1.15.1]: https://github.com/eduelias/pauta/compare/v1.15.0...v1.15.1
-[1.15.0]: https://github.com/eduelias/pauta/compare/v1.14.1...v1.15.0
-[1.14.1]: https://github.com/eduelias/pauta/compare/v1.14.0...v1.14.1
-[1.14.0]: https://github.com/eduelias/pauta/compare/v1.13.1...v1.14.0
-[1.13.1]: https://github.com/eduelias/pauta/compare/v1.13.0...v1.13.1
-[1.13.0]: https://github.com/eduelias/pauta/compare/v1.12.1...v1.13.0
-[1.12.1]: https://github.com/eduelias/pauta/compare/v1.12.0...v1.12.1
-[1.12.0]: https://github.com/eduelias/pauta/compare/v1.11.1...v1.12.0
-[1.11.1]: https://github.com/eduelias/pauta/compare/v1.11.0...v1.11.1
-[1.11.0]: https://github.com/eduelias/pauta/compare/v1.10.2...v1.11.0
-[1.10.2]: https://github.com/eduelias/pauta/compare/v1.10.1...v1.10.2
-[1.10.1]: https://github.com/eduelias/pauta/compare/v1.10.0...v1.10.1
-[1.10.0]: https://github.com/eduelias/pauta/compare/v1.9.1...v1.10.0
-[1.9.1]: https://github.com/eduelias/pauta/compare/v1.9.0...v1.9.1
-[1.9.0]: https://github.com/eduelias/pauta/compare/v1.8.4...v1.9.0
-[1.8.4]: https://github.com/eduelias/pauta/compare/v1.8.3...v1.8.4
-[1.8.3]: https://github.com/eduelias/pauta/compare/v1.8.2...v1.8.3
-[1.8.2]: https://github.com/eduelias/pauta/compare/v1.8.1...v1.8.2
-[1.8.1]: https://github.com/eduelias/pauta/compare/v1.8.0...v1.8.1
-[1.8.0]: https://github.com/eduelias/pauta/compare/v1.7.1...v1.8.0
-[1.7.1]: https://github.com/eduelias/pauta/compare/v1.7.0...v1.7.1
-[1.7.0]: https://github.com/eduelias/pauta/compare/v1.6.1...v1.7.0
-[1.6.1]: https://github.com/eduelias/pauta/compare/v1.6.0...v1.6.1
-[1.6.0]: https://github.com/eduelias/pauta/compare/v1.5.1...v1.6.0
-[1.5.1]: https://github.com/eduelias/pauta/compare/v1.5.0...v1.5.1
-[1.5.0]: https://github.com/eduelias/pauta/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/eduelias/pauta/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/eduelias/pauta/compare/v1.2.3...v1.3.0
-[1.2.3]: https://github.com/eduelias/pauta/compare/v1.2.2...v1.2.3
-[1.2.2]: https://github.com/eduelias/pauta/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/eduelias/pauta/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/eduelias/pauta/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/eduelias/pauta/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/eduelias/pauta/releases/tag/v1.0.0

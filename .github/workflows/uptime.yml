@@ -4,7 +4,7 @@
 # Down: opens one issue labelled `uptime` (GitHub email and app push) and sends a WhatsApp
 # template alert (delivered even outside the 24-hour window). Still down: a comment on that
 # issue, no new WhatsApp. Back up: closes the issue and sends one more WhatsApp.
-# Hourly, because this private repo pays for Actions minutes (each run counts as one).
+# Hourly: often enough for a team tool, and the issues it opens are public.
 name: Uptime
 
 on:
