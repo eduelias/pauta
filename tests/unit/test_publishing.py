@@ -687,90 +687,29 @@ def test_only_an_unconnected_account_is_removed(posts, client):
     assert now["blocked"] == publishing.NO_ACCOUNT_POST
 
 
-# ---- the upgrade to a portfolio's accounts (schema 17) ----------------------------------------
+# ---- the schema ------------------------------------------------------------------------------
 
 
-def v16_file(path):
-    """The file as the release before schema 17 left it: two clients with a connected
-    profile each, a third with none, and a post for each of the three."""
-    store = Store(path)
-    ids = [store.save_client({"name": name})["id"] for name in ("Um", "Dois", "Três")]
+def test_acceptances_beta_file_loses_the_table_nothing_reads(tmp_path):
+    path = tmp_path / "beta.db"
+    Store(path)
     conn = sqlite3.connect(path)
     conn.executescript(
-        "DROP TABLE ig_account; DROP TABLE ig_connection; "
-        "ALTER TABLE post DROP COLUMN ig_id; UPDATE meta SET value='16' WHERE key='schema';"
+        "CREATE TABLE ig_profile (client INTEGER PRIMARY KEY, ig_id TEXT);"
+        "UPDATE meta SET value='17' WHERE key='schema';"
     )
-    for cid, ig_id, name in ((ids[0], "17841400000000001", "um"), (ids[1], "178414002", "dois")):
-        conn.execute(
-            "INSERT INTO ig_profile(client, ig_id, username) VALUES (?,?,?)", (cid, ig_id, name)
-        )
-    for cid in ids:
-        conn.execute("INSERT INTO post(client, media) VALUES (?, ?)", (cid, f"m{cid}"))
-    conn.commit()
     conn.close()
-    return ids
-
-
-def rows(path, sql):
+    Store(path)
     conn = sqlite3.connect(path)
     try:
-        return conn.execute(sql).fetchall()
+        assert (
+            conn.execute("SELECT 1 FROM sqlite_master WHERE name='ig_profile'").fetchone() is None
+        )
+        assert conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] == str(
+            SCHEMA_VERSION
+        )
     finally:
         conn.close()
-
-
-def test_the_upgrade_keeps_each_profiles_client_and_each_posts_account(tmp_path):
-    path = tmp_path / "old.db"
-    one, two, three = v16_file(path)
-    Store(path)
-    assert rows(path, "SELECT ig_id, username, business_id, client FROM ig_account ORDER BY 2") == [
-        ("178414002", "dois", "", two),
-        ("17841400000000001", "um", "", one),
-    ]
-    assert rows(path, "SELECT COUNT(*) FROM ig_connection") == [(0,)]  # the owner logs in once
-    assert rows(path, "SELECT client, ig_id FROM post ORDER BY client") == [
-        (one, "17841400000000001"),
-        (two, "178414002"),
-        (three, ""),  # its client had no profile: the post has no account
-    ]
-    # the release before this one publishes through these rows: now it sends nothing
-    assert rows(path, "SELECT DISTINCT state FROM ig_profile") == [("expired",)]
-    assert rows(path, "SELECT value FROM meta WHERE key='schema'") == [(str(SCHEMA_VERSION),)]
-
-
-def test_the_upgrade_happens_once(tmp_path):
-    path = tmp_path / "old.db"
-    v16_file(path)
-    Store(path)
-    conn = sqlite3.connect(path)
-    conn.execute("DELETE FROM ig_account WHERE username='um'")
-    conn.commit()
-    conn.close()
-    Store(path)  # a later start: what an admin removed is not copied back
-    assert rows(path, "SELECT username FROM ig_account") == [("dois",)]
-
-
-def test_an_upgrade_that_fails_leaves_the_file_as_it_was(tmp_path):
-    path = tmp_path / "old.db"
-    v16_file(path)
-    conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TRIGGER t BEFORE UPDATE ON ig_profile BEGIN SELECT RAISE(ABORT, 'no'); END"
-    )
-    conn.commit()
-    conn.close()
-    with pytest.raises(sqlite3.IntegrityError):
-        Store(path)
-    assert "ig_id" not in {r[1] for r in rows(path, "PRAGMA table_info(post)")}
-    assert rows(path, "SELECT COUNT(*) FROM ig_account") == [(0,)]
-    assert rows(path, "SELECT DISTINCT state FROM ig_profile") == [("ok",)]
-    conn = sqlite3.connect(path)
-    conn.execute("DROP TRIGGER t")
-    conn.commit()
-    conn.close()
-    Store(path)  # the next start does all of it
-    assert len(rows(path, "SELECT 1 FROM ig_account")) == 2
-    assert rows(path, "SELECT DISTINCT state FROM ig_profile") == [("expired",)]
 
 
 def test_the_export_has_the_connections_and_the_accounts(store):

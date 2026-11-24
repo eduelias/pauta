@@ -83,9 +83,10 @@ novo": whether it went out is not known, and a blind retry could post it twice.
   none does) and the client it is for (empty until an admin says). `post(id, client,
   ig_id, caption, alt_text, media, width, height, kind, media_type, status, due, container,
   media_id, permalink, error, account, created, updated, started, published_at)`: `ig_id`
-  is the account it goes to, `client` whom it was made for. Schema v17.
-- `ig_profile`, the table of schemas v15 and v16 (one profile per client), is still in the
-  file and no longer read: the change that brings the beta up to `main` drops it.
+  is the account it goes to, `client` whom it was made for. Schema v18 (`main`'s 15 and 16
+  came first; v15 to v17 were the beta's own numbers, on acceptance only).
+- `ig_profile`, the beta's first table (one profile per client), is gone: bringing the beta
+  up to `main` dropped it, with the one-time copy that had turned its rows into accounts.
 - Files: `<db>.media/<token>.<jpg|mp4|mov>`, removed with their post (a video as soon as it
   is published); one nobody attached to a post goes after a day.
 - Moments are UTC in the database and the browser's own time on screen.

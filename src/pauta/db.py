@@ -187,14 +187,6 @@ CREATE TABLE IF NOT EXISTS push_sub (
     endpoint TEXT NOT NULL UNIQUE, seen INTEGER NOT NULL DEFAULT 0,
     created TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE IF NOT EXISTS ig_profile (
-    client INTEGER PRIMARY KEY REFERENCES client(id) ON DELETE CASCADE,
-    ig_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL DEFAULT '',
-    name TEXT NOT NULL DEFAULT '', account_type TEXT NOT NULL DEFAULT '',
-    state TEXT NOT NULL DEFAULT 'ok', error TEXT NOT NULL DEFAULT '', expires TEXT,
-    connected_by INTEGER REFERENCES account(id),
-    connected_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 CREATE TABLE IF NOT EXISTS post (
     id INTEGER PRIMARY KEY,
     client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
@@ -764,38 +756,10 @@ class Store:
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
             # v16: push_sub (a device that asked for notifications, push.py) is one more
-            # v17: ig_profile and post (Publicações, docs/publishing-spec.md) are new tables,
-            # and a post says what it is (feed, story, reel) and whether its file is a
-            # picture or a video; every post there was is a picture for the feed. (The
-            # publishing beta numbered these steps 15 to 17 before it met main's 15 and 16.
-            # Each step checks for itself, so a file's number only says how far it got.)
-            cols = {r[1] for r in db.execute("PRAGMA table_info(post)")}
-            if "kind" not in cols:
-                db.execute("ALTER TABLE post ADD COLUMN kind TEXT NOT NULL DEFAULT 'feed'")
-            if "media_type" not in cols:
-                db.execute("ALTER TABLE post ADD COLUMN media_type TEXT NOT NULL DEFAULT 'image'")
-            # v18: Publicações follows Meta's model (docs/designs/2026-11-22_publishing-
-            # mirrors-meta.md): a portfolio's connection, its Instagram accounts, and a post
-            # that has an account. Once per file, and all of it or none: each old profile
-            # becomes an account with its client and no connection (the owner logs in once),
-            # each post gets its client's account, and the old rows are marked expired, so
-            # the release before this one, which publishes by client, sends nothing until
-            # someone connects again in it. sqlite3 commits a schema statement at once
-            # unless a transaction is open, hence the BEGIN
-            cols = {r[1] for r in db.execute("PRAGMA table_info(post)")}
-            if "ig_id" not in cols:
-                if not db.in_transaction:
-                    db.execute("BEGIN")
-                db.execute("ALTER TABLE post ADD COLUMN ig_id TEXT NOT NULL DEFAULT ''")
-                db.execute(
-                    "INSERT OR IGNORE INTO ig_account(ig_id, username, client) "
-                    "SELECT ig_id, username, client FROM ig_profile"
-                )
-                db.execute(
-                    "UPDATE post SET ig_id=COALESCE("
-                    "(SELECT ig_id FROM ig_profile WHERE client=post.client), '')"
-                )
-                db.execute("UPDATE ig_profile SET state='expired'")
+            # v18: Publicações (docs/publishing-spec.md): ig_connection, ig_account and post
+            # are new tables. v17 was the publishing beta's own, on acceptance only: its file
+            # has done that beta's one-time copy out of ig_profile, which nothing reads now
+            db.execute("DROP TABLE IF EXISTS ig_profile")
             # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "

@@ -26,8 +26,7 @@ come along, so their headings below have no links.
   dele, e a Pauta pergunta antes de passar uma
   conta para outro cliente. Desconectar um portfólio mantém as contas na lista com os
   clientes delas, sem conexão; uma publicação cuja conta não está conectada, ou não é mais
-  do cliente dela, diz isso na lista e não sai. Em aceitação, depois desta atualização, é
-  preciso conectar o Instagram uma vez. Sem
+  do cliente dela, diz isso na lista e não sai. Sem
   `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo `<db>.ig-secret` nada disso
   aparece: produção não muda. A conexão usa o "Unified Login" da Meta (o login do
   Instagram deixou de existir para apps novos), com só as duas permissões de publicar.
