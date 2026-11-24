@@ -1,6 +1,11 @@
 # 5. Other teams: one database per team
 
 - **Status:** proposed (2026-10-30)
+- **Changed by:** decision 13 (2026-11-23). Replaced: the layout (a control database plus
+  one SQLite file per team became one Postgres database with a schema per tenant) and the
+  address (the team in the URL became a host name per tenant). The team is called a
+  *tenant*. Still standing: one account in several teams, invites only, the owner's
+  command-line tooling, the LGPD roles, and the hosting line, which decision 13 leaves open.
 - **Depends on:** decision 4 (the domain). **Needed by:** decision 6 (billing).
 - **Changes:** `auth.py`'s "there is one team" and the one `pauta.db`; decision 1's
   "a separate host" alternative becomes the plan for production (see Hosting).
