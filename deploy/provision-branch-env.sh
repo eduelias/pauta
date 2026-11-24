@@ -7,8 +7,8 @@
 # It installs pauta-deploy-branch and its sudo rule, the environment's user, layout and unit
 # (deploy/pauta-ENV.service), and the runner's job guard. It never starts or restarts the
 # environment and never touches its state dir (/var/lib/pauta-ENV: DB, tokens, secrets).
-# A new environment (`dev`) needs its line in pauta-deploy-branch's env_config, a
-# deploy/pauta-dev.service, a Caddy block and a choice in deploy-branch.yml; then this.
+# A new environment needs its line in pauta-deploy-branch's env_config, a
+# deploy/pauta-ENV.service, a Caddy block and a choice in deploy-branch.yml; then this.
 set -euo pipefail
 
 ENV_NAME=${1:?environment, e.g. acc}

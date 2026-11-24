@@ -77,6 +77,7 @@ make check     # lint + unit/API tests (coverage >= 90%) + browser tests: what C
 make test      # just unit and API tests with coverage (~7 s)
 make e2e       # just the browser tests, parallel (~25 s)
 make acc       # owner only: push this branch and put it on https://acc.pauta.cc (~1-2 min)
+make dev       # the same for https://dev.pauta.cc, the second test copy
 make run       # http://localhost:8088, open mode, data in ./state
 ```
 

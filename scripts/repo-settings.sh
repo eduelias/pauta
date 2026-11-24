@@ -107,6 +107,8 @@ EOF
     say "== environments"
     environment production   # the du7 deploy job
     environment alerts       # the WhatsApp secrets (see `secrets`)
+    environment acc          # deploy-branch.yml's du7 job (it runs from main)
+    environment dev
 
     say "== rulesets"
     local checks

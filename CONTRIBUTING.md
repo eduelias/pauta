@@ -32,7 +32,7 @@ same day (463 and 104 tests) `make check` takes 53 s: `make test` 15 s, `make e2
 | Browser suite | `make e2e` | 64 s | 20–26 s |
 | Everything CI runs | `make check` | ~1.5 min | **30 s** |
 | CI on a push | lint, tests ×3, browser, audit, build | 2.5–3 min | ~1.5 min (see below) |
-| Branch on acc.pauta.cc | `make acc` | 1–2 min after a manual dispatch | 1–2 min, in one command |
+| Branch on acc.pauta.cc or dev.pauta.cc | `make acc`, `make dev` | 1–2 min after a manual dispatch | 1–2 min, in one command |
 
 1. **While coding:** `make test-fast`. A single file (`uv run pytest tests/unit/test_store.py`)
    runs serially and starts faster still; `-k name` picks one test.
@@ -46,7 +46,8 @@ same day (463 and 104 tests) `make check` takes 53 s: `make test` 15 s, `make e2
    Python 3.11 (du7's); 3.12 and 3.13 only run the tests.
 4. **To try it on a real server:** `make acc` (owner only) pushes the branch, dispatches
    *Deploy branch to acceptance* for it, watches the run and ends with `acc.pauta.cc`'s
-   `/healthz`. It does not wait for CI: run it right after `make check`, and CI runs
+   `/healthz`. `make dev` does the same for `dev.pauta.cc`, the second test copy, for a
+   branch that has to stay on a server for weeks while `acc` takes others. It does not wait for CI: run it right after `make check`, and CI runs
    alongside. The build gets a version like `1.6.2.dev8+g6d784cb`; `#/equipe` shows it.
    Only the owner's dispatches reach du7 (the runner's guard checks the actor).
 5. **Merge** when CI is green and the owner has reviewed (see the flow above).

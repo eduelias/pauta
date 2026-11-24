@@ -39,8 +39,21 @@ def test_acceptance_is_its_own_everything():
     ]
 
 
+def test_dev_is_its_own_everything_too():
+    r = bash('env_config dev; echo "$ROOT $SERVICE $SERVICE_USER $STATE_DIR $BACKUPS $HEALTH"')
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == [
+        "/opt/pauta-dev",
+        "pauta-dev",
+        "pauta-dev",
+        "/var/lib/pauta-dev",
+        "/var/backups/pauta-dev",
+        "http://127.0.0.1:8091/healthz",
+    ]
+
+
 @pytest.mark.parametrize(
-    "name", ["", "prod", "production", "pauta", "main", "ACC", "acc ", "../acc", "acc/..", "dev"]
+    "name", ["", "prod", "production", "pauta", "main", "ACC", "acc ", "../acc", "acc/..", "DEV"]
 )
 def test_only_known_environments(name):
     r = bash('env_config "$NAME"; echo reached', NAME=name)
