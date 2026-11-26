@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import finance, meta, obs
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 18
 
 # Raise this in a release whose server no longer works with the page an earlier release
 # loaded: every open tab then reloads itself instead of only offering to. It is half of the
@@ -187,6 +187,32 @@ CREATE TABLE IF NOT EXISTS push_sub (
     endpoint TEXT NOT NULL UNIQUE, seen INTEGER NOT NULL DEFAULT 0,
     created TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS post (
+    id INTEGER PRIMARY KEY,
+    client INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
+    caption TEXT NOT NULL DEFAULT '', alt_text TEXT NOT NULL DEFAULT '',
+    media TEXT NOT NULL, width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'feed', media_type TEXT NOT NULL DEFAULT 'image',
+    ig_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft', due TEXT,
+    container TEXT NOT NULL DEFAULT '', media_id TEXT NOT NULL DEFAULT '',
+    permalink TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+    account INTEGER REFERENCES account(id),
+    created TEXT NOT NULL DEFAULT (datetime('now')), updated TEXT, started TEXT,
+    published_at TEXT
+);
+CREATE INDEX IF NOT EXISTS post_due ON post(status, due);
+CREATE TABLE IF NOT EXISTS ig_connection (
+    business_id TEXT PRIMARY KEY, business_name TEXT NOT NULL DEFAULT '',
+    connected_by INTEGER REFERENCES account(id), connected_at TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'ok', error TEXT NOT NULL DEFAULT '', expires TEXT
+);
+CREATE TABLE IF NOT EXISTS ig_account (
+    ig_id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '',
+    business_id TEXT NOT NULL DEFAULT '',
+    client INTEGER REFERENCES client(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS ig_account_client ON ig_account(client);
 """
 
 # Fixed choices (the app's logic depends on them). Status keys are stable; labels are UI.
@@ -230,7 +256,17 @@ CAMPAIGN_URL_ID = (
     r"campaign_id=(\d+)",
     r"/campaigns/(\d+)",
 )
-EXPORT_TABLES = ("billing", "campaign", "review", "insight", "meta_connection", "meta_log")
+EXPORT_TABLES = (
+    "billing",
+    "campaign",
+    "review",
+    "insight",
+    "meta_connection",
+    "meta_log",
+    "ig_connection",  # which portfolios are connected, never a token
+    "ig_account",
+    "post",
+)
 
 # Editable lists (the team's own vocabulary), seeded from the spreadsheet's "Listas" tab.
 DEFAULT_OPTIONS = {
@@ -720,6 +756,10 @@ class Store:
             # v13: usage (decision 11) is a new table: SCHEMA creates it
             # v14: report_link (decision 12, the client's public link) is a new table too
             # v16: push_sub (a device that asked for notifications, push.py) is one more
+            # v18: Publicações (docs/publishing-spec.md): ig_connection, ig_account and post
+            # are new tables. v17 was the publishing beta's own, on acceptance only: its file
+            # has done that beta's one-time copy out of ig_profile, which nothing reads now
+            db.execute("DROP TABLE IF EXISTS ig_profile")
             # the number only goes up: after a rollback this release runs on a newer file
             db.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE "

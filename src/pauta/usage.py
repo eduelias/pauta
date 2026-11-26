@@ -63,6 +63,7 @@ SCREENS = (
     "financeiro",
     "campanhas",
     "campanha",
+    "publicacoes",
     "configuracoes",
     "perfil",
     "entrar",

@@ -29,12 +29,13 @@ PNG = bytes.fromhex(  # a 1x1 transparent PNG, standing in for gravatar.com
 
 
 @pytest.fixture()
-def live(store, drive, meta):
+def live(store, drive, meta, ig):
     """The app with passkeys on, reached as http://localhost:<port> (the passkey RP ID)."""
     auth = Auth(store, enabled=True, rp_id="localhost", origins=["placeholder"])
-    httpd = serve(store, auth, drive, meta)
+    httpd = serve(store, auth, drive, meta, ig=ig)
     base = f"http://localhost:{httpd.server_address[1]}"
     auth.origins = [base]
+    ig.at(base)
     meta.redirect_uri = f"{base}/api/meta/callback"
     yield base, auth, store
     httpd.shutdown()

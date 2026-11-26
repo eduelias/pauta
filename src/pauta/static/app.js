@@ -226,6 +226,7 @@ const ICONS = {
   edit: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
   back: '<path d="m15 18-6-6 6-6"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+  play: '<path d="m6 3 14 9-14 9Z"/>',
   send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
   swap: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
@@ -407,9 +408,11 @@ function renderShell() {
   const open = REQS ? REQS.filter(isOpen).length : null;
   // Financeiro sits after Clientes; on the phone it takes Quadro's slot (decision 7), and
   // Campanhas takes that slot over both when Meta is on (Quadro stays a tap from the Painel)
+  // Publicações (beta, docs/publishing-spec.md) after those, where the Instagram app is set
   const home = [homeHash(), "dash", "Painel"];
   const nav = NAV.flatMap((e) => (e[0] === "#/configuracoes" && finVisible() ? [FIN_NAV, e]
-    : e[0] === "#/pedidos" && metaVisible() ? [e, CAMP_NAV] : e[0] === "#/" ? [home] : [e]));
+    : e[0] === "#/pedidos" ? [e, ...(metaVisible() ? [CAMP_NAV] : []), ...(pubVisible() ? [PUB_NAV] : [])]
+    : e[0] === "#/" ? [home] : [e]));
   $("#nav").innerHTML = `<a href="#/novo" class="btn primary newbtn">${icon("plus")}Novo pedido</a>` +
     nav.map(([h, i, t]) => `<a href="${h}" data-nav="${h}">${icon(i)}${t}${h === "#/pedidos" && open ? `<span class="count">${open}</span>` : ""}</a>`).join("");
   $("#tabbar").innerHTML = [

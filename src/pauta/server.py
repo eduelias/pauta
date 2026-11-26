@@ -32,6 +32,7 @@ from .db import (
     NotFound,
     Store,
 )
+from .instagram import Instagram, InstagramError
 from .meta import Meta, MetaError
 from .onedrive import DriveError, OneDrive
 from .push import Push
@@ -44,6 +45,7 @@ from .routes import (
     campaigns,
     clients,
     finance,
+    publishing,
     requests,
     team,
     usage,
@@ -76,6 +78,7 @@ RATE_BUCKETS = {
     # Meta's login sends the browser back here with no cookie: a one-time state is all that
     # guards it, so guesses are counted like login attempts
     "/api/meta/callback": "login",
+    "/api/instagram/callback": "login",  # the same, for a client's Instagram profile
 }
 # the same, for paths with a parameter in them: a report link for the client is handed out
 # like an invite, and a guess at one (the page or its data) is counted like a login attempt
@@ -102,12 +105,14 @@ def make_handler(
     metrics: obs.Metrics | None = None,
     drive: OneDrive | None = None,
     meta: Meta | None = None,
+    ig: Instagram | None = None,
     push: Push | None = None,
 ):
     limiter = limiter or RateLimiter()
     metrics = metrics or obs.Metrics()
     drive = drive or OneDrive.from_env(store.path)
     meta = meta or Meta.from_env(store.path)
+    ig = ig or Instagram.from_env(store.path)  # Publicações: off without its app id and secret
     push = push or Push(store, contact=auth.home or "")
     store.on_news = push.tell_others  # a new request, a status, a comment: the others' devices
     meta.on_read = store.sync_meta_accounts  # each real read keeps the account rows current
@@ -354,11 +359,13 @@ def make_handler(
             if path == "/metrics":
                 return self._metrics(method)
             public_page = path.startswith("/r/")  # the client's report (decision 12)
+            # a post's image, fetched by Instagram's servers (which may ask HEAD first)
+            public_media = path.startswith("/api/media/")
             if not path.startswith("/api/") and not public_page:
                 if method not in ("GET", "HEAD"):
                     return self._json(405, {"error": "método não permitido"})
                 return self._static(path)
-            if method == "HEAD" and not public_page:  # a link preview may HEAD the page
+            if method == "HEAD" and not (public_page or public_media):  # a preview may HEAD
                 return self._json(405, {"error": "método não permitido"})
             if public_page and method not in ("GET", "HEAD"):  # the page is read-only
                 return self._json(405, {"error": "método não permitido"})
@@ -405,6 +412,8 @@ def make_handler(
                 self._json(e.status, {"error": str(e)})
             except MetaError as e:  # `reason` is the fixed code: the UI waits on "busy"
                 self._json(e.status, {"error": str(e), "reason": e.reason})
+            except InstagramError as e:
+                self._json(e.status, {"error": str(e)})
 
         def _health(self, method: str):
             """For the deploy and uptime checks: no auth, no data, just "the DB answers"."""
@@ -496,7 +505,9 @@ def make_handler(
             return self._me(auth.viewer(self.headers.get("Cookie")))
 
     # the rest of /api, by area; same table, same order as before the split
-    for area in (requests, clients, campaigns, finance, team, account, usage):
+    for area in (requests, clients, campaigns, finance, team, usage):
         area.install(route, store, auth, drive, meta)
+    account.install(route, store, auth, drive, meta, ig)
+    publishing.install(route, store, auth, ig)
     push_routes.install(route, store, auth, push)
     return Handler

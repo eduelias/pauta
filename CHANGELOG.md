@@ -10,6 +10,39 @@ come along, so their headings below have no links.
 
 ## [Unreleased]
 
+### Added
+
+- **Publicações (beta, só onde o app do Instagram estiver configurado).** Um módulo novo,
+  com integração própria e separada da de Campanhas: um administrador conecta o Instagram
+  uma vez por portfólio (login da Meta), todas as contas profissionais que o portfólio
+  compartilha aparecem na lista, e ele diz de qual cliente é cada conta, como já faz com
+  as contas de anúncios. Um cliente pode ter várias contas. O time cria publicações com
+  uma imagem, a legenda e, se quiser, uma hora marcada. **Publicar agora**
+  espera o Instagram e diz como terminou; **Agendar** guarda a publicação e a Pauta publica
+  na hora (o Instagram não agenda pela API). A imagem escolhida vira JPEG no navegador, na
+  largura que o Instagram aceita, e uma proporção fora de 4:5 a 1,91:1 é recusada antes de
+  enviar. Uma recusa do Instagram fica na própria publicação, com o motivo, e ela continua
+  ali para sair de novo. O `@` do cadastro do cliente serve de sugestão para a conta
+  dele, e a Pauta pergunta antes de passar uma
+  conta para outro cliente. Desconectar um portfólio mantém as contas na lista com os
+  clientes delas, sem conexão; uma publicação cuja conta não está conectada, ou não é mais
+  do cliente dela, diz isso na lista e não sai. Sem
+  `PAUTA_IG_APP_ID`, `PAUTA_IG_CONFIG_ID` e o arquivo `<db>.ig-secret` nada disso
+  aparece: produção não muda. A conexão usa o "Unified Login" da Meta (o login do
+  Instagram deixou de existir para apps novos), com só as duas permissões de publicar.
+  Esquema v18 (`ig_connection`, `ig_account`, `post`). API: `GET /api/publishing`,
+  `POST /api/instagram/connect`, `PATCH`/`DELETE /api/instagram/accounts/{id}`, `DELETE
+  /api/instagram/connections/{id}`, `/api/posts…`. Desenho, limites e o que falta:
+  `docs/publishing-spec.md` e `docs/designs/2026-11-22_publishing-mirrors-meta.md`.
+- **Publicações: Stories e Reels (beta).** Em Nova publicação, **Formato** escolhe entre
+  Feed, Story e Reel. Um Story é uma imagem vertical 9:16 ou um vídeo de 3 a 60 segundos,
+  sem legenda; um Reel é um vídeo de 3 segundos a 15 minutos, com legenda, que também
+  aparece na grade do perfil. O vídeo (MP4 ou MOV, até 300 MB) sobe como foi exportado, com
+  o progresso na tela, e dá para assistir antes de publicar. Como o Instagram leva alguns
+  minutos para preparar um vídeo, a publicação fica como "saindo…" e a lista mostra quando
+  saiu ou por que falhou. O que a API do Instagram não permite continua manual: link ou
+  enquete no Story e música da biblioteca do Instagram no Reel.
+
 ## [1.18.0] - 2026-11-24
 
 ### Changed

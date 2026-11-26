@@ -33,7 +33,7 @@ def test_the_shell_loads_one_script_and_every_address_is_tagged():
 
 def test_a_bundle_is_its_scripts_in_the_order_the_page_lists_them():
     names = assets.bundles()["app.bundle.js"]
-    assert names[0] == "app.js" and names[-1] == "app-router.js" and len(names) == 8
+    assert names[0] == "app.js" and names[-1] == "app-router.js" and len(names) == 9
     assert "vendor/qrcode.js" not in names  # fetched when an invite is made, not on every load
     body = assets.content("app.bundle.js").decode()
     at = [body.index(f"// ---- {n}\n") for n in names]

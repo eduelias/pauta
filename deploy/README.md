@@ -189,6 +189,18 @@ mean something to that app, so switching apps means deleting them and connecting
 Check: `curl -s 127.0.0.1:8089/metrics` shows `"meta": {"enabled": true, …}` after
 `sudo systemctl restart pauta-acc`.
 
+**Acceptance's publishing app** (Publicações, beta, `docs/publishing-spec.md`): its own Meta
+app, **Pauta Publicações (acc)** (App ID `29400025989594205`, login configuration
+`1692317655580950`, callback `https://acc.pauta.cc/api/instagram/callback`), never the ads
+app. The ids are the drop-in `/etc/systemd/system/pauta-acc.service.d/instagram.conf`
+(`Environment=PAUTA_IG_APP_ID=…` and `PAUTA_IG_CONFIG_ID=…`); its App Secret is
+`/var/lib/pauta-acc/pauta.db.ig-secret` (owner `pauta-acc`, mode 600), rendered from the
+1Password item "pauta-acc instagram app secret" (Du7 Tech) and pushed, never typed or
+committed. The connections' tokens (one per portfolio) are
+`/var/lib/pauta-acc/pauta.db.ig-tokens` and the posts'
+images `/var/lib/pauta-acc/pauta.db.media/`. Without the drop-in or the secret the module
+is off. Check: the journal says `publisher_started` after a restart. Production has neither.
+
 **Another environment** (`dev`): a line in `env_config` in `pauta-deploy-branch` (its port),
 `deploy/pauta-dev.service`, a Caddy block, `dev` in the workflow's `environment` choices, then
 `sudo deploy/provision-branch-env.sh dev`.
