@@ -434,7 +434,8 @@ def test_a_reel_is_a_video_published_when_instagram_is_done(linked, fake_ig, sto
         assert pub.tick() == []
     a_minute_later(store)
     (done,) = pub.tick()
-    assert done["status"] == "published" and done["permalink"].startswith("https://www.instagram")
+    assert done["status"] == "published"
+    assert done["permalink"] == f"https://www.instagram.com/p/{done['media_id']}/"
     (sent,) = fake_ig.published
     assert (sent["kind"], sent["video"], sent["share_to_feed"]) == ("REELS", True, "true")
     assert sent["caption"] == "Novo vídeo"
